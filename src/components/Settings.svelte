@@ -131,6 +131,16 @@
         </div>
       </div>
       
+      <div class="form-section">
+        <h3>Preferences</h3>
+        <div class="form-group checkbox">
+          <label>
+            <input type="checkbox" bind:checked={$store.threadGrouping} />
+            <span>Group messages by thread</span>
+          </label>
+        </div>
+      </div>
+      
       <div class="form-group">
         <label>Password</label>
         <input type="password" bind:value={password} placeholder="••••••••" />

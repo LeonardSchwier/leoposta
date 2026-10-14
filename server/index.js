@@ -51,13 +51,38 @@ function saveScheduled() {
 // Parse a single address string → { name, address }
 function parseAddr(str) {
   if (!str) return { name: '', address: '' }
-  const m = str.match(/^(?:"([^"]*)"|([^<\s]+))?\s*<?([@\w.-]+)>?\s*$/i)
+  // Handle "Display Name <email@domain>" format
+  const m = str.match(/^"([^"]*)"?\s*<([^>]+)>/i)
   if (m) {
-    return { name: m[1] || m[2] || '', address: m[3] || m[2] || '' }
+    return { name: m[1] || '', address: m[2].trim() }
   }
-  // Fallback
-  const at = str.split('@')
-  return { name: '', address: str }
+  // Handle plain email@domain (no angle brackets)
+  const plain = str.match(/^[\w.+-]+@[\w.-]+\.[a-z]{2,}$/i)
+  if (plain) {
+    return { name: '', address: str.trim() }
+  }
+  // Handle "Name email@domain" (no quotes, no brackets)
+  const noBrk = str.match(/^(.*?)\s+([\w.+-]+@[\w.-]+\.[a-z]{2,})$/i)
+  if (noBrk) {
+    return { name: noBrk[1].trim(), address: noBrk[2].trim() }
+  }
+  // Fallback: if it contains @, treat as address
+  if (str.includes('@')) {
+    return { name: '', address: str.trim() }
+  }
+  // Just a name, no address
+  return { name: str.trim(), address: '' }
+}
+
+// Helper: parse ImapFlow's from field (object with name/address) or string
+function parseFromAddr(fromField) {
+  if (!fromField) return { name: '', address: '' }
+  if (typeof fromField === 'string') return parseAddr(fromField)
+  if (fromField.address) {
+    return { name: fromField.name || '', address: fromField.address }
+  }
+  if (fromField[0]) return parseFromAddr(fromField[0])
+  return { name: '', address: '' }
 }
 
 // Helper: extract addresses from IMAP response (varies in shape)
@@ -184,13 +209,15 @@ app.get('/api/messages', async (req, res) => {
           subject: true,
           flags: true,
           envelope: true,
-          bodyStructure: true
+          bodyStructure: true,
+          'in-reply-to': true,
+          'references': true
         },
         { op: 'FETCH' }
       )
       
       for await (const msg of result) {
-        const from = parseAddr(msg.from?.[0]?.name || msg.from?.[0]?.address || msg.envelope?.from?.[0]?.address || '')
+        const from = parseFromAddr(msg.from?.[0] || msg.envelope?.from?.[0])
         const to = (msg.to || msg.envelope?.to || []).map(t => t.address)
         const cc = (msg.cc || msg.envelope?.cc || []).map(c => c.address)
         const bcc = (msg.bcc || []).map(b => b.address)
@@ -212,8 +239,15 @@ app.get('/api/messages', async (req, res) => {
         }
         walkStruct(msg.bodyStructure)
         
+        // Derive thread ID from In-Reply-To or References
+        const inReplyTo = msg['in-reply-to'] || msg['In-Reply-To'] || ''
+        const references = msg['references'] || msg['References'] || ''
+        const refIds = references.split('<').filter(Boolean)
+        const threadId = inReplyTo || (refIds.length > 0 ? '<' + refIds[refIds.length - 1] : '') || (msg.uid?.toString() || Date.now().toString())
+        
         messages.push({
           id: msg.uid?.toString() || Date.now().toString(),
+          threadId: threadId,
           from: from.name || from.address || '',
           fromAddress: from.address || '',
           to,
@@ -288,7 +322,7 @@ app.get('/api/message/:id', async (req, res) => {
         })
       })()
       
-      const from = parseAddr(msg.from?.[0]?.name || msg.from?.[0]?.address || msg.envelope?.from?.[0]?.address || '')
+      const from = parseFromAddr(msg.from?.[0] || msg.envelope?.from?.[0])
       const to = (msg.to || msg.envelope?.to || []).map(t => t.address)
       const cc = (msg.cc || msg.envelope?.cc || []).map(c => c.address)
       const bcc = (msg.bcc || []).map(b => b.address)
@@ -435,7 +469,7 @@ app.get('/api/search', async (req, res) => {
       
       const messages = []
       for await (const msg of result) {
-        const from = parseAddr(msg.from?.[0]?.name || msg.from?.[0]?.address || msg.envelope?.from?.[0]?.address || '')
+        const from = parseFromAddr(msg.from?.[0] || msg.envelope?.from?.[0])
         messages.push({
           id: msg.uid?.toString(),
           from: from.name || from.address || '',

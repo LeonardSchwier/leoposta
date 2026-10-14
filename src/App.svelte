@@ -162,15 +162,14 @@
           isLoading={$store.isLoading}
           error={$store.error}
         />
+        {#if $store.selectedMessageId}
+          <MessageView 
+            onDelete={handleDelete}
+            onArchive={handleArchive}
+            onStar={handleStar}
+          />
+        {/if}
       </div>
-    {/if}
-    
-    {#if $store.selectedMessageId && !showCompose}
-      <MessageView 
-        onDelete={handleDelete}
-        onArchive={handleArchive}
-        onStar={handleStar}
-      />
     {/if}
   </main>
   
@@ -196,5 +195,7 @@
   .content {
     flex: 1;
     overflow: hidden;
+    display: flex;
+    flex-direction: row;
   }
 </style>

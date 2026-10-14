@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { store, getState } from '../store'
+  import { store, getState, setComposeTo, setComposeSubject, setComposeBody, setIsLoading, setComposeScheduled, clearCompose, setComposing } from '../store'
   import { onMount } from 'svelte'
   
   let { onClose } = $props()
@@ -20,7 +20,7 @@
   function addRecipient(input: string) {
     const emails = input.split(/[,;]/).map(e => e.trim()).filter(e => e)
     if (emails.length > 0) {
-      getState().setComposeTo([...getState().composeTo, ...emails])
+      setComposeTo([...getState().composeTo, ...emails])
       toInput = ''
     }
   }
@@ -33,7 +33,7 @@
   }
   
   function removeRecipient(email: string) {
-    getState().setComposeTo(getState().composeTo.filter(e => e !== email))
+    setComposeTo(getState().composeTo.filter(e => e !== email))
   }
   
   function handleSend() {
@@ -42,7 +42,7 @@
       return
     }
     
-    getState().setIsLoading(true)
+    setIsLoading(true)
     
     const message = {
       to: getState().composeTo,
@@ -61,9 +61,15 @@
     .then(res => res.json())
     .then(data => {
       if (data.success) {
-        getState().clearCompose()
-        getState().setComposing(false)
+        clearCompose()
+        setComposing(false)
         onClose()
+      } else if (data.queued) {
+        // Offline: queued for later sending
+        clearCompose()
+        setComposing(false)
+        onClose()
+        alert(data.message)
       } else {
         alert('Failed to send: ' + data.error)
       }
@@ -72,14 +78,14 @@
       alert('Error: ' + err.message)
     })
     .finally(() => {
-      getState().setIsLoading(false)
+      setIsLoading(false)
     })
   }
   
   function handleSchedule() {
     if (scheduleDate && scheduleTime) {
       const date = new Date(`${scheduleDate}T${scheduleTime}`)
-      getState().setComposeScheduled(date.toISOString())
+      setComposeScheduled(date.toISOString())
       showSchedule = false
     }
   }
@@ -158,7 +164,7 @@
       <input 
         type="text"
         bind:value={subjectInput}
-        oninput={() => getState().setComposeSubject(subjectInput)}
+        oninput={() => setComposeSubject(subjectInput)}
         placeholder="Subject"
       />
     </div>
@@ -166,7 +172,7 @@
     <div class="compose-editor">
       <textarea
         bind:value={bodyInput}
-        oninput={() => getState().setComposeBody(bodyInput)}
+        oninput={() => setComposeBody(bodyInput)}
         placeholder="Write your message..."
         rows="15"
       ></textarea>
@@ -210,7 +216,7 @@
       {#if $store.composeScheduled}
         <span class="schedule-badge">
           Scheduled: {new Date($store.composeScheduled).toLocaleString()}
-          <button onclick={() => getState().setComposeScheduled(null)}>✕</button>
+          <button onclick={() => setComposeScheduled(null)}>✕</button>
         </span>
       {/if}
     </div>
