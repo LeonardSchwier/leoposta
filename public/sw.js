@@ -1,5 +1,5 @@
-const CACHE_NAME = 'leotabula-v1'
-const QUEUE_NAME = 'leotabula-queue'
+const CACHE_NAME = 'leoposta-v1'
+const QUEUE_NAME = 'leoposta-queue'
 const urlsToCache = ['/', '/index.html']
 
 self.addEventListener('install', (event) => {
@@ -10,7 +10,7 @@ self.addEventListener('install', (event) => {
 
 // Queue failed POST/PUT requests (offline send)
 async function addToQueue(request, body) {
-  const db = await indexedDB.open('leotabula', 1)
+  const db = await indexedDB.open('leoposta', 1)
   db.onupgradeneeded = (e) => {
     const store = e.target.result.createObjectStore('queue', { keyPath: 'id', autoIncrement: true })
   }
@@ -29,7 +29,7 @@ async function addToQueue(request, body) {
 }
 
 async function processQueue() {
-  const db = await indexedDB.open('leotabula', 1)
+  const db = await indexedDB.open('leoposta', 1)
   const tx = db.transaction('queue', 'readwrite')
   const store = tx.objectStore('queue')
   
