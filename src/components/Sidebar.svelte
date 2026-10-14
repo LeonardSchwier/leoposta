@@ -58,7 +58,7 @@
 
 <aside class="sidebar">
   <div class="sidebar-header">
-    <h1 class="logo">Leotabula</h1>
+    <h1 class="logo">Leoposta</h1>
     <button class="compose-btn" onclick={onCompose}>
       <span class="compose-icon">✎</span>
       <span>Compose</span>
