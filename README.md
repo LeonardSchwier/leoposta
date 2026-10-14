@@ -1,35 +1,90 @@
 # Evolution Mail
 
-A standalone web-based mail client with Apple Mail UX.
-Built with Svelte 5, Tailwind CSS, and a Node.js IMAP/SMTP backend.
+A modern, web-based mail client with Apple Mail-inspired UX.
 
 ## Features
-- Complete mail client: IMAP/SMTP, multi-account, folders, threading
-- Apple Mail UX: clean, minimal, dark mode, smooth animations
-- PWA: offline reading, installable standalone app, scheduled send
-- Search: full-text, command palette (Cmd+K), keyboard shortcuts
-- Security: TLS, WebCrypto password storage, XSS sanitization
 
-## Quick Start
-```bash
-npm install
-npm run dev
-# Open http://localhost:5173
-```
+- 📧 **IMAP/SMTP** - Connect to any mail provider
+- 🎨 **Apple Mail UX** - Clean, familiar interface
+- 📱 **PWA** - Installable on mobile and desktop
+- 🕐 **Scheduled Send** - Queue emails for later delivery
+- 📎 **Attachments** - Full attachment support
+- 🌙 **Dark Mode** - System-aware theming
+- ⚡ **Fast** - Built with Svelte 5 and Vite
+- 🔒 **Local-First** - Your mail stays on your device
 
 ## Tech Stack
-- Svelte 5 + TypeScript
-- Tailwind CSS v4
-- Node.js (IMAP/SMTP backend)
-- IndexedDB (offline cache)
-- Service Worker (PWA)
-- Vite 6
 
-## Testing
+- **Frontend**: Svelte 5, TypeScript, Tailwind CSS
+- **Backend**: Node.js, Express, ImapFlow, Nodemailer
+- **State**: Zustand
+- **Build**: Vite
+
+## Getting Started
+
+### Prerequisites
+
+- Node.js 18+
+- npm 9+
+
+### Installation
+
 ```bash
-npm test          # Unit
-npm run test:e2e  # E2E (Playwright)
+# Clone the repo
+git clone <repo-url>
+cd evolution-mail
+
+# Install dependencies
+npm install
+
+# Configure your mail account
+# (via the Settings panel in the UI)
+
+# Start the backend
+npm run server
+
+# Start the frontend (in a new terminal)
+npm run dev
+```
+
+### Production Build
+
+```bash
+npm run build
+npm run preview
+```
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/messages?folder=INBOX&limit=50` | List messages |
+| GET | `/api/message/:id?folder=INBOX` | Get single message |
+| POST | `/api/account` | Configure mail account |
+| POST | `/api/send` | Send or schedule email |
+
+## Development
+
+### Testing
+
+```bash
+# Unit tests
+npm test
+
+# E2E tests
+npm run test:e2e
+```
+
+### Code Quality
+
+```bash
+# Lint
+npm run lint
+
+# Type check
+npx tsc --noEmit
 ```
 
 ## License
+
 MIT
