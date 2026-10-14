@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { store, getState } from '../store'
+  import { store, getState, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, deleteMessage, updateMessage, selectMessage } from '../store'
 
   function formatFullDate(dateStr: string) {
     return new Date(dateStr).toLocaleString()
@@ -13,33 +13,33 @@
   function handleReply() {
     const msg = getCurrentMessage()
     if (!msg) return
-    getState().setComposeTo([msg.from])
-    getState().setComposeSubject(`Re: ${msg.subject}`)
-    getState().setComposeReplyTo(msg.id)
-    getState().setComposeOriginalMessage(msg)
-    getState().setComposing(true)
+    setComposeTo([msg.from])
+    setComposeSubject(`Re: ${msg.subject}`)
+    setComposeReplyTo(msg.id)
+    setComposeOriginalMessage(msg)
+    setComposing(true)
   }
 
   function handleForward() {
     const msg = getCurrentMessage()
     if (!msg) return
-    getState().setComposeTo([])
-    getState().setComposeSubject(`Fwd: ${msg.subject}`)
-    getState().setComposeForward(true)
-    getState().setComposeOriginalMessage(msg)
-    getState().setComposing(true)
+    setComposeTo([])
+    setComposeSubject(`Fwd: ${msg.subject}`)
+    setComposeForward(true)
+    setComposeOriginalMessage(msg)
+    setComposing(true)
   }
 
   function handleDelete() {
     const msg = getCurrentMessage()
     if (!msg) return
-    getState().deleteMessage(msg.id)
+    deleteMessage(msg.id)
   }
 
   function handleArchive() {
     const msg = getCurrentMessage()
     if (!msg) return
-    getState().deleteMessage(msg.id)
+    deleteMessage(msg.id)
   }
 
   function handleStar() {
@@ -50,7 +50,7 @@
     const newFlags = hasFlag
       ? flags.filter(f => f !== '\\Flagged' && f !== 'Flagged')
       : [...flags, '\\Flagged']
-    getState().updateMessage(msg.id, { flags: newFlags })
+    updateMessage(msg.id, { flags: newFlags })
   }
 
   function downloadAttachment(att: any) {
@@ -83,7 +83,7 @@
     <div class="message-view">
       <div class="view-header">
         <div class="header-left">
-          <button class="back-btn" onclick={() => getState().selectMessage(null)}>←</button>
+          <button class="back-btn" onclick={() => selectMessage(null)}>←</button>
           <div class="subject-area">
             <h2 class="message-subject">{msg.subject || '(no subject)'}</h2>
             <div class="message-meta">
@@ -141,7 +141,7 @@
 {/if}
 
 <style>
-  .message-view { display: flex; flex-direction: column; height: 100%; overflow: hidden; }
+  .message-view { display: flex; flex-direction: column; height: 100%; overflow: hidden; flex: 1; }
   .view-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid var(--color-border); gap: 16px; }
   .header-left { display: flex; align-items: flex-start; gap: 16px; flex: 1; min-width: 0; }
   .back-btn { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: transparent; border: 1px solid var(--color-border); border-radius: var(--radius-sm); font-size: 18px; color: var(--color-text); cursor: pointer; transition: all var(--transition); flex-shrink: 0; }

@@ -3,6 +3,7 @@ import { get } from 'svelte/store'
 
 export interface MailMessage {
   id: string
+  threadId?: string
   from: string
   to: string[]
   cc?: string[]
@@ -70,6 +71,7 @@ export interface State {
   composeOriginalMessage: MailMessage | null
   isLoading: boolean
   error: string | null
+  threadGrouping: boolean
 }
 
 const initialState: State = {
@@ -94,6 +96,7 @@ const initialState: State = {
   composeOriginalMessage: null,
   isLoading: false,
   error: null,
+  threadGrouping: true,
 }
 
 export const store = writable<State>(initialState)
@@ -193,6 +196,9 @@ export function clearCompose() {
     composeForward: false,
     composeOriginalMessage: null
   }))
+}
+export function setThreadGrouping(enabled: boolean) {
+  store.update(s => ({ ...s, threadGrouping: enabled }))
 }
 
 // Non-reactive getter for use in event handlers

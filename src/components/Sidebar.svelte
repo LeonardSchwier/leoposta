@@ -1,28 +1,64 @@
 <script lang="ts">
   import { store, getState } from '../store'
   
-  let { onFolderSelect, onCompose, onSettings, onNewFolder, folders: apiFolders = [] } = $props()
+  let { onFolderSelect, onCompose, onSettings, folders: apiFolders = [] } = $props()
   
   const activeFolder = $derived($store.activeFolder)
   const unreadCount = $derived($store.messages.filter(m => m.isUnread).length)
   
+  // Build folder tree
   const specialFolders = $derived([
-    { id: 'inbox', name: 'Inbox', icon: '📥' },
-    { id: 'sent', name: 'Sent', icon: '📤' },
-    { id: 'drafts', name: 'Drafts', icon: '📝' },
-    { id: 'flagged', name: 'Flagged', icon: '⭐' },
-    { id: 'trash', name: 'Trash', icon: '🗑️' },
+    { id: 'INBOX', name: 'Inbox', icon: '📥' },
+    { id: 'Sent', name: 'Sent', icon: '📤' },
+    { id: 'Drafts', name: 'Drafts', icon: '📝' },
+    { id: 'Archive', name: 'Archive', icon: '📦' },
+    { id: 'Junk', name: 'Junk', icon: '🚫' },
+    { id: 'Trash', name: 'Trash', icon: '🗑️' },
   ])
   
-  const customFolders = $derived(
-    (apiFolders || []).filter((f: any) => !f.specialUse)
+  // Custom folders with hierarchy
+  const customFolders = $derived((apiFolders || []).filter((f: any) => !f.specialUse))
+  
+  const topLevelFolders = $derived(
+    customFolders.filter((f: any) => !f.parentId)
   )
+  
+  function getChildren(parentId: string) {
+    return customFolders.filter((f: any) => f.parentId === parentId)
+  }
+  
+  // Check if folder or any descendant is active
+  function isFolderOrChildActive(folderId: string): boolean {
+    if (activeFolder === folderId) return true
+    const children = getChildren(folderId)
+    return children.some(c => isFolderOrChildActive(c.id))
+  }
+  
+  // Expand/collapse state
+  const expandedFolders = $state(new Set<string>())
+  
+  function toggleFolder(folderId: string) {
+    if (expandedFolders.has(folderId)) {
+      expandedFolders.delete(folderId)
+    } else {
+      expandedFolders.add(folderId)
+    }
+    // Force reactivity
+    expandedFolders.set = expandedFolders
+  }
+  
+  function handleFolderClick(folderId: string, hasChildren: boolean) {
+    if (hasChildren && !expandedFolders.has(folderId)) {
+      toggleFolder(folderId)
+    }
+    onFolderSelect(folderId)
+  }
   
 </script>
 
 <aside class="sidebar">
   <div class="sidebar-header">
-    <h1 class="logo">Mail</h1>
+    <h1 class="logo">Leotabula</h1>
     <button class="compose-btn" onclick={onCompose}>
       <span class="compose-icon">✎</span>
       <span>Compose</span>
@@ -39,32 +75,72 @@
       >
         <span class="folder-icon">{folder.icon}</span>
         <span class="folder-name">{folder.name}</span>
-        {#if folder.id === 'inbox' && unreadCount > 0}
+        {#if folder.id === 'INBOX' && unreadCount > 0}
           <span class="badge">{unreadCount}</span>
         {/if}
       </button>
     {/each}
     
-    {#if customFolders.length > 0}
+    {#if topLevelFolders.length > 0}
       <div class="section-label">Folders</div>
-      {#each customFolders as folder (folder.id)}
-        <button 
-          class="folder-item custom"
-          class:active={activeFolder === folder.id}
-          onclick={() => onFolderSelect(folder.id)}
-        >
-          <span class="folder-icon">📁</span>
-          <span class="folder-name">{folder.name}</span>
-        </button>
+      {#each topLevelFolders as folder (folder.id)}
+        {@const children = getChildren(folder.id)}
+        {@const hasChildren = children.length > 0}
+        {@const isExpanded = expandedFolders.has(folder.id)}
+        {@const isParentActive = isFolderOrChildActive(folder.id)}
+        
+        <div class="folder-group" class:expanded={isExpanded}>
+          <div 
+            class="folder-row"
+            class:active={activeFolder === folder.id}
+            onclick={() => handleFolderClick(folder.id, hasChildren)}
+          >
+            {#if hasChildren}
+              <span class="chevron">{isExpanded ? '▾' : '▸'}</span>
+            {:else}
+              <span class="chevron-placeholder"></span>
+            {/if}
+            <span class="folder-icon">📁</span>
+            <span class="folder-name">{folder.name.replace(/^[0-9#]+\s+/, '')}</span>
+          </div>
+          
+          {#if hasChildren && isExpanded}
+            <div class="folder-children">
+              {#each children as child (child.id)}
+                {@const childChildren = getChildren(child.id)}
+                <div 
+                  class="folder-row child"
+                  class:active={activeFolder === child.id}
+                  onclick={() => handleFolderClick(child.id, childChildren.length > 0)}
+                >
+                  <span class="chevron-placeholder"></span>
+                  <span class="folder-icon">{childChildren.length > 0 ? (expandedFolders.has(child.id) ? '▾' : '▸') : ''}</span>
+                  <span class="folder-name">{child.name}</span>
+                </div>
+                {#if childChildren.length > 0 && expandedFolders.has(child.id)}
+                  <div class="folder-children">
+                    {#each childChildren as gc (gc.id)}
+                      <div 
+                        class="folder-row grandchild"
+                        class:active={activeFolder === gc.id}
+                        onclick={() => onFolderSelect(gc.id)}
+                      >
+                        <span class="chevron-placeholder"></span>
+                        <span class="folder-icon"></span>
+                        <span class="folder-name">{gc.name}</span>
+                      </div>
+                    {/each}
+                  </div>
+                {/if}
+              {/each}
+            </div>
+          {/if}
+        </div>
       {/each}
     {/if}
   </nav>
   
   <div class="sidebar-footer">
-    <button class="new-folder-btn" onclick={onNewFolder}>
-      <span>＋</span>
-      <span>New Folder</span>
-    </button>
     <button class="settings-btn" onclick={onSettings}>
       <span>⚙️</span>
       <span>Settings</span>
@@ -74,7 +150,7 @@
 
 <style>
   .sidebar {
-    width: 220px;
+    width: 240px;
     background: var(--color-sidebar);
     border-right: 1px solid var(--color-border);
     display: flex;
@@ -83,15 +159,16 @@
   }
   
   .sidebar-header {
-    padding: 16px;
+    padding: 12px 12px 8px;
     border-bottom: 1px solid var(--color-border);
   }
   
   .logo {
-    font-size: 18px;
-    font-weight: 600;
-    margin-bottom: 16px;
+    font-size: 17px;
+    font-weight: 700;
+    margin-bottom: 10px;
     color: var(--color-text);
+    letter-spacing: -0.3px;
   }
   
   .compose-btn {
@@ -99,12 +176,12 @@
     align-items: center;
     gap: 8px;
     width: 100%;
-    padding: 10px 14px;
+    padding: 8px 12px;
     background: var(--color-accent);
     color: white;
     border: none;
     border-radius: var(--radius-md);
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 500;
     cursor: pointer;
     transition: background var(--transition);
@@ -114,38 +191,34 @@
     background: var(--color-accent-hover);
   }
   
-  .compose-icon {
-    font-size: 16px;
-  }
-  
   .folder-list {
     flex: 1;
     overflow-y: auto;
-    padding: 8px;
+    padding: 4px 6px;
   }
   
   .section-label {
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
     color: var(--color-text-secondary);
     text-transform: uppercase;
-    letter-spacing: 0.5px;
-    padding: 12px 8px 4px;
+    letter-spacing: 0.6px;
+    padding: 10px 8px 3px;
   }
   
   .folder-item {
     display: flex;
     align-items: center;
-    gap: 10px;
+    gap: 8px;
     width: 100%;
-    padding: 8px 10px;
+    padding: 6px 8px;
     background: transparent;
     border: none;
-    border-radius: var(--radius-sm);
-    font-size: 14px;
+    border-radius: 6px;
+    font-size: 13px;
     color: var(--color-text);
     cursor: pointer;
-    transition: background var(--transition);
+    transition: background 0.1s;
     text-align: left;
     position: relative;
   }
@@ -159,13 +232,9 @@
     font-weight: 500;
   }
   
-  .folder-item.custom {
-    padding-left: 16px;
-  }
-  
   .folder-icon {
-    font-size: 16px;
-    width: 20px;
+    font-size: 14px;
+    width: 18px;
     text-align: center;
     flex-shrink: 0;
   }
@@ -180,43 +249,99 @@
   .badge {
     background: var(--color-accent);
     color: white;
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 600;
-    min-width: 20px;
-    height: 20px;
-    border-radius: 10px;
+    min-width: 18px;
+    height: 18px;
+    border-radius: 9px;
     display: flex;
     align-items: center;
     justify-content: center;
-    padding: 0 6px;
+    padding: 0 5px;
     flex-shrink: 0;
   }
   
+  /* Custom folder tree */
+  .folder-group {
+    margin-bottom: 1px;
+  }
+  
+  .folder-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    width: 100%;
+    padding: 5px 8px;
+    background: transparent;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    color: var(--color-text);
+    cursor: pointer;
+    transition: background 0.1s;
+    text-align: left;
+  }
+  
+  .folder-row:hover {
+    background: var(--color-hover);
+  }
+  
+  .folder-row.active {
+    background: var(--color-selected);
+    font-weight: 500;
+  }
+  
+  .folder-row.child {
+    padding-left: 22px;
+  }
+  
+  .folder-row.grandchild {
+    padding-left: 36px;
+  }
+  
+  .chevron {
+    font-size: 10px;
+    width: 12px;
+    flex-shrink: 0;
+    color: var(--color-text-secondary);
+  }
+  
+  .chevron-placeholder {
+    width: 12px;
+    flex-shrink: 0;
+  }
+  
+  .folder-children {
+    margin-left: 8px;
+    border-left: 1px solid var(--color-border);
+    padding-left: 2px;
+  }
+  
   .sidebar-footer {
-    padding: 12px;
+    padding: 8px;
     border-top: 1px solid var(--color-border);
     display: flex;
     flex-direction: column;
-    gap: 4px;
+    gap: 2px;
   }
   
-  .new-folder-btn, .settings-btn {
+  .settings-btn {
     display: flex;
     align-items: center;
     gap: 8px;
     width: 100%;
-    padding: 8px 10px;
+    padding: 6px 8px;
     background: transparent;
     border: none;
-    border-radius: var(--radius-sm);
+    border-radius: 6px;
     font-size: 13px;
     color: var(--color-text-secondary);
     cursor: pointer;
-    transition: background var(--transition);
+    transition: background 0.1s;
     text-align: left;
   }
   
-  .new-folder-btn:hover, .settings-btn:hover {
+  .settings-btn:hover {
     background: var(--color-hover);
     color: var(--color-text);
   }
@@ -226,29 +351,28 @@
       width: 56px;
     }
     .logo, .folder-name, .compose-btn span:not(.compose-icon),
-    .new-folder-btn span:not(:first-child), .settings-btn span:not(:first-child),
-    .section-label {
+    .settings-btn span:not(:first-child), .section-label {
       display: none;
     }
     .compose-btn {
       justify-content: center;
-      padding: 10px;
+      padding: 8px;
     }
     .folder-item {
       justify-content: center;
-      padding: 10px;
+      padding: 8px;
+    }
+    .folder-row {
+      justify-content: center;
+      padding: 8px;
     }
     .badge {
       position: absolute;
-      top: 4px;
-      right: 4px;
-      min-width: 16px;
-      height: 16px;
+      top: 3px;
+      right: 3px;
+      min-width: 14px;
+      height: 14px;
       font-size: 9px;
-    }
-    .new-folder-btn, .settings-btn {
-      justify-content: center;
-      padding: 10px;
     }
   }
 </style>

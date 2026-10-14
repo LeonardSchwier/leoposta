@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { store, getState } from '../store'
+  import { store, getState, selectMessage, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, updateMessage } from '../store'
   
   let { onCompose, onSelectMessage, onDelete, onArchive, onStar, onSearch, searchQuery = '', isLoading = false, error = null } = $props()
   
@@ -9,68 +9,58 @@
     const now = new Date()
     const diff = now.getTime() - date.getTime()
     const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-    
-    if (days === 0) {
-      return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    } else if (days === 1) {
-      return 'Yesterday'
-    } else if (days < 7) {
-      return date.toLocaleDateString([], { weekday: 'short' })
-    } else {
-      return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
-    }
+    if (days === 0) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    if (days === 1) return 'Yesterday'
+    if (days < 7) return date.toLocaleDateString([], { weekday: 'short' })
+    return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
   }
   
-  function handleSelect(message: typeof messages[0]) {
-    getState().selectMessage(message.id)
+  function isRead(message: any) {
+    return message.flags?.includes('\\Seen') || message.flags?.includes('Seen')
+  }
+  function isFlagged(message: any) {
+    return message.flags?.includes('\\Flagged') || message.flags?.includes('Flagged')
+  }
+  function getPreview(message: any): string {
+    if (message.body) return message.body.substring(0, 100)
+    if (message.bodyHtml) return message.bodyHtml.replace(/<[^>]*>/g, '').substring(0, 100)
+    if (message.attachments?.length) return '📎 ' + message.attachments.length + ' attachment(s)'
+    return ''
+  }
+  
+  function handleSelect(message: any) {
+    selectMessage(message.id)
     if (onSelectMessage) onSelectMessage(message.id)
     const flags = message.flags || []
     if (!flags.includes('\\Seen') && !flags.includes('Seen')) {
-      getState().updateMessage(message.id, { flags: [...flags, '\\Seen'] })
+      updateMessage(message.id, { flags: [...flags, '\\Seen'] })
     }
   }
-  
-  function handleReply(message: typeof messages[0]) {
-    getState().setComposeTo([message.from])
-    getState().setComposeSubject(`Re: ${message.subject}`)
-    getState().setComposeReplyTo(message.id)
-    getState().setComposeOriginalMessage(message)
-    getState().setComposing(true)
+  function handleReply(message: any) {
+    setComposeTo([message.fromAddress || message.from])
+    setComposeSubject(`Re: ${message.subject}`)
+    setComposeReplyTo(message.id)
+    setComposeOriginalMessage(message)
+    setComposing(true)
   }
-  
-  function handleForward(message: typeof messages[0]) {
-    getState().setComposeTo([])
-    getState().setComposeSubject(`Fwd: ${message.subject}`)
-    getState().setComposeForward(true)
-    getState().setComposeOriginalMessage(message)
-    getState().setComposing(true)
-  }
-  
-  function isRead(message: typeof messages[0]) {
-    return message.flags?.includes('\\Seen') || message.flags?.includes('Seen')
-  }
-  
-  function isFlagged(message: typeof messages[0]) {
-    return message.flags?.includes('\\Flagged') || message.flags?.includes('Flagged')
-  }
-  
-  function getPreview(message: typeof messages[0]): string {
-    if (message.body) return message.body.substring(0, 120)
-    if (message.bodyHtml) return message.bodyHtml.replace(/<[^>]*>/g, '').substring(0, 120)
-    if (message.attachments?.length) return '📎 ' + message.attachments.length + ' attachment(s)'
-    return ''
+  function handleForward(message: any) {
+    setComposeTo([])
+    setComposeSubject(`Fwd: ${message.subject}`)
+    setComposeForward(true)
+    setComposeOriginalMessage(message)
+    setComposing(true)
   }
 </script>
 
 <div class="message-list-container">
   <div class="list-header">
     <h2 class="folder-title">
-      {searchQuery ? `Results: "${searchQuery}"` : $store.activeFolder}
+      {searchQuery ? `"${searchQuery}"` : $store.activeFolder}
     </h2>
     <div class="search-box">
       <input
         type="text"
-        placeholder="Search mail..."
+        placeholder="Search…"
         value={searchQuery}
         oninput={(e) => onSearch?.((e.target as HTMLInputElement).value)}
         class="search-input"
@@ -90,13 +80,12 @@
   {#if isLoading}
     <div class="loading">
       <div class="spinner"></div>
-      <p>Loading messages...</p>
+      <p>Loading…</p>
     </div>
   {:else if $store.messages.length === 0}
     <div class="empty-state">
       <div class="empty-icon">📭</div>
       <h3>{searchQuery ? 'No results' : 'No messages'}</h3>
-      <p>{searchQuery ? 'Try a different search term' : 'Your inbox is empty. Enjoy the calm!'}</p>
     </div>
   {:else}
     <div class="message-list">
@@ -114,7 +103,7 @@
               title={isFlagged(message) ? 'Unstar' : 'Star'}
               onclick={(e) => { e.stopPropagation(); onStar?.() }}
             >
-              {#if isFlagged(message)}⭐{:else}☆{/if}
+              {#if isFlagged(message)}★{:else}☆{/if}
             </button>
           </div>
           <div class="message-info">
@@ -129,7 +118,7 @@
             <button class="msg-btn" title="Reply" onclick={() => handleReply(message)}>↩</button>
             <button class="msg-btn" title="Forward" onclick={() => handleForward(message)}>↪</button>
             <button class="msg-btn" title="Archive" onclick={() => onArchive?.()}>⬇</button>
-            <button class="msg-btn danger" title="Delete" onclick={() => onDelete?.()}>🗑</button>
+            <button class="msg-btn danger" title="Delete" onclick={() => onDelete?.()}>✕</button>
           </div>
         </div>
       {/each}
@@ -139,6 +128,9 @@
 
 <style>
   .message-list-container {
+    width: 40%;
+    min-width: 300px;
+    border-right: 1px solid var(--border, #e5e5e5);
     height: 100%;
     display: flex;
     flex-direction: column;
@@ -148,14 +140,14 @@
   .list-header {
     display: flex;
     align-items: center;
-    gap: 12px;
-    padding: 12px 20px;
+    gap: 10px;
+    padding: 8px 14px;
     border-bottom: 1px solid var(--color-border);
     background: var(--color-surface);
   }
   
   .folder-title {
-    font-size: 18px;
+    font-size: 15px;
     font-weight: 600;
     color: var(--color-text);
     white-space: nowrap;
@@ -163,17 +155,17 @@
   
   .search-box {
     flex: 1;
-    max-width: 300px;
+    max-width: 260px;
   }
   
   .search-input {
     width: 100%;
-    padding: 8px 12px;
+    padding: 5px 10px;
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
+    border-radius: 6px;
     background: var(--color-bg);
     color: var(--color-text);
-    font-size: 13px;
+    font-size: 12px;
     outline: none;
   }
   
@@ -183,7 +175,7 @@
   
   .actions {
     display: flex;
-    gap: 8px;
+    gap: 6px;
     margin-left: auto;
   }
   
@@ -191,15 +183,15 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
+    width: 28px;
+    height: 28px;
     background: transparent;
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    font-size: 16px;
+    border-radius: 6px;
+    font-size: 14px;
     color: var(--color-text-secondary);
     cursor: pointer;
-    transition: all var(--transition);
+    transition: all 0.1s;
   }
   
   .action-btn:hover {
@@ -213,14 +205,15 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 16px;
+    gap: 12px;
     color: var(--color-text-secondary);
+    font-size: 13px;
   }
   
   .spinner {
-    width: 32px;
-    height: 32px;
-    border: 3px solid var(--color-border);
+    width: 24px;
+    height: 24px;
+    border: 2px solid var(--color-border);
     border-top-color: var(--color-accent);
     border-radius: 50%;
     animation: spin 1s linear infinite;
@@ -232,23 +225,24 @@
     flex-direction: column;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: 6px;
     color: var(--color-text-secondary);
+    font-size: 14px;
   }
   
   .empty-icon {
-    font-size: 48px;
-    opacity: 0.5;
+    font-size: 40px;
+    opacity: 0.4;
   }
   
   .error-state {
-    padding: 16px;
+    padding: 12px;
     text-align: center;
   }
   
   .error-text {
     color: #e74c3c;
-    font-size: 14px;
+    font-size: 13px;
   }
   
   .message-list {
@@ -259,11 +253,11 @@
   .message-row {
     display: flex;
     align-items: flex-start;
-    gap: 10px;
-    padding: 12px 16px;
+    gap: 8px;
+    padding: 7px 12px;
     border-bottom: 1px solid var(--color-border);
     cursor: pointer;
-    transition: background var(--transition);
+    transition: background 0.08s;
     position: relative;
   }
   
@@ -281,26 +275,30 @@
   }
   
   .message-star {
-    width: 28px;
+    width: 22px;
     display: flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    padding-top: 2px;
+    padding-top: 1px;
   }
   
   .star-btn {
     background: none;
     border: none;
-    font-size: 16px;
+    font-size: 14px;
     cursor: pointer;
-    padding: 2px;
-    opacity: 0.3;
-    transition: opacity 0.15s;
+    padding: 1px;
+    opacity: 0.25;
+    transition: opacity 0.1s;
+    color: var(--color-text);
   }
   
   .star-btn:hover, .star-btn.starred {
     opacity: 1;
+  }
+  .star-btn.starred {
+    color: #f59e0b;
   }
   
   .message-info {
@@ -308,7 +306,7 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    gap: 2px;
+    gap: 1px;
   }
   
   .message-top {
@@ -318,23 +316,23 @@
   }
   
   .sender-name {
-    font-size: 14px;
+    font-size: 13px;
     color: var(--color-text);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    max-width: 70%;
+    max-width: 65%;
   }
   
   .message-date {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--color-text-secondary);
     white-space: nowrap;
     flex-shrink: 0;
   }
   
   .message-subject {
-    font-size: 13px;
+    font-size: 12px;
     color: var(--color-text);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -342,7 +340,7 @@
   }
   
   .message-preview {
-    font-size: 12px;
+    font-size: 11px;
     color: var(--color-text-secondary);
     overflow: hidden;
     text-overflow: ellipsis;
@@ -351,13 +349,15 @@
   
   .message-actions {
     display: none;
-    gap: 4px;
+    gap: 3px;
     position: absolute;
-    right: 16px;
+    right: 12px;
     top: 50%;
     transform: translateY(-50%);
     background: var(--color-surface);
     padding: 2px;
+    border-radius: 6px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
   }
   
   .message-row:hover .message-actions {
@@ -368,11 +368,11 @@
     background: none;
     border: 1px solid var(--color-border);
     border-radius: 4px;
-    padding: 4px 6px;
-    font-size: 12px;
+    padding: 2px 5px;
+    font-size: 11px;
     cursor: pointer;
     color: var(--color-text-secondary);
-    transition: all 0.15s;
+    transition: all 0.1s;
   }
   
   .msg-btn:hover {
@@ -393,19 +393,20 @@
   @media (max-width: 768px) {
     .message-row {
       flex-wrap: wrap;
-      padding: 10px 12px;
+      padding: 6px 10px;
     }
     .message-actions {
       position: static;
       display: flex;
       width: 100%;
       justify-content: flex-end;
-      margin-top: 4px;
+      margin-top: 3px;
       background: none;
       padding: 0;
+      box-shadow: none;
     }
     .search-box {
-      max-width: 150px;
+      max-width: 120px;
     }
   }
 </style>
