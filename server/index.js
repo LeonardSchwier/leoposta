@@ -19,6 +19,13 @@ app.use(express.json({ limit: '50mb' }))
 let account = null
 let scheduledMessages = []
 
+// Helper: normalize IMAP flags to an array
+function normalizeFlags(flags) {
+  if (Array.isArray(flags)) return flags
+  if (flags && typeof flags === 'object') return Object.keys(flags).filter(k => flags[k])
+  return []
+}
+
 // Load account from file if exists
 const ACCOUNT_FILE = path.join(__dirname, 'account.json')
 if (fs.existsSync(ACCOUNT_FILE)) {
@@ -217,7 +224,7 @@ app.get('/api/messages', async (req, res) => {
           bodyHtml: '',
           snippet: '',
           date: msg.date?.toISOString() || new Date().toISOString(),
-          flags: Array.isArray(msg.flags) ? msg.flags : (typeof msg.flags === 'object' && msg.flags !== null ? Object.keys(msg.flags).filter(k => msg.flags[k]) : []),
+          flags: normalizeFlags(msg.flags),
           hasAttachment: attachments.length > 0,
           attachmentCount: attachments.length,
           attachments,
@@ -326,8 +333,8 @@ app.get('/api/message/:id', async (req, res) => {
       }
       
       // Mark as read
-      const flags = msg.flags || []
-      const isRead = Array.isArray(flags) ? flags.includes('\\Seen') || flags.includes('Seen') : false
+      const flags = normalizeFlags(msg.flags)
+      const isRead = flags.includes('\\Seen') || flags.includes('Seen')
       if (!isRead && msg.uid) {
         try {
           await client.messageFlagsAdd(msg.uid, ['\\Seen'])
@@ -345,7 +352,7 @@ app.get('/api/message/:id', async (req, res) => {
         body,
         bodyHtml,
         date: msg.date?.toISOString() || new Date().toISOString(),
-        flags: Array.isArray(msg.flags) ? msg.flags : (typeof msg.flags === 'object' && msg.flags !== null ? Object.keys(msg.flags).filter(k => msg.flags[k]) : []),
+        flags: normalizeFlags(msg.flags),
         attachments,
         folder,
         headers: {}
@@ -441,7 +448,7 @@ app.get('/api/search', async (req, res) => {
           bodyHtml: '',
           snippet: '',
           date: msg.date?.toISOString() || new Date().toISOString(),
-          flags: Array.isArray(msg.flags) ? msg.flags : (typeof msg.flags === 'object' && msg.flags !== null ? Object.keys(msg.flags).filter(k => msg.flags[k]) : []),
+          flags: normalizeFlags(msg.flags),
           hasAttachment: false,
           attachmentCount: 0,
           attachments: [],
