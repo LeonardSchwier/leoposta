@@ -4,7 +4,10 @@
   let { onFolderSelect, onCompose, onSettings, folders: apiFolders = [] } = $props()
   
   const activeFolder = $derived($store.activeFolder)
-  const unreadCount = $derived($store.messages.filter(m => m.isUnread).length)
+  function isUnread(m: any) {
+    return !m.flags?.includes('\\Seen') && !m.flags?.includes('Seen')
+  }
+  const unreadCount = $derived($store.messages.filter(m => isUnread(m)).length)
   
   // Build folder tree
   const specialFolders = $derived([

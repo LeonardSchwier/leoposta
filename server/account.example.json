@@ -1,0 +1,15 @@
+{
+  "id": "example-account",
+  "name": "My Mail",
+  "email": "you@example.com",
+  "imapHost": "imap.example.com",
+  "imapPort": 993,
+  "imapTls": true,
+  "imapUser": "you@example.com",
+  "imapPass": "",
+  "smtpHost": "smtp.example.com",
+  "smtpPort": 465,
+  "smtpTls": true,
+  "smtpUser": "you@example.com",
+  "smtpPass": ""
+}

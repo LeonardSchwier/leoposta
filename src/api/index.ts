@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001'
+const API_BASE = import.meta.env.VITE_API_URL || ''
 
 async function api(path: string, options: RequestInit = {}): Promise<any> {
   const res = await fetch(`${API_BASE}/api${path}`, {
@@ -24,9 +24,10 @@ export const MailAPI = {
   move: (id: string, from: string, to: string) => api(`/message/${id}/move`, {
     method: 'POST', body: JSON.stringify({ from, to })
   }),
-  setFlags: (id: string, folder: string, flags: string[]) => api(`/message/${id}/flags`, {
-    method: 'POST', body: JSON.stringify({ folder, flags })
-  }),
+  setFlags: (id: string, folder: string, add: string[], remove: string[]) =>
+    api(`/message/${id}/flags`, {
+      method: 'POST', body: JSON.stringify({ folder, add, remove })
+    }),
   addFolder: (name: string, parent?: string) => api('/folder', {
     method: 'POST', body: JSON.stringify({ name, parent })
   }),

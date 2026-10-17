@@ -64,6 +64,7 @@
         value={searchQuery}
         oninput={(e) => onSearch?.((e.target as HTMLInputElement).value)}
         class="search-input"
+        data-search-input
       />
     </div>
     <div class="actions">

@@ -193,12 +193,14 @@ app.get('/api/messages', async (req, res) => {
     const lock = await client.getMailboxLock(folder)
     
     try {
-      const mailbox = client.mailbox
-      const unreadCount = mailbox.exists - mailbox.seen
-      
-      const messages = []
-      const result = client.fetch(
-        `1:${Math.min(limit, mailbox.exists)}`,
+       const mailbox = client.mailbox
+       const unreadCount = mailbox.exists - mailbox.seen
+       const exists = mailbox.exists || 0
+       const start = Math.max(1, exists - Math.min(limit, exists) + 1)
+
+       const messages = []
+       const result = client.fetch(
+         `${start}:${exists}`,
         {
           uid: true,
           date: true,
@@ -267,7 +269,8 @@ app.get('/api/messages', async (req, res) => {
         })
       }
       
-      res.json({ messages, unreadCount })
+       messages.sort((a, b) => new Date(b.date) - new Date(a.date))
+       res.json({ messages, unreadCount })
     } finally {
       lock.release()
     }
@@ -371,7 +374,7 @@ app.get('/api/message/:id', async (req, res) => {
       const isRead = flags.includes('\\Seen') || flags.includes('Seen')
       if (!isRead && msg.uid) {
         try {
-          await client.messageFlagsAdd(msg.uid, ['\\Seen'])
+          await client.messageFlags(msg.uid, { add: ['\\Seen'], remove: [] }, { uid: true })
         } catch (e) { /* ignore */ }
       }
       
@@ -457,7 +460,7 @@ app.get('/api/search', async (req, res) => {
       }
       
       const resultUids = searchUids.slice(0, limit)
-      const result = client.fetch(resultUids.map(String).join(':'), {
+      const result = client.fetch(resultUids, {
         uid: true,
         date: true,
         from: true,
@@ -516,11 +519,8 @@ app.post('/api/message/:id/flags', async (req, res) => {
     const lock = await client.getMailboxLock(folder)
     
     try {
-      if (add.length > 0) {
-        await client.messageFlagsAdd(Number(id), add)
-      }
-      if (remove.length > 0) {
-        await client.messageFlagsRemove(Number(id), remove)
+      if (add.length > 0 || remove.length > 0) {
+        await client.messageFlags(Number(id), { add, remove }, { uid: true })
       }
       res.json({ success: true })
     } finally {
@@ -550,9 +550,9 @@ app.delete('/api/message/:id', async (req, res) => {
     try {
       if (toTrash) {
         // Move to Trash
-        await client.messageMove(Number(id), 'Trash')
+        await client.messageMove(Number(id), 'Trash', { uid: true })
       } else {
-        await client.messageDelete(Number(id))
+        await client.messageDelete(Number(id), { uid: true })
       }
       res.json({ success: true })
     } finally {
@@ -576,11 +576,11 @@ app.post('/api/message/:id/move', async (req, res) => {
     
     const client = createImapClient()
     await client.connect()
-    const lock = await client.getMailboxLock(from)
-    
-    try {
-      await client.messageMove(Number(id), to)
-      res.json({ success: true })
+      const lock = await client.getMailboxLock(from)
+
+      try {
+        await client.messageMove(Number(id), to, { uid: true })
+        res.json({ success: true })
     } finally {
       lock.release()
     }

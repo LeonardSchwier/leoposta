@@ -1,7 +1,8 @@
 <script lang="ts">
   import { store, getState, setComposeTo, setComposeSubject, setComposeBody, setIsLoading, setComposeScheduled, clearCompose, setComposing } from '../store'
   import { onMount } from 'svelte'
-  
+  import { addQueuedMessage } from '../lib/offlineQueue'
+
   let { onClose } = $props()
   
   
@@ -74,8 +75,27 @@
         alert('Failed to send: ' + data.error)
       }
     })
-    .catch(err => {
-      alert('Error: ' + err.message)
+    .catch(async (err: any) => {
+      if (!navigator.onLine) {
+        try {
+          await addQueuedMessage({
+            to: getState().composeTo,
+            cc: getState().composeCc,
+            bcc: getState().composeBcc,
+            subject: subjectInput,
+            body: bodyInput,
+            scheduled: getState().composeScheduled,
+            createdAt: new Date().toISOString()
+          })
+          clearCompose()
+          setComposing(false)
+          onClose()
+        } catch {
+          alert('Failed to queue message: ' + err.message)
+        }
+      } else {
+        alert('Error: ' + err.message)
+      }
     })
     .finally(() => {
       setIsLoading(false)
