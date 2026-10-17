@@ -1,6 +1,18 @@
 <script lang="ts">
   import { store, getState, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, deleteMessage, updateMessage, selectMessage } from '../store'
 
+  let {
+    onDelete: propDelete,
+    onArchive: propArchive,
+    onStar: propStar,
+    onReply: propReply
+  }: {
+    onDelete?: () => void
+    onArchive?: () => void
+    onStar?: () => void
+    onReply?: () => void
+  } = $props()
+
   function formatFullDate(dateStr: string) {
     return new Date(dateStr).toLocaleString()
   }
@@ -13,6 +25,7 @@
   function handleReply() {
     const msg = getCurrentMessage()
     if (!msg) return
+    if (propReply) { propReply(); return }
     setComposeTo([msg.from])
     setComposeSubject(`Re: ${msg.subject}`)
     setComposeReplyTo(msg.id)
@@ -31,18 +44,21 @@
   }
 
   function handleDelete() {
+    if (propDelete) { propDelete(); return }
     const msg = getCurrentMessage()
     if (!msg) return
     deleteMessage(msg.id)
   }
 
   function handleArchive() {
+    if (propArchive) { propArchive(); return }
     const msg = getCurrentMessage()
     if (!msg) return
     deleteMessage(msg.id)
   }
 
   function handleStar() {
+    if (propStar) { propStar(); return }
     const msg = getCurrentMessage()
     if (!msg) return
     const flags = msg.flags || []
