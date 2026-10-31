@@ -7,6 +7,7 @@ import { simpleParser } from 'mailparser'
 import fs from 'fs'
 import path from 'path'
 import { fileURLToPath } from 'url'
+import * as openpgp from 'openpgp'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -85,6 +86,15 @@ function parseFromAddr(fromField) {
   return { name: '', address: '' }
 }
 
+// Helper: coerce IMAP date to ISO string (imapflow may give Date or string)
+function toISO(d) {
+  if (!d) return new Date().toISOString()
+  if (d instanceof Date && !isNaN(d.getTime())) return d.toISOString()
+  const t = new Date(d).getTime()
+  if (!isNaN(t)) return new Date(t).toISOString()
+  return new Date().toISOString()
+}
+
 // Helper: extract addresses from IMAP response (varies in shape)
 function extractAddrs(field) {
   if (!field) return []
@@ -105,7 +115,7 @@ function createImapClient() {
   if (!account) throw new Error('No account configured')
   const isIP = /^[0-9.]+$/.test(account.imapHost)
   const servername = isIP ? 'imap.mailbox.org' : account.imapHost
-  return new ImapFlow({
+  const client = new ImapFlow({
     host: account.imapHost,
     port: account.imapPort,
     secure: account.imapTls,
@@ -118,6 +128,103 @@ function createImapClient() {
     },
     logger: false
   })
+  // ImapFlow emits 'error' (e.g. ETIMEOUT / socket reset) as a Node EventEmitter.
+  // Without a listener this becomes an uncaughtException and crashes the whole
+  // process. Instead: log it, disconnect cleanly so the shared pool can
+  // reconnect on the next request. Never rethrow.
+  client.on('error', (err) => {
+    console.error('ImapFlow error:', err && err.code ? `${err.code} ` : '', (err && err.message) || err)
+    if (typeof client.logout === 'function') {
+      const p = client.logout()
+      if (p && typeof p.catch === 'function') p.catch(() => {})
+    }
+  })
+  // When the socket closes on its own (server-side timeout), drop the pooled
+  // client if this is it, so the next request reconnects fresh.
+  client.on('close', () => {
+    if (pool.client === client) { pool.client = null; pool.connectP = null }
+  })
+  return client
+}
+
+// Shared IMAP client
+// mailbox.org (and most shared IMAP providers) rate-limit newly-opened
+// sessions. The previous design opened a fresh connection for EVERY API
+// request, so bursty UI activity was hitting 'NO' -> "Command failed".
+// We now keep ONE authenticated connection for all REST IMAP operations and
+// only tear it down + reconnect when it actually breaks. The /api/idle
+// endpoint keeps its own dedicated long-lived connection (correct as-is).
+
+function safeLogout(c) {
+  const p = c && typeof c.logout === 'function' ? c.logout() : null
+  if (p && typeof p.catch === 'function') p.catch(() => {})
+}
+
+const pool = {
+  client: null,
+  connectP: null,
+  queue: Promise.resolve(),
+  async ensure() {
+    if (this.client && this.client.user) return this.client
+    if (!this.connectP) {
+      this.connectP = (async () => {
+        const client = createImapClient()
+        try { await client.connect() } catch (e) { safeLogout(client); throw e }
+        return client
+      })()
+    }
+    const c = await this.connectP
+    this.client = c
+    this.connectP = null
+    return c
+  },
+   // Shared connection mailbox is per-connection global, so REST ops must
+   // be serialized. Reconnects + retries on transient failures.
+   async _exec(fn, retry) {
+    let lastErr
+    for (let i = 0; i < retry; i++) {
+      const c = await this.ensure()
+      try {
+        return await fn(c)
+      } catch (e) {
+        lastErr = e
+        const resp = e && e.responseText ? String(e.responseText) : ''
+        const authThrottled = e && (e.authenticationFailed || /\[UNAVAILABLE\]\s*Temporary authentication failure/i.test(resp))
+        const transient = !authThrottled && (
+          String(e && e.message || '') === 'Command failed'
+          || String(e && e.message || '').includes('socket was closed unexpectedly')
+          || String(e && e.message || '').includes('No response to command')
+          || !c.user
+        )
+        if (!transient || authThrottled) {
+          // Keep the pool clean even on auth throttle so the next attempt
+          // (after the user retries later) doesn't reuse a broken session.
+          const wasOurs = this.client === c
+          safeLogout(c)
+          if (wasOurs) { this.client = null; this.connectP = null }
+          throw e
+        }
+        const wasOurs = this.client === c
+        safeLogout(c)
+        if (wasOurs) { this.client = null; this.connectP = null }
+        await new Promise(r => setTimeout(r, 300 * (i + 1)))
+      }
+    }
+    throw lastErr
+  },
+  run(fn, retry = 4) {
+    const prev = this.queue || Promise.resolve()
+    const next = prev.then(() => this._exec(fn, retry))
+    // Keep queue alive even if this op rejects; next op still enqueues.
+    this.queue = next.catch(() => {})
+    return next
+  },
+  async reset() {
+    const c = this.client
+    this.client = null
+    this.connectP = null
+    if (c) safeLogout(c)
+  }
 }
 
 // Create SMTP transporter
@@ -165,6 +272,7 @@ app.post('/api/account', (req, res) => {
       smtpUser, smtpPass
     }
     saveAccount()
+    pool.reset().catch(() => {})
     res.json({ success: true })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -175,39 +283,41 @@ app.post('/api/account', (req, res) => {
 app.delete('/api/account', (req, res) => {
   account = null
   try { fs.unlinkSync(ACCOUNT_FILE) } catch {}
+  pool.reset().catch(() => {})
   res.json({ success: true })
 })
 
 // GET /api/messages
 app.get('/api/messages', async (req, res) => {
   try {
-    const { folder = 'INBOX', limit = 50 } = req.query
-    
+    const { folder = 'INBOX', limit = 100, offset = 0 } = req.query
+    const limitN = Math.min(Math.max(1, Number(limit) || 100), 200)
+    const offsetN = Math.max(0, Number(offset) || 0)
+
     if (!account) {
       return res.json({ messages: [], unreadCount: 0 })
     }
     
-    const client = createImapClient()
-    await client.connect()
-    
+  await pool.run(async (client) => {
     const lock = await client.getMailboxLock(folder)
-    
     try {
        const mailbox = client.mailbox
-       const unreadCount = mailbox.exists - mailbox.seen
        const exists = mailbox.exists || 0
-       const start = Math.max(1, exists - Math.min(limit, exists) + 1)
+       const unreadCount = (mailbox.unseen != null) ? mailbox.unseen
+                        : (mailbox.exists && mailbox.seen != null) ? Math.max(0, mailbox.exists - mailbox.seen)
+                        : (mailbox.recent || 0)
+       const end = exists
+       const start = Math.max(1, end - (limitN + offsetN))
 
        const messages = []
        const result = client.fetch(
-         `${start}:${exists}`,
+         `${start}:${end}`,
         {
           uid: true,
           date: true,
           from: true,
           to: true,
           cc: true,
-          bcc: true,
           subject: true,
           flags: true,
           envelope: true,
@@ -216,8 +326,8 @@ app.get('/api/messages', async (req, res) => {
           'references': true
         },
         { op: 'FETCH' }
-      )
-      
+       )
+       
       for await (const msg of result) {
         const from = parseFromAddr(msg.from?.[0] || msg.envelope?.from?.[0])
         const to = (msg.to || msg.envelope?.to || []).map(t => t.address)
@@ -255,27 +365,26 @@ app.get('/api/messages', async (req, res) => {
           to,
           cc,
           bcc,
-          subject: msg.subject || msg.envelope?.subject || '(No Subject)',
-          body: '',
-          bodyHtml: '',
-          snippet: '',
-          date: msg.date?.toISOString() || new Date().toISOString(),
-          flags: normalizeFlags(msg.flags),
-          hasAttachment: attachments.length > 0,
-          attachmentCount: attachments.length,
-          attachments,
-          folder,
-          headers: {}
+           subject: msg.subject || msg.envelope?.subject || '(No Subject)',
+           body: '',
+           bodyHtml: '',
+           snippet: '',
+           date: toISO(msg.date),
+           flags: normalizeFlags(msg.flags),
+           hasAttachment: attachments.length > 0,
+           attachmentCount: attachments.length,
+           attachments,
+           folder,
+           headers: {}
         })
       }
       
        messages.sort((a, b) => new Date(b.date) - new Date(a.date))
-       res.json({ messages, unreadCount })
+        res.json({ messages, unreadCount })
     } finally {
       lock.release()
     }
-    
-    await client.logout()
+  })
   } catch (err) {
     console.error('Error fetching messages:', err)
     res.status(500).json({ error: err.message })
@@ -292,11 +401,8 @@ app.get('/api/message/:id', async (req, res) => {
       return res.status(404).json({ error: 'No account configured' })
     }
     
-    const client = createImapClient()
-    await client.connect()
-    
+ await pool.run(async (client) => {
     const lock = await client.getMailboxLock(folder)
-    
     try {
       const msg = await (async () => {
         // IMAP proxy doesn't support UID in fetch, use sequence numbers
@@ -378,6 +484,12 @@ app.get('/api/message/:id', async (req, res) => {
         } catch (e) { /* ignore */ }
       }
       
+      const pgp = await processPgp(body || msg.source?.toString('utf-8') || '')
+      const finalBody = pgp?.decrypted ? pgp.text : body
+      const finalHtml = pgp?.decrypted ? (pgp.html || '') : bodyHtml
+      const finalAttachments = pgp?.decrypted && pgp.attachments?.length
+        ? [...attachments, ...pgp.attachments.filter(p => !attachments.some(a => a.filename === p.filename))]
+        : attachments
       res.json({
         id: msg.uid?.toString() || id,
         from: from.name || from.address || '',
@@ -386,19 +498,19 @@ app.get('/api/message/:id', async (req, res) => {
         cc,
         bcc,
         subject: msg.subject || msg.envelope?.subject || '(No Subject)',
-        body,
-        bodyHtml,
-        date: msg.date?.toISOString() || new Date().toISOString(),
+        body: finalBody,
+        bodyHtml: finalHtml,
+        pgp: pgp || null,
+        date: toISO(msg.date),
         flags: normalizeFlags(msg.flags),
-        attachments,
+        attachments: finalAttachments,
         folder,
         headers: {}
       })
     } finally {
       lock.release()
     }
-    
-    await client.logout()
+  })
   } catch (err) {
     console.error('Error fetching message:', err)
     res.status(500).json({ error: err.message })
@@ -411,21 +523,18 @@ app.get('/api/folders', async (req, res) => {
     if (!account) {
       return res.json({ folders: [] })
     }
-    
-    const client = createImapClient()
-    await client.connect()
-    
-    const mailboxes = await client.list()
-    const folders = mailboxes.map(mb => ({
-      id: mb.path,
-      name: mb.name,
-      parentId: mb.parentPath ? mb.path.split(mb.name)[0].slice(0, -1) : null,
-      specialUse: mb.specialUse || undefined,
-      exists: mb.exists,
-      unseen: mb.unseen
-    }))
-    
-    await client.logout()
+
+    const folders = await pool.run(async (client) => {
+      const mailboxes = await client.list()
+      return mailboxes.map(mb => ({
+        id: mb.path,
+        name: mb.name,
+        parentId: mb.parentPath ? mb.path.split(mb.name)[0].slice(0, -1) : null,
+        specialUse: mb.specialUse || undefined,
+        exists: mb.exists,
+        unseen: mb.unseen
+      }))
+    })
     res.json({ folders })
   } catch (err) {
     console.error('Error listing folders:', err)
@@ -442,15 +551,11 @@ app.get('/api/search', async (req, res) => {
       return res.json({ messages: [], total: 0 })
     }
     
-    const client = createImapClient()
-    await client.connect()
+ await pool.run(async (client) => {
     const lock = await client.getMailboxLock(folder)
-    
     try {
-      // IMAP search: SUBJECT, FROM, TO, BODY
-      const searchCriteria = [
-        { SUBJECT: q },
-      ]
+      // IMAP search: SUBJECT
+      const searchCriteria = { SUBJECT: q }
       
       const uids = await client.search(searchCriteria, { uid: true })
       const searchUids = Array.isArray(uids) ? uids : [uids]
@@ -468,7 +573,7 @@ app.get('/api/search', async (req, res) => {
         subject: true,
         flags: true,
         envelope: true
-      }, { op: 'FETCH' })
+      }, { op: 'FETCH', uid: true })
       
       const messages = []
       for await (const msg of result) {
@@ -483,23 +588,22 @@ app.get('/api/search', async (req, res) => {
           subject: msg.subject || msg.envelope?.subject || '(No Subject)',
           body: '',
           bodyHtml: '',
-          snippet: '',
-          date: msg.date?.toISOString() || new Date().toISOString(),
-          flags: normalizeFlags(msg.flags),
-          hasAttachment: false,
-          attachmentCount: 0,
-          attachments: [],
-          folder,
-          headers: {}
-        })
-      }
+           snippet: '',
+           date: toISO(msg.date),
+           flags: normalizeFlags(msg.flags),
+           hasAttachment: false,
+           attachmentCount: 0,
+           attachments: [],
+           folder,
+           headers: {}
+         })
+       }
       
-      res.json({ messages, total: searchUids.length })
+       res.json({ messages, total: searchUids.length })
     } finally {
       lock.release()
     }
-    
-    await client.logout()
+  })
   } catch (err) {
     console.error('Error searching:', err)
     res.status(500).json({ error: err.message })
@@ -514,20 +618,17 @@ app.post('/api/message/:id/flags', async (req, res) => {
     
     if (!account) return res.status(400).json({ error: 'No account configured' })
     
-    const client = createImapClient()
-    await client.connect()
+ await pool.run(async (client) => {
     const lock = await client.getMailboxLock(folder)
-    
     try {
-      if (add.length > 0 || remove.length > 0) {
-        await client.messageFlags(Number(id), { add, remove }, { uid: true })
-      }
-      res.json({ success: true })
+       if (add.length > 0 || remove.length > 0) {
+         await client.messageFlags(Number(id), { add, remove }, { uid: true })
+       }
+       res.json({ success: true })
     } finally {
       lock.release()
     }
-    
-    await client.logout()
+  })
   } catch (err) {
     console.error('Error updating flags:', err)
     res.status(500).json({ error: err.message })
@@ -543,10 +644,8 @@ app.delete('/api/message/:id', async (req, res) => {
     
     if (!account) return res.status(400).json({ error: 'No account configured' })
     
-    const client = createImapClient()
-    await client.connect()
+ await pool.run(async (client) => {
     const lock = await client.getMailboxLock(folder)
-    
     try {
       if (toTrash) {
         // Move to Trash
@@ -558,8 +657,7 @@ app.delete('/api/message/:id', async (req, res) => {
     } finally {
       lock.release()
     }
-    
-    await client.logout()
+  })
   } catch (err) {
     console.error('Error deleting message:', err)
     res.status(500).json({ error: err.message })
@@ -574,18 +672,15 @@ app.post('/api/message/:id/move', async (req, res) => {
     
     if (!account || !to) return res.status(400).json({ error: 'from/to required' })
     
-    const client = createImapClient()
-    await client.connect()
+ await pool.run(async (client) => {
       const lock = await client.getMailboxLock(from)
-
       try {
         await client.messageMove(Number(id), to, { uid: true })
         res.json({ success: true })
-    } finally {
-      lock.release()
-    }
-    
-    await client.logout()
+      } finally {
+        lock.release()
+      }
+  })
   } catch (err) {
     console.error('Error moving message:', err)
     res.status(500).json({ error: err.message })
@@ -598,16 +693,24 @@ app.post('/api/folder', async (req, res) => {
     const { name, parentId } = req.body
     if (!account || !name) return res.status(400).json({ error: 'name required' })
     
-    const client = createImapClient()
-    await client.connect()
-    
     const folderPath = parentId ? `${parentId}/${name}` : name
-    await client.mailboxCreate(folderPath)
-    
-    await client.logout()
+    await pool.run(async (client) => { await client.mailboxCreate(folderPath) })
     res.json({ success: true, path: folderPath })
   } catch (err) {
     console.error('Error creating folder:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/folder/rename - Rename folder
+app.post('/api/folder/rename', async (req, res) => {
+  try {
+    const { from, to } = req.body || {}
+    if (!account || !from || !to) return res.status(400).json({ error: 'from and to required' })
+    await pool.run(async (client) => { await client.mailboxRename(from, to) })
+    res.json({ success: true, path: to })
+  } catch (err) {
+    console.error('Error renaming folder:', err)
     res.status(500).json({ error: err.message })
   }
 })
@@ -618,18 +721,487 @@ app.delete('/api/folder', async (req, res) => {
     const { path: folderPath } = req.query
     if (!account || !folderPath) return res.status(400).json({ error: 'path required' })
     
-    const client = createImapClient()
-    await client.connect()
-    
-    await client.mailboxDelete(folderPath)
-    
-    await client.logout()
+    await pool.run(async (client) => { await client.mailboxDelete(folderPath) })
     res.json({ success: true })
   } catch (err) {
     console.error('Error deleting folder:', err)
     res.status(500).json({ error: err.message })
   }
 })
+
+// ---------- WebDAV/CalDAV/CardDAV client (https, Basic auth) ----------
+import https from 'https'
+import http from 'http'
+
+const DAV_HOST = process.env.DAV_HOST || 'dav.mailbox.org'
+const DAV_PORT = parseInt(process.env.DAV_PORT || '443', 10)
+const DAV_TLS = (process.env.DAV_TLS || (process.env.DAV_HOST ? 'true' : 'false')) === 'true'
+const DAV_PATH_PREFIX = (user) => (process.env.DAV_PREFIX || '/dav/' + user)
+
+function davRequest(method, urlPath, body, contentType) {
+  return new Promise((resolve, reject) => {
+    const user = account && account.imapUser ? account.imapUser : ''
+    const pass = account && account.imapPass ? account.imapPass : ''
+    const token = Buffer.from(`${user}:${pass}`).toString('base64')
+    const opts = {
+      hostname: DAV_HOST,
+      port: DAV_PORT,
+      path: urlPath,
+      method,
+      headers: {
+        'Authorization': `Basic ${token}`,
+        'Content-Type': contentType || 'application/xml; charset="utf-8"',
+        'Depth': '1'
+      }
+    }
+    if (contentType === 'text/xml') opts.headers['Content-Type'] = contentType
+    const lib = DAV_TLS ? https : http
+    const req = lib.request(opts, (res) => {
+      const chunks = []
+      res.on('data', c => chunks.push(c))
+      res.on('end', () => {
+        const data = Buffer.concat(chunks).toString('utf-8')
+        if (res.statusCode >= 200 && res.statusCode < 300) {
+          resolve({ status: res.statusCode, body: data, headers: res.headers })
+        } else {
+          reject(new Error(`DAV ${method} ${urlPath} → ${res.statusCode}: ${data.slice(0, 300)}`))
+        }
+      })
+    })
+    req.on('error', reject)
+    if (body) req.write(body)
+    req.end()
+  })
+}
+
+// Parse a simple XML response to extract text nodes by tag
+function xmlParseNodes(xml, parentTag, childTag) {
+  const results = []
+  const re = new RegExp(`<${parentTag}[\\s>][\\s\\S]*?<${childTag}[^>]*>([\\s\\S]*?)</${childTag}>`, 'g')
+  let m
+  while ((m = re.exec(xml)) !== null) results.push(m[1].trim())
+  if (results.length) return results
+  // try simpler: <parentTag> ... <childTag>text</childTag> ... </parentTag>
+  const re2 = new RegExp(`<${parentTag}[^>]*>([\\s\\S]*?)</${parentTag}>`, 'g')
+  while ((m = re2.exec(xml)) !== null) {
+    const inner = m[1]
+    const cm = inner.match(new RegExp(`<${childTag}[^>]*>([\\s\\S]*?)</${childTag}>`))
+    if (cm) results.push(cm[1].trim())
+  }
+  return results
+}
+
+function extractResponseSet(xml) {
+  // Extract <response> blocks: href, displayname, calendar-timezone, etag
+  const responses = []
+  const respRe = /<response>([\s\S]*?)<\/response>/g
+  let m
+  while ((m = respRe.exec(xml)) !== null) {
+    const inner = m[1]
+    const href = (inner.match(/<href>([\s\S]*?)<\/href>/) || [])[1] || ''
+    const displayname = (inner.match(/<displayname[^>]*>([\s\S]*?)<\/displayname>/) || [])[1] || ''
+    const etag = (inner.match(/<etag>([\s\S]*?)<\/etag>/) || [])[1] || ''
+    if (href) responses.push({ href: href.trim(), displayname: displayname.trim(), etag: (etag.trim() || '').replace(/"/g, '') })
+  }
+  return responses
+}
+
+// ===== CalDAV endpoints =====
+
+// GET /api/calendar/calendars
+app.get('/api/calendar/calendars', async (req, res) => {
+  try {
+    if (!account) return res.status(400).json({ error: 'No account configured' })
+    const basePath = DAV_PATH_PREFIX(account.imapUser)
+    const profindXml = `<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop>
+    <d:displayname/>
+    <d:resourcetype/>
+    <c:calendar-timezone/>
+  </d:prop>
+</d:propfind>`
+    const r = await davRequest('PROPFIND', basePath, profindXml)
+    const entries = extractResponseSet(r.body).filter(e => e.displayname || /\/calendars\//.test(e.href))
+    // Filter to only calendar resources (skip root)
+    const calendars = entries.filter(e => e.displayname)
+    res.json({ calendars })
+  } catch (err) {
+    console.error('CalDAV calendars error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/calendar/events?calendar=<id>&start=<ISO>&end=<ISO>
+app.get('/api/calendar/events', async (req, res) => {
+  try {
+    if (!account) return res.status(400).json({ error: 'No account configured' })
+    const { calendar, start, end } = req.query
+    if (!calendar) return res.status(400).json({ error: 'calendar param required' })
+    const basePath = DAV_PATH_PREFIX(account.imapUser)
+    const startTz = '20260101T000000Z'
+    const endTz = '20261231T235959Z'
+    const reportXml = `<?xml version="1.0" encoding="utf-8"?>
+<c:calendar-multiget xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop>
+    <d:getetag/>
+    <d:getcontenttype/>
+    <d:getcontentlength/>
+  </d:prop>
+  <d:prop>
+    <c:calendar-data/>
+  </d:prop>
+</c:calendar-multiget>`
+    // Use REPORT to query
+    const report = `<?xml version="1.0" encoding="utf-8"?>
+<c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+  <d:prop>
+    <d:getetag/>
+    <d:getcontenttype/>
+  </d:prop>
+  <c:filter>
+    <c:time-range start="${start || ''}" end="${end || ''}"/>
+  </c:filter>
+</c:calendar-query>`
+    const urlPath = `${basePath}/${calendar.replace(/^\/+|\/+$/g, '')}`
+    const r = await davRequest('REPORT', urlPath, report)
+    const resources = extractResponseSet(r.body).filter(e => /ics/i.test(e.href))
+    // Fetch each event's ICS content
+    const events = []
+    for (const ev of resources) {
+      const evPath = ev.href.startsWith('/') ? ev.href : `/${ev.href}`
+      try {
+        const evRes = await davRequest('GET', evPath, null, null)
+        const ics = evRes.body
+        // Parse minimal VEVENT: SUMMARY, DTSTART, DTEND, UID
+        const uid = (ics.match(/UID:(.+)/) || [])[1] || evPath
+        const summary = (ics.match(/SUMMARY:(.+)/) || [])[1] || '(no subject)'
+        const dtstart = (ics.match(/DTSTART[;TZID=[^;]*;?[^:]*:(.+)/) || [])[1] || ''
+        const dtend = (ics.match(/DTEND[;TZID=[^;]*;?[^:]*:(.+)/) || [])[1] || ''
+        const location = (ics.match(/LOCATION:(.+)/) || [])[1] || ''
+        const description = (ics.match(/DESCRIPTION:(.+)/) || [])[1] || ''
+        events.push({ uid: uid.trim(), summary: summary.trim(), start: dtstart.trim(), end: dtend.trim(), location: location.trim(), description: description.trim(), etag: evRes.headers.etag || '', href: ev.href, ics })
+      } catch {}
+    }
+    res.json({ events })
+  } catch (err) {
+    console.error('CalDAV events error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PUT /api/calendar/event  (create or update)
+app.put('/api/calendar/event', async (req, res) => {
+  try {
+    if (!account) return res.status(400).json({ error: 'No account configured' })
+    const { calendar, ics, uid } = req.body || {}
+    if (!calendar || !ics) return res.status(400).json({ error: 'calendar and ics required' })
+    const basePath = DAV_PATH_PREFIX(account.imapUser)
+    const urlPath = `${basePath}/${calendar.replace(/^\/+|\/+$/g, '')}/${uid || Date.now()}.ics`
+    const r = await davRequest('PUT', urlPath, ics, 'text/calendar; charset=utf-8')
+    res.json({ success: true, uid: uid || urlPath.split('/').pop().replace('.ics',''), etag: r.headers.etag || '' })
+  } catch (err) {
+    console.error('CalDAV event PUT error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// DELETE /api/calendar/event  (delete)
+app.delete('/api/calendar/event', async (req, res) => {
+  try {
+    if (!account) return res.status(400).json({ error: 'No account configured' })
+    const { calendar, uid } = req.query
+    if (!calendar || !uid) return res.status(400).json({ error: 'calendar and uid required' })
+    const basePath = DAV_PATH_PREFIX(account.imapUser)
+    const urlPath = `${basePath}/${calendar.replace(/^\/+|\/+$/g, '')}/${uid}.ics`
+    await davRequest('DELETE', urlPath, null, null)
+    res.json({ success: true })
+  } catch (err) {
+    console.error('CalDAV event DELETE error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/calendar/import  (ICS import)
+app.post('/api/calendar/import', async (req, res) => {
+  try {
+    if (!account) return res.status(400).json({ error: 'No account configured' })
+    const { calendar, ics } = req.body || {}
+    if (!calendar || !ics) return res.status(400).json({ error: 'calendar and ics required' })
+    // Parse VEVENTs from ICS
+    const lines = ics.replace(/\r\n/g, '\n').replace(/\\n/g, '\n').split('\n')
+    const events = []
+    let current = null
+    for (const line of lines) {
+      if (line.startsWith('BEGIN:VEVENT')) current = { lines: [] }
+      else if (line.startsWith('END:VEVENT')) { if (current) { events.push(current.lines.join('\n')); current = null } }
+      else if (current) current.lines.push(line)
+    }
+    if (!events.length) return res.status(400).json({ error: 'No VEVENT found in ICS' })
+    const basePath = DAV_PATH_PREFIX(account.imapUser)
+    let imported = 0
+    for (const ev of events) {
+      const uidMatch = ev.match(/UID:(.+)/)
+      const uid = uidMatch ? uidMatch[1].trim() : Date.now() + imported
+      const urlPath = `${basePath}/${calendar.replace(/^\/+|\/+$/g, '')}/${uid}.ics`
+      // Wrap in full VCALENDAR if not present
+      let full = ev
+      if (!ev.includes('BEGIN:VCALENDAR')) {
+        full = `BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:-//leoposta//EN\r\n${ev}\r\nEND:VCALENDAR`
+      }
+      try {
+        await davRequest('PUT', urlPath, full, 'text/calendar; charset=utf-8')
+        imported++
+      } catch {}
+    }
+    res.json({ success: true, imported, total: events.length })
+  } catch (err) {
+    console.error('CalDAV import error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ===== CardDAV endpoints =====
+
+// GET /api/contacts/calendars  (list address books)
+app.get('/api/contacts/calendars', async (req, res) => {
+  try {
+    if (!account) return res.status(400).json({ error: 'No account configured' })
+    const basePath = DAV_PATH_PREFIX(account.imapUser)
+    const profindXml = `<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:" xmlns:crd="urn:ietf:params:xml:ns:carddav">
+  <d:prop>
+    <d:displayname/>
+    <d:resourcetype/>
+  </d:prop>
+</d:propfind>`
+    const r = await davRequest('PROPFIND', basePath, profindXml)
+    const entries = extractResponseSet(r.body)
+    const books = entries.filter(e => /addressbooks/i.test(e.href) && e.displayname)
+    res.json({ addressBooks: books })
+  } catch (err) {
+    console.error('CardDAV calendars error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// GET /api/contacts?book=<id>&q=<query>
+app.get('/api/contacts', async (req, res) => {
+  try {
+    if (!account) return res.status(400).json({ error: 'No account configured' })
+    const { book, q } = req.query
+    if (!book) return res.status(400).json({ error: 'book param required' })
+    const basePath = DAV_PATH_PREFIX(account.imapUser)
+    // PROPFIND to list all .vcf files
+    const profind = `<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:">
+  <d:prop>
+    <d:displayname/>
+    <d:getetag/>
+    <d:getcontenttype/>
+  </d:prop>
+</d:propfind>`
+    const urlPath = `${basePath}/${book.replace(/^\/+|\/+$/g, '')}`
+    const r = await davRequest('PROPFIND', urlPath, profind)
+    const entries = extractResponseSet(r.body).filter(e => /\.vcf/i.test(e.href))
+    // Fetch each contact
+    const contacts = []
+    for (const c of entries) {
+      try {
+        const vcfPath = c.href.startsWith('/') ? c.href : `/${c.href}`
+        const vres = await davRequest('GET', vcfPath, null, null)
+        const vcf = vres.body
+        const fn = (vcf.match(/FN:(.+)/) || [])[1] || c.displayname || '(unknown)'
+        const email = (vcf.match(/EMAIL[^:]*:(.+)/) || [])[1] || ''
+        const phone = (vcf.match(/TEL[^:]*:(.+)/) || [])[1] || ''
+        const uid = (vcf.match(/UID:(.+)/) || [])[1] || c.href.split('/').pop()
+        const org = (vcf.match(/ORG:(.+)/) || [])[1] || ''
+        contacts.push({ uid: uid.trim(), name: fn.trim(), email: email.trim(), phone: phone.trim(), org: org.trim().split(';')[0], vcf, href: c.href, etag: vres.headers.etag || '' })
+      } catch {}
+    }
+    // Filter
+    let filtered = contacts
+    if (q) {
+      const lq = q.toLowerCase()
+      filtered = contacts.filter(c => c.name.toLowerCase().includes(lq) || c.email.toLowerCase().includes(lq))
+    }
+    filtered.sort((a, b) => a.name.localeCompare(b.name))
+    res.json({ contacts: filtered, total: contacts.length })
+  } catch (err) {
+    console.error('CardDAV contacts error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// PUT /api/contact  (create or update a contact)
+app.put('/api/contact', async (req, res) => {
+  try {
+    if (!account) return res.status(400).json({ error: 'No account configured' })
+    const { book, vcf } = req.body || {}
+    if (!book || !vcf) return res.status(400).json({ error: 'book and vcf required' })
+    const basePath = DAV_PATH_PREFIX(account.imapUser)
+    const uidMatch = vcf.match(/UID:(.+)/)
+    const uid = uidMatch ? uidMatch[1].trim() : ('leoposta_' + Date.now())
+    const urlPath = `${basePath}/${book.replace(/^\/+|\/+$/g, '')}/${uid}.vcf`
+    const r = await davRequest('PUT', urlPath, vcf, 'text/vcard; charset=utf-8')
+    res.json({ success: true, uid, etag: r.headers.etag || '' })
+  } catch (err) {
+    console.error('CardDAV contact PUT error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// DELETE /api/contact?book=<id>&uid=<uid>
+app.delete('/api/contact', async (req, res) => {
+  try {
+    if (!account) return res.status(400).json({ error: 'No account configured' })
+    const { book, uid } = req.query
+    if (!book || !uid) return res.status(400).json({ error: 'book and uid required' })
+    const basePath = DAV_PATH_PREFIX(account.imapUser)
+    const urlPath = `${basePath}/${book.replace(/^\/+|\/+$/g, '')}/${uid}.vcf`
+    await davRequest('DELETE', urlPath, null, null)
+    res.json({ success: true })
+  } catch (err) {
+    console.error('CardDAV contact DELETE error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// POST /api/contacts/import  (VCF import)
+app.post('/api/contacts/import', async (req, res) => {
+  try {
+    if (!account) return res.status(400).json({ error: 'No account configured' })
+    const { book, vcf } = req.body || {}
+    if (!book || !vcf) return res.status(400).json({ error: 'book and vcf required' })
+    // Split vCard by BEGIN:VCARD
+    const parts = vcf.split(/BEGIN:VCARD/).filter(p => p.includes('VERSION:'))
+    const basePath = DAV_PATH_PREFIX(account.imapUser)
+    let imported = 0
+    for (const part of parts) {
+      const card = 'BEGIN:VCARD' + part
+      const uidMatch = card.match(/UID:(.+)/)
+      const uid = uidMatch ? uidMatch[1].trim() : ('leoposta_' + Date.now() + imported)
+      const urlPath = `${basePath}/${book.replace(/^\/+|\/+$/g, '')}/${uid}.vcf`
+      try {
+        await davRequest('PUT', urlPath, card, 'text/vcard; charset=utf-8')
+        imported++
+      } catch {}
+    }
+    res.json({ success: true, imported, total: parts.length })
+  } catch (err) {
+    console.error('CardDAV import error:', err.message)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// ---------- PGP: key storage + per-message decryption ----------
+const PGP_PRIVATE_FILE = path.join(__dirname, 'pgp_private.asc')
+const PGP_PUBLIC_FILE  = path.join(__dirname, 'pgp_publics.asc')
+const PGP_PASS_FILE    = path.join(__dirname, 'pgp_passphrase.txt')
+const PGP_ARMOR_RE     = /-----BEGIN PGP (?:MESSAGE|SIGNED MESSAGE|ENCRYPTED MESSAGE)[\s\S]*?-----END PGP (?:MESSAGE|SIGNED MESSAGE|ENCRYPTED MESSAGE)[\s\S]*?-----/
+
+function pgpState() {
+  return {
+    hasPrivateKey: fs.existsSync(PGP_PRIVATE_FILE),
+    hasPublicKey:  fs.existsSync(PGP_PUBLIC_FILE),
+    hasPassphrase: fs.existsSync(PGP_PASS_FILE)
+  }
+}
+
+async function savePgp({ privateAsc, publicAsc, passphrase }) {
+  if (privateAsc) {
+    await openpgp.readPrivateKey({ armoredKey: privateAsc })
+    fs.writeFileSync(PGP_PRIVATE_FILE, privateAsc.trim() + '\n', { mode: 0o600 })
+  }
+  if (publicAsc) {
+    await openpgp.readKey({ armoredKey: publicAsc })
+    const trimmed = publicAsc.trim()
+    const existing = fs.existsSync(PGP_PUBLIC_FILE) ? fs.readFileSync(PGP_PUBLIC_FILE, 'utf-8') : ''
+    if (!existing.includes(trimmed)) {
+      fs.writeFileSync(PGP_PUBLIC_FILE, (existing ? existing.replace(/\s+$/, '') + '\n\n' : '') + trimmed + '\n')
+    }
+  }
+  if (passphrase !== undefined) {
+    if (passphrase) fs.writeFileSync(PGP_PASS_FILE, passphrase, { mode: 0o600 })
+    else if (fs.existsSync(PGP_PASS_FILE)) fs.unlinkSync(PGP_PASS_FILE)
+  }
+  return pgpState()
+}
+
+function deletePgp() {
+  for (const f of [PGP_PRIVATE_FILE, PGP_PUBLIC_FILE, PGP_PASS_FILE]) {
+    try { fs.unlinkSync(f) } catch {}
+  }
+  return pgpState()
+}
+
+// Returns null if body has no PGP armor; otherwise a status object.
+async function processPgp(plainBody) {
+  if (!plainBody || !PGP_ARMOR_RE.test(plainBody)) return null
+  const armored = plainBody.match(PGP_ARMOR_RE)[0]
+  if (/BEGIN PGP (?:PUBLIC|PRIVATE) KEY/.test(armored)) {
+    return { encrypted: false, isKey: true, armored }
+  }
+  if (!fs.existsSync(PGP_PRIVATE_FILE)) {
+    return { encrypted: true, decrypted: false, armored, error: 'No PGP private key configured' }
+  }
+  try {
+    const privateKey = await openpgp.readPrivateKey({ armoredKey: fs.readFileSync(PGP_PRIVATE_FILE, 'utf-8') })
+    const passphrase = fs.existsSync(PGP_PASS_FILE) ? fs.readFileSync(PGP_PASS_FILE, 'utf-8').trim() || undefined : undefined
+    const decryptedKey = passphrase
+      ? await openpgp.decryptKey({ privateKey, passphrase })
+      : privateKey
+    const msg = await openpgp.readMessage({ armoredMessage: armored })
+    const { data } = await openpgp.decrypt({ message: msg, decryptionKeys: [decryptedKey] })
+    const mime = await data.toString()
+    // The decrypted payload is itself a MIME message — parse it for html/text/attachments
+    let text = '', html = ''
+    const attachments = []
+    try {
+      const parsed = await simpleParser(mime)
+      text = (parsed.text || '').replace(/[\u200C\u200D\u200B-\u200F\uFEFF]/g, '')
+      html = parsed.html || ''
+      for (const att of parsed.attachments || []) {
+        attachments.push({
+          id: att.filename || 'attachment',
+          filename: att.filename,
+          contentType: att.contentType || att.mimeType || '',
+          size: att.content?.length || 0,
+          contentId: att.contentId || undefined
+        })
+      }
+    } catch {}
+    if (!text && !html) { text = mime.trim() }
+    let signed = false, verified = null, signer = null
+    try {
+      const sigs = msg.getSigningKeyIDs()
+      if (sigs && sigs.length) {
+        signed = true
+        signer = (sigs[0].toHex && sigs[0].toHex()) || null
+      }
+      const pub = await privateKey.getPublicKey()
+      const v = await msg.verify({ publicKeys: [pub] })
+      if (v.length) verified = v.every(s => s.verified)
+    } catch {}
+    return { encrypted: true, decrypted: true, text, html, attachments, signed, verified, signer }
+  } catch (err) {
+    return { encrypted: true, decrypted: false, armored, error: err.message }
+  }
+}
+
+app.get('/api/pgp/status', (req, res) => res.json(pgpState()))
+app.put('/api/pgp', async (req, res) => {
+  try {
+    const { privateAsc, publicAsc, passphrase } = req.body || {}
+    if (!privateAsc && !publicAsc && passphrase === undefined) {
+      return res.status(400).json({ error: 'Nothing to save' })
+    }
+    res.json({ success: true, state: await savePgp({ privateAsc, publicAsc, passphrase }) })
+  } catch (err) {
+    res.status(400).json({ error: err.message })
+  }
+})
+app.delete('/api/pgp', (req, res) => res.json({ success: true, state: deletePgp() }))
 
 // POST /api/send
 app.post('/api/send', async (req, res) => {
@@ -748,10 +1320,8 @@ app.get('/api/message/:id/attachment/:partId', async (req, res) => {
     
     if (!account) return res.status(404).json({ error: 'No account configured' })
     
-    const client = createImapClient()
-    await client.connect()
+ await pool.run(async (client) => {
     const lock = await client.getMailboxLock(folder)
-    
     try {
       const part = await client.download(id, partId, { op: 'FETCH' })
       res.setHeader('Content-Type', part.contentType || 'application/octet-stream')
@@ -761,7 +1331,7 @@ app.get('/api/message/:id/attachment/:partId', async (req, res) => {
     } finally {
       lock.release()
     }
-    await client.logout()
+  })
   } catch (err) {
     console.error('Error downloading attachment:', err)
     if (!res.headersSent) {
@@ -821,13 +1391,22 @@ async function sendScheduledMessage(msg) {
   await transporter.sendMail(messageData)
 }
 
+// Serve the pre-built PWA (dist/) when present — single-port deploy
+const DIST_DIR = path.join(__dirname, '..', 'dist')
+if (fs.existsSync(DIST_DIR)) {
+  app.use(express.static(DIST_DIR, { maxAge: '1h' }))
+  app.get(/^\/(?!api\/).*/, (req, res) => res.sendFile(path.join(DIST_DIR, 'index.html')))
+  console.log(`Serving PWA from ${DIST_DIR}`)
+}
+
 // Process scheduled messages every 30 seconds
 setInterval(processScheduledMessages, 30000)
 
 // Start server
-const PORT = process.env.PORT || 3001
-app.listen(PORT, () => {
-  console.log(`Mail server running on port ${PORT}`)
+const PORT = parseInt(process.env.PORT || '3001', 10)
+const HOST = process.env.HOST || '127.0.0.1'
+app.listen(PORT, HOST, () => {
+  console.log(`Mail server running on http://${HOST}:${PORT}`)
   console.log(`Account: ${account ? account.email : 'not configured'}`)
   console.log(`Scheduled messages: ${scheduledMessages.length}`)
 })

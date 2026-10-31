@@ -9,6 +9,10 @@
     "preview": "vite preview",
     "server": "node server/index.js",
     "start": "npm run server & npm run dev",
+    "bundle:backend": "bash scripts/bundle-backend.sh",
+    "tauri": "tauri",
+    "tauri:dev": "npm run bundle:backend && tauri dev",
+    "tauri:build": "tauri build",
     "test": "vitest",
     "test:e2e": "playwright test"
   },
@@ -16,8 +20,10 @@
     "@playwright/test": "^1.52.0",
     "@sveltejs/vite-plugin-svelte": "^6.2.0",
     "@tailwindcss/vite": "^4.1.0",
+    "@tauri-apps/cli": "^2.12.4",
     "@tsconfig/svelte": "^5.0.8",
     "@types/node": "^22.15.0",
+    "openpgp": "^6.3.2",
     "svelte": "^5.25.0",
     "tailwindcss": "^4.1.0",
     "typescript": "^5.8.0",
@@ -26,12 +32,14 @@
   },
   "dependencies": {
     "@tanstack/solid-store": "^0.11.2",
-    "vite-plugin-pwa": "^2.0.0",
+    "@types/dompurify": "^3.0.5",
     "cors": "^2.8.6",
+    "dompurify": "^3.4.17",
     "express": "^5.1.0",
     "imapflow": "^1.0.190",
     "mailparser": "^3.9.39",
     "nodemailer": "^7.0.0",
+    "vite-plugin-pwa": "^2.0.0",
     "zustand": "^5.0.0"
   }
 }

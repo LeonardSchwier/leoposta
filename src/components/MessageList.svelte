@@ -1,7 +1,56 @@
 <script lang="ts">
-  import { store, getState, selectMessage, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, updateMessage } from '../store'
-  
+  import { store, getState, selectMessage, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, updateMessage, setComposeCc } from '../store'
+  import ContextMenu from './ContextMenu.svelte'
+
   let { onCompose, onSelectMessage, onDelete, onArchive, onStar, onSearch, searchQuery = '', isLoading = false, error = null } = $props()
+
+  type MenuItem = { label: string; icon?: string; action?: () => void; danger?: boolean; divider?: boolean }
+  let menuPos = $state({ x: 0, y: 0 })
+  let menuFor = $state<any>(null)
+  function showMenu(e: MouseEvent, message: any) {
+    e.preventDefault()
+    e.stopPropagation()
+    menuPos = { x: e.clientX, y: e.clientY }
+    menuFor = message
+  }
+  function closeMenu() { menuFor = null }
+
+  function isOwnEmail(addr: string) {
+    const s = getState()
+    const acc = s.accounts.find(a => a.id === s.activeAccountId)
+    if (!acc) return false
+    return addr.toLowerCase() === acc.email.toLowerCase()
+  }
+  function extractEmail(v: any): string {
+    if (!v) return ''
+    const s = Array.isArray(v) ? v.join(', ') : String(v)
+    const m = s.match(/[\w.+-]+@[\w.-]+\.\w+/)
+    return m ? m[0] : s
+  }
+  function handleReplyAll(message: any) {
+    const from = extractEmail(message.fromAddress || message.from)
+    const toList = (Array.isArray(message.to) ? message.to : [message.to]).map(extractEmail).filter(e => e && !isOwnEmail(e))
+    const ccList = (Array.isArray(message.cc) ? message.cc : [message.cc]).map(extractEmail).filter(e => e && !isOwnEmail(e))
+    const recipients = Array.from(new Set([...toList, ...ccList]))
+    if (recipients.length === 0) recipients.push(from)
+    setComposeTo(recipients)
+    setComposeCc([])
+    setComposeSubject(`Re: ${message.subject}`)
+    setComposeReplyTo(message.id)
+    setComposeOriginalMessage(message)
+    setComposing(true)
+  }
+
+  function menuItems(message: any): MenuItem[] {
+    return [
+      { label: 'Reply', icon: '↩', action: () => handleReply(message) },
+      { label: 'Reply All', icon: '↩↩', action: () => handleReplyAll(message) },
+      { label: 'Forward', icon: '↪', action: () => handleForward(message) },
+      { label: 'Archive', icon: '⬇', action: () => onArchive?.() },
+      { divider: true, label: '', action: undefined },
+      { label: 'Delete', icon: '✕', danger: true, action: () => onDelete?.() },
+    ]
+  }
   
   function formatDate(dateStr: string) {
     if (!dateStr) return ''
@@ -37,7 +86,8 @@
     }
   }
   function handleReply(message: any) {
-    setComposeTo([message.fromAddress || message.from])
+    const from = extractEmail(message.fromAddress || message.from)
+    setComposeTo([from].filter(Boolean))
     setComposeSubject(`Re: ${message.subject}`)
     setComposeReplyTo(message.id)
     setComposeOriginalMessage(message)
@@ -89,13 +139,16 @@
       <h3>{searchQuery ? 'No results' : 'No messages'}</h3>
     </div>
   {:else}
-    <div class="message-list">
+    <div class="message-list" role="listbox" aria-label="Messages" tabindex="-1">
       {#each $store.messages as message (message.id)}
-        <div 
+        <div
           class="message-row"
           class:unread={!isRead(message)}
           class:selected={$store.selectedMessageId === message.id}
+          role="option"
+          aria-selected={$store.selectedMessageId === message.id}
           onclick={() => handleSelect(message)}
+          oncontextmenu={(e) => showMenu(e, message)}
         >
           <div class="message-star">
             <button 
@@ -125,13 +178,22 @@
       {/each}
     </div>
   {/if}
+
+  {#if menuFor}
+    <ContextMenu
+      x={menuPos.x}
+      y={menuPos.y}
+      items={menuItems(menuFor)}
+      onClose={closeMenu}
+    />
+  {/if}
 </div>
 
 <style>
   .message-list-container {
     width: 40%;
     min-width: 300px;
-    border-right: 1px solid var(--border, #e5e5e5);
+    border-right: 1px solid var(--color-border);
     height: 100%;
     display: flex;
     flex-direction: column;
@@ -241,10 +303,10 @@
     text-align: center;
   }
   
-  .error-text {
-    color: #e74c3c;
+   .error-text {
+    color: var(--color-danger);
     font-size: 13px;
-  }
+   }
   
   .message-list {
     flex: 1;
@@ -298,9 +360,9 @@
   .star-btn:hover, .star-btn.starred {
     opacity: 1;
   }
-  .star-btn.starred {
-    color: #f59e0b;
-  }
+   .star-btn.starred {
+    color: var(--color-star);
+   }
   
   .message-info {
     flex: 1;
@@ -381,11 +443,11 @@
     color: var(--color-text);
   }
   
-  .msg-btn.danger:hover {
-    background: #fee2e2;
-    color: #dc2626;
-    border-color: #fca5a5;
-  }
+   .msg-btn.danger:hover {
+    background: var(--danger-bg);
+    color: var(--color-danger);
+    border-color: var(--color-border);
+   }
   
   @keyframes spin {
     to { transform: rotate(360deg); }

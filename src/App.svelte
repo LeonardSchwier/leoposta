@@ -5,16 +5,83 @@
   import MessageList from './components/MessageList.svelte'
   import MessageView from './components/MessageView.svelte'
   import Compose from './components/Compose.svelte'
+  import CommandPalette from './components/CommandPalette.svelte'
+  import { type PaletteCommand } from './components/CommandPalette.svelte'
   import Settings from './components/Settings.svelte'
+  import Calendar from './components/Calendar.svelte'
+  import Contacts from './components/Contacts.svelte'
   import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward } from './store'
   import { MailAPI } from './api'
   import { flushQueue, queueCount } from './lib/offlineQueue'
 
   let activeView = $state('inbox')
+  let appMode = $state<'mail' | 'calendar' | 'contacts'>('mail')
   let showSettings = $state(false)
   let searchQuery = $state('')
   let toast = $state('')
   let queuedCount = $state(0)
+  let showPalette = $state(false)
+
+  function togglePalette() {
+    showPalette = !showPalette
+  }
+
+  // Open the palette in "search" mode (prefilled with 'go to').
+  function openPaletteSearch() {
+    if (showPalette) { showPalette = false; return }
+    showPalette = true
+    // Pre-fill the search after the palette input mounts.
+    requestAnimationFrame(() => {
+      setTimeout(() => {
+        const input = document.querySelector<HTMLInputElement>('.palette .palette-input')
+        if (input) {
+          input.value = 'go to '
+          input.dispatchEvent(new Event('input', { bubbles: true }))
+          input.focus()
+          // move caret to end
+          const len = input.value.length
+          input.setSelectionRange(len, len)
+        }
+      }, 0)
+    })
+  }
+
+  function viewLabel(view: string): string {
+    const map: Record<string, string> = {
+      inbox: 'Inbox', sent: 'Sent', drafts: 'Drafts',
+      trash: 'Trash', archive: 'Archive', flagged: 'Flagged',
+      calendar: 'Calendar', contacts: 'Contacts',
+    }
+    return map[view] || view
+  }
+
+  let paletteCommands = $derived.by((): PaletteCommand[] => {
+    const s = getState()
+    const cmds: PaletteCommand[] = [
+      { id: 'new', label: 'New Message', hint: 'n', icon: '✉', run: () => openCompose() },
+      { id: 'settings', label: 'Open Settings', icon: '⚙', run: () => { showSettings = true } },
+      { id: 'calendar', label: 'Go to Calendar', icon: '📅', run: () => handleFolderSelect('calendar') },
+      { id: 'contacts', label: 'Go to Contacts', icon: '👥', run: () => handleFolderSelect('contacts') },
+    ]
+    const views = ['inbox', 'sent', 'drafts', 'trash', 'archive', 'flagged']
+    for (const v of views) {
+      cmds.push({ id: 'folder:' + v, label: 'Go to ' + viewLabel(v), icon: '📁', run: () => handleFolderSelect(v) })
+    }
+    for (const f of s.folders) {
+      cmds.push({ id: 'folder:' + f.id, label: 'Go to ' + (f.name || f.id), icon: '📁', run: () => handleFolderSelect(f.id) })
+    }
+    const selected = s.selectedMessageId
+    for (const m of s.messages.slice(0, 40)) {
+      cmds.push({
+        id: 'msg:' + m.id,
+        label: m.subject || m.from || '(no subject)',
+        hint: m.from || m.id,
+        icon: selected === m.id ? '✓' : '✉',
+        run: () => handleSelectMessage(m.id),
+      })
+    }
+    return cmds
+  })
 
   function showToast(msg: string, duration = 3000) {
     toast = msg
@@ -81,9 +148,30 @@
     }
   }
 
+  function handleNewSubFolder(parentId: string) {
+    const name = prompt(`New subfolder under "${parentId}":`)
+    if (name?.trim()) {
+      MailAPI.addFolder(name.trim(), parentId).then(() => loadFolders()).catch(e => setError(e.message))
+    }
+  }
+
+  function handleRenameFolder(folder: any) {
+    const newPath = prompt(`Rename folder "${folder.name || folder.id}" (new full IMAP path):`, folder.id)
+    if (!newPath?.trim() || newPath.trim() === folder.id) return
+    MailAPI.renameFolder(folder.id, newPath.trim()).then(() => loadFolders()).catch(e => setError(e.message))
+  }
+
+  function handleDeleteFolder(folder: any) {
+    if (!confirm(`Delete folder "${folder.name || folder.id}" and all its messages?`)) return
+    MailAPI.deleteFolder(folder.id).then(() => loadFolders()).catch(e => setError(e.message))
+  }
+
   function handleFolderSelect(folder: string) {
     activeView = folder
     searchQuery = ''
+    if (folder === 'calendar') { appMode = 'calendar'; return }
+    if (folder === 'contacts') { appMode = 'contacts'; return }
+    appMode = 'mail'
     const mapping: Record<string, string> = {
       'inbox': 'INBOX',
       'sent': 'Sent',
@@ -105,6 +193,7 @@
         updateMessage(id, {
           body: data.body,
           bodyHtml: data.bodyHtml,
+          pgp: data.pgp,
           attachments: data.attachments,
           cc: data.cc,
           bcc: data.bcc
@@ -171,6 +260,28 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    const key = e.key.toLowerCase()
+    // Command palette: Ctrl/Cmd+K. Works even while typing (like Apple's).
+    if ((e.ctrlKey || e.metaKey) && key === 'k') {
+      e.preventDefault()
+      togglePalette()
+      return
+    }
+    // '?' opens the palette in "go to" mode so users can discover it.
+    if (e.key === '?' && !e.ctrlKey && !e.metaKey && !(e.target as HTMLElement | null)?.closest?.('.palette')) {
+      e.preventDefault()
+      openPaletteSearch()
+      return
+    }
+    const isN = key === 'n'
+    const typing = isTyping(e)
+    const wantsNewMessage = ((e.ctrlKey || e.metaKey) && isN) || (!typing && isN && !e.ctrlKey && !e.metaKey)
+    if (wantsNewMessage && !getState().isComposing) {
+      e.preventDefault()
+      openCompose()
+      return
+    }
+
     if (isTyping(e)) {
       if (e.key === 'Escape' && getState().isComposing) {
         setComposing(false)
@@ -181,9 +292,11 @@
 
     const s = getState()
     const msgs = s.messages
-    if (e.key === 'j' || e.key === 'k' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+    if ((e.key === 'j' || e.key === 'k' || e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
       if (msgs.length === 0) return
     }
+    // While the palette is focused, keep the list-navigation keys for it.
+    if (showPalette) return
     const idx = msgs.findIndex(m => m.id === s.selectedMessageId)
 
     switch (e.key) {
@@ -231,7 +344,7 @@
       }
       case '?':
         e.preventDefault()
-        showToast('j/k or ↑/↓ navigate · c new · r reply · a archive · d delete · s star · / search · Esc close', 6000)
+        showToast('? palette · n new · Ctrl+Enter send · r reply · a archive · d delete · s star · / search · Esc close', 6000)
         break
       case 'Escape':
         e.preventDefault()
@@ -260,6 +373,7 @@
         onSettings={() => showSettings = true}
         onNewFolder={handleNewFolder}
         folders={$store.folders}
+        activeView={activeView}
       />
   
   <main class="main">
@@ -268,6 +382,10 @@
         onClose={() => { setComposing(false); clearCompose() }}
         onSent={() => { setComposing(false); clearCompose(); loadMessages(getState().activeFolder) }}
       />
+    {:else if appMode === 'calendar'}
+      <Calendar showToast={showToast} />
+    {:else if appMode === 'contacts'}
+      <Contacts showToast={showToast} />
     {:else}
       <div class="content">
         <MessageList
@@ -293,6 +411,10 @@
       </div>
     {/if}
   </main>
+
+  {#if showPalette}
+    <CommandPalette commands={paletteCommands} onClose={() => { showPalette = false }} />
+  {/if}
 
   {#if showSettings}
     <Settings onClose={() => showSettings = false} />

@@ -1,47 +1,55 @@
 @import "tailwindcss";
 
 :root {
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --color-bg: #ffffff;
-  --color-bg-secondary: #f5f5f7;
-  --color-text: #1d1d1f;
-  --color-text-secondary: #6e6e73;
-  --color-accent: #007aff;
-  --color-accent-hover: #0071eb;
-  --color-border: #e5e5ea;
-  --color-sidebar: #f5f5f7;
-  --color-selected: #e8f0fe;
-  --color-hover: rgba(0, 0, 0, 0.04);
-  --color-unread: #1d1d1f;
-  --color-read: #6e6e73;
-  --color-star: #ff9f0a;
-  --color-danger: #ff3b30;
-  --color-success: #34c759;
-  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.1);
-  --shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12);
+  --font-sans: "Inter", "Sofia Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --color-bg: #faf9f6;
+  --color-bg-secondary: #f1efe9;
+  --color-text: #232323;
+  --color-text-secondary: #71706a;
+  --color-accent: #3f5f56;
+  --color-accent-hover: #334f48;
+  --color-accent-soft: rgba(63, 95, 86, 0.1);
+  --color-border: #e2dfd6;
+  --color-sidebar: #f1efe9;
+  --color-selected: #e7ece8;
+  --color-hover: rgba(35, 35, 35, 0.04);
+  --color-unread: #232323;
+  --color-read: #71706a;
+  --color-star: #b6883a;
+  --color-danger: #a1433a;
+  --danger-bg: rgba(161, 67, 58, 0.1);
+  --color-success: #4e7c5b;
+  --code-bg: #1c1b18;
+  --code-fg: #d9d5cb;
+  --shadow-sm: 0 1px 2px rgba(35, 35, 35, 0.04);
+  --shadow-md: 0 2px 8px rgba(35, 35, 35, 0.06);
+  --shadow-lg: 0 8px 28px rgba(35, 35, 35, 0.08);
   --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 14px;
-  --transition: 200ms ease-in-out;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 .dark {
-  --color-bg: #1c1c1e;
-  --color-bg-secondary: #2c2c2e;
-  --color-text: #f5f5f7;
-  --color-text-secondary: #a1a1a6;
-  --color-accent: #0a84ff;
-  --color-accent-hover: #409cff;
-  --color-border: #38383a;
-  --color-sidebar: #1c1c1e;
-  --color-selected: #2c2c2e;
-  --color-hover: rgba(255, 255, 255, 0.06);
-  --color-unread: #f5f5f7;
-  --color-read: #a1a1a6;
-  --color-star: #ff9f0a;
-  --color-danger: #ff453a;
-  --color-success: #30d158;
+  --color-bg: #191917;
+  --color-bg-secondary: #201f1c;
+  --color-text: #e7e5e0;
+  --color-text-secondary: #9b988f;
+  --color-accent: #6f9186;
+  --color-accent-hover: #7ea096;
+  --color-accent-soft: rgba(111, 145, 134, 0.14);
+  --color-border: #302f2a;
+  --color-sidebar: #191917;
+  --color-selected: #2b2a25;
+  --color-hover: rgba(247, 245, 240, 0.05);
+  --color-unread: #e7e5e0;
+  --color-read: #9b988f;
+  --color-star: #c99a4c;
+  --color-danger: #b9645a;
+  --danger-bg: rgba(185, 100, 90, 0.14);
+  --color-success: #6f9178;
+  --code-bg: #0c0c0b;
+  --code-fg: #b7b4aa;
 }
 
 * {
@@ -80,5 +88,17 @@ body {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Global keyboard focus indicator — applies to any focusable element that
+   the user can Tab to, regardless of framework-specific focus rings. */
+:where(button, a, input, select, textarea, [role="menuitem"], [role="option"],
+       [role="tab"], [role="dialog"], [contenteditable="true"]):focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+:where(button, a, [role="menuitem"], [role="option"]):focus:not(:focus-visible) {
+  outline: none;
 }
 
