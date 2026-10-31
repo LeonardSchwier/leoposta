@@ -11,6 +11,16 @@ export interface MailMessage {
   subject: string
   body: string
   bodyHtml?: string
+  pgp?: {
+    encrypted?: boolean
+    decrypted?: boolean
+    signed?: boolean
+    verified?: boolean
+    signer?: string
+    error?: string
+    isKey?: boolean
+    armored?: string
+  }
   date: string
   flags: string[]
   attachments?: Attachment[]

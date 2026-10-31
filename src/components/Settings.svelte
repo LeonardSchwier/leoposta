@@ -15,6 +15,49 @@
   let isLoading = $state(false)
   let error = $state('')
   
+  // ---- PGP ----
+  let pgpPrivate = $state('')
+  let pgpPublic = $state('')
+  let pgpPassphrase = $state('')
+  let pgpLoading = $state(false)
+  let pgpMsg = $state('')
+  let pgpErr = $state('')
+
+  async function pgpStatus() {
+    const r = await fetch('/api/pgp/status')
+    return r.json()
+  }
+
+  async function handlePgpSave() {
+    if (!pgpPrivate && !pgpPublic) { pgpErr = 'Paste a private key (or at least a public key)'; return }
+    pgpLoading = true; pgpErr = ''; pgpMsg = ''
+    try {
+      const r = await fetch('/api/pgp', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ privateAsc: pgpPrivate, publicAsc: pgpPublic, passphrase: pgpPassphrase })
+      })
+      const d = await r.json()
+      if (d.success) { pgpMsg = 'PGP key saved'; pgpPrivate = ''; pgpPublic = ''; pgpPassphrase = '' }
+      else pgpErr = d.error || 'failed'
+    } catch (e) { pgpErr = e.message }
+    pgpLoading = false
+  }
+
+  async function handlePgpDelete() {
+    if (!confirm('Remove stored PGP keys?')) return
+    await fetch('/api/pgp', { method: 'DELETE' })
+    pgpPrivate = ''; pgpPublic = ''; pgpPassphrase = ''; pgpErr = ''; pgpMsg = 'PGP keys removed'
+  }
+
+  $effect(() => {
+    fetch('/api/pgp/status').then(r => r.json()).then(s => {
+      if (s && (s.hasPrivateKey || s.hasPublicKey || s.hasPassphrase)) {
+        pgpMsg = `PGP ready: private=${!!s.hasPrivateKey}, public=${!!s.hasPublicKey}, passphrase=${!!s.hasPassphrase}`
+      }
+    }).catch(() => {})
+  })
+
   function handleSave() {
     if (!email || !password) {
       error = 'Email and password are required'
@@ -145,8 +188,34 @@
         <label>Password</label>
         <input type="password" bind:value={password} placeholder="••••••••" />
       </div>
+
+      <div class="divider"></div>
+      <h3 class="section-title">🔐 PGP / S/MIME — import your private key to decrypt encrypted mail</h3>
+      <p class="hint">Paste your OpenPGP <b>private</b> key (armored, <code>-----BEGIN PGP PRIVATE KEY-----</code>). Optionally paste a public key and a passphrase if the private key is protected.</p>
+      <div class="form-group">
+        <label>Private key (armored)</label>
+        <textarea rows="6" bind:value={pgpPrivate} placeholder="-----BEGIN PGP PRIVATE KEY----- ... -----END PGP PRIVATE KEY-----" spellcheck="false"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Public key (optional)</label>
+        <textarea rows="4" bind:value={pgpPublic} placeholder="-----BEGIN PGP PUBLIC KEY----- ... -----END PGP PUBLIC KEY-----" spellcheck="false"></textarea>
+      </div>
+      <div class="form-group">
+        <label>Passphrase (optional)</label>
+        <input type="password" bind:value={pgpPassphrase} placeholder="Used to unlock your private key" />
+      </div>
+      <div class="pgp-status" role="status">
+        {#if pgpErr}<span class="pgp-err">{pgpErr}</span>{/if}
+        {#if pgpMsg}<span class="pgp-ok">{pgpMsg}</span>{/if}
+      </div>
+      <div class="pgp-actions">
+        <button class="btn-primary" onclick={handlePgpSave} disabled={pgpLoading}>
+          {#if pgpLoading}Saving...{:else}Save PGP key{/if}
+        </button>
+        <button class="btn-secondary" onclick={handlePgpDelete}>Remove</button>
+      </div>
     </div>
-    
+
     <div class="modal-footer">
       {#if getState().activeAccountId}
         <button class="btn-danger" onclick={handleDelete}>Remove Account</button>
@@ -363,5 +432,65 @@
   .btn-primary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
+  }
+
+  .divider {
+    height: 1px;
+    background: var(--color-border);
+    margin: 24px 0 16px;
+  }
+
+  .section-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-text);
+    margin-bottom: 8px;
+  }
+
+  .hint {
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    margin-bottom: 12px;
+    line-height: 1.5;
+  }
+
+  .hint code {
+    background: var(--color-bg-secondary);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 11px;
+  }
+
+  textarea {
+    width: 100%;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: 12px;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    line-height: 1.4;
+    resize: vertical;
+  }
+
+  .pgp-status {
+    min-height: 20px;
+    margin-top: 8px;
+    font-size: 13px;
+  }
+
+  .pgp-err {
+    color: var(--color-danger);
+  }
+
+  .pgp-ok {
+    color: var(--color-success);
+  }
+
+  .pgp-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 12px;
   }
 </style>

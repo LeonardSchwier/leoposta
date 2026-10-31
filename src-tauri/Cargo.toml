@@ -1,0 +1,26 @@
+[package]
+name = "leoposta"
+version = "0.1.0"
+description = "Leoposta — modern local-first mail client (Tauri 2 shell)"
+authors = ["leonard"]
+edition = "2021"
+license = "MIT"
+
+[lib]
+name = "leoposta_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[profile.release]
+strip = true
+opt-level = 2
+codegen-units = 16
+lto = false
+panic = "abort"

@@ -37,7 +37,44 @@
     setComposeTo(getState().composeTo.filter(e => e !== email))
   }
   
+  function handleKeyDown(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      e.preventDefault()
+      if (toInput.trim()) addRecipient(toInput)
+      handleSend()
+      return
+    }
+    // Focus trap within the compose dialog: cycle Tab/Shift-Tab.
+    if (e.key === 'Tab') {
+      const root = document.querySelector<HTMLElement>('.compose-window')
+      if (!root) return
+      const focusables = Array.from(
+        root.querySelectorAll<HTMLElement>(
+          'button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), a[href], [tabindex]:not([tabindex="-1"])'
+        )
+      )
+      if (focusables.length === 0) return
+      const first = focusables[0]
+      const last = focusables[focusables.length - 1]
+      const active = document.activeElement as HTMLElement | null
+      // If focus is outside the dialog, snap it back to the first element.
+      if (!active || !root.contains(active)) {
+        e.preventDefault()
+        first.focus()
+        return
+      }
+      if (e.shiftKey && active === first) {
+        e.preventDefault()
+        last.focus()
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault()
+        first.focus()
+      }
+    }
+  }
+
   function handleSend() {
+    if (toInput.trim()) addRecipient(toInput)
     if (getState().composeTo.length === 0) {
       alert('Please add at least one recipient')
       return
@@ -117,14 +154,25 @@
       console.log('Files to attach:', Array.from(input.files))
     }
   }
+
+  onMount(() => {
+    window.addEventListener('keydown', handleKeyDown)
+    // Move initial focus to the first recipient input for keyboard entry.
+    requestAnimationFrame(() => {
+      const el = document.querySelector<HTMLInputElement>('.compose-window .recipient-input input')
+        || document.querySelector<HTMLInputElement>('.compose-window input')
+      if (el) el.focus()
+    })
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  })
 </script>
 
-<div class="compose-window">
+<div class="compose-window" role="dialog" aria-modal="true" aria-label="Compose message" onclick={e => e.stopPropagation()}>
   <div class="compose-header">
     <h2 class="compose-title">
       {#if $store.composeReplyTo}Reply{:else if $store.composeForward}Forward{:else}New Message{/if}
     </h2>
-    <button class="close-btn" onclick={onClose}>✕</button>
+    <button class="close-btn" onclick={onClose} aria-label="Close compose (Esc)">✕</button>
   </div>
   
   <div class="compose-body">

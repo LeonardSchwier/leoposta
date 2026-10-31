@@ -1,7 +1,38 @@
 <script lang="ts">
-  import { store, getState } from '../store'
-  
-  let { onFolderSelect, onCompose, onSettings, folders: apiFolders = [] } = $props()
+  import { store } from '../store'
+  import ContextMenu from './ContextMenu.svelte'
+
+  let {
+    onFolderSelect,
+    onCompose,
+    onSettings,
+    onNewFolder,
+    onNewSubFolder,
+    onRenameFolder,
+    onDeleteFolder,
+    folders: apiFolders = [],
+    activeView: activeViewProp = ''
+  } = $props()
+
+  type MenuItem = { label: string; icon?: string; action?: () => void; danger?: boolean; divider?: boolean }
+  let menuPos = $state({ x: 0, y: 0 })
+  let menuFolder = $state<any>(null)
+  function showFolderMenu(e: MouseEvent, folder: any) {
+    e.preventDefault()
+    e.stopPropagation()
+    menuPos = { x: e.clientX, y: e.clientY }
+    menuFolder = folder
+  }
+  function closeMenu() { menuFolder = null }
+
+  function folderItems(folder: any): MenuItem[] {
+    return [
+      { label: 'New Subfolder', icon: '➕', action: () => onNewSubFolder?.(folder.id) },
+      { label: 'Rename', icon: '✎', action: () => onRenameFolder?.(folder) },
+      { divider: true, label: '', action: undefined },
+      { label: 'Delete Folder', icon: '🗑', danger: true, action: () => onDeleteFolder?.(folder) },
+    ]
+  }
   
   const activeFolder = $derived($store.activeFolder)
   function isUnread(m: any) {
@@ -18,6 +49,13 @@
     { id: 'Junk', name: 'Junk', icon: '🚫' },
     { id: 'Trash', name: 'Trash', icon: '🗑️' },
   ])
+
+  const appItems = $derived([
+    { id: 'calendar', name: 'Calendar', icon: '📅' },
+    { id: 'contacts', name: 'Contacts', icon: '👥' },
+  ])
+  const activeId = $derived((activeViewProp as string) || '')
+  function isAppActive(id: string) { return activeId === id }
   
   // Custom folders with hierarchy
   const customFolders = $derived((apiFolders || []).filter((f: any) => !f.specialUse))
@@ -69,6 +107,18 @@
   </div>
   
   <nav class="folder-list">
+    <div class="section-label">Apps</div>
+    {#each appItems as app (app.id)}
+      <button
+        class="folder-item"
+        class:active={isAppActive(app.id)}
+        onclick={() => onFolderSelect(app.id)}
+      >
+        <span class="folder-icon">{app.icon}</span>
+        <span class="folder-name">{app.name}</span>
+      </button>
+    {/each}
+
     <div class="section-label">Mailboxes</div>
     {#each specialFolders as folder (folder.id)}
       <button 
@@ -85,7 +135,7 @@
     {/each}
     
     {#if topLevelFolders.length > 0}
-      <div class="section-label">Folders</div>
+      <div class="section-label" oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); onNewFolder?.() }}>Folders</div>
       {#each topLevelFolders as folder (folder.id)}
         {@const children = getChildren(folder.id)}
         {@const hasChildren = children.length > 0}
@@ -93,10 +143,11 @@
         {@const isParentActive = isFolderOrChildActive(folder.id)}
         
         <div class="folder-group" class:expanded={isExpanded}>
-          <div 
+          <div
             class="folder-row"
             class:active={activeFolder === folder.id}
             onclick={() => handleFolderClick(folder.id, hasChildren)}
+            oncontextmenu={(e) => showFolderMenu(e, folder)}
           >
             {#if hasChildren}
               <span class="chevron">{isExpanded ? '▾' : '▸'}</span>
@@ -111,10 +162,11 @@
             <div class="folder-children">
               {#each children as child (child.id)}
                 {@const childChildren = getChildren(child.id)}
-                <div 
+                <div
                   class="folder-row child"
                   class:active={activeFolder === child.id}
                   onclick={() => handleFolderClick(child.id, childChildren.length > 0)}
+                  oncontextmenu={(e) => showFolderMenu(e, child)}
                 >
                   <span class="chevron-placeholder"></span>
                   <span class="folder-icon">{childChildren.length > 0 ? (expandedFolders.has(child.id) ? '▾' : '▸') : ''}</span>
@@ -123,10 +175,11 @@
                 {#if childChildren.length > 0 && expandedFolders.has(child.id)}
                   <div class="folder-children">
                     {#each childChildren as gc (gc.id)}
-                      <div 
+                      <div
                         class="folder-row grandchild"
                         class:active={activeFolder === gc.id}
                         onclick={() => onFolderSelect(gc.id)}
+                        oncontextmenu={(e) => showFolderMenu(e, gc)}
                       >
                         <span class="chevron-placeholder"></span>
                         <span class="folder-icon"></span>
@@ -149,6 +202,15 @@
       <span>Settings</span>
     </button>
   </div>
+
+  {#if menuFolder}
+    <ContextMenu
+      x={menuPos.x}
+      y={menuPos.y}
+      items={folderItems(menuFolder)}
+      onClose={closeMenu}
+    />
+  {/if}
 </aside>
 
 <style>

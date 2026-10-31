@@ -28,13 +28,40 @@ export const MailAPI = {
     api(`/message/${id}/flags`, {
       method: 'POST', body: JSON.stringify({ folder, add, remove })
     }),
-  addFolder: (name: string, parent?: string) => api('/folder', {
-    method: 'POST', body: JSON.stringify({ name, parent })
+  addFolder: (name: string, parentId?: string) => api('/folder', {
+    method: 'POST', body: JSON.stringify({ name, parentId })
   }),
-  deleteFolder: (name: string) => api('/folder', { method: 'DELETE', body: JSON.stringify({ name }) }),
+  deleteFolder: (name: string) => api(`/folder?path=${encodeURIComponent(name)}`, { method: 'DELETE' }),
+  renameFolder: (from: string, to: string) => api('/folder/rename', {
+    method: 'POST', body: JSON.stringify({ from, to })
+  }),
   attachmentUrl: (id: string, partId: string) =>
     `${API_BASE}/api/message/${id}/attachment/${partId}`,
   scheduled: () => api('/scheduled'),
   cancelScheduled: (id: string) => api(`/scheduled/${id}`, { method: 'DELETE' }),
   idle: () => `${API_BASE}/api/idle`,
+}
+
+export const CalendarAPI = {
+  calendars: () => api('/calendar/calendars'),
+  events: (calendar: string, start: string, end: string) =>
+    api(`/calendar/events?calendar=${encodeURIComponent(calendar)}&start=${start}&end=${end}`),
+  saveEvent: (calendar: string, ics: string, uid?: string) =>
+    api('/calendar/event', { method: 'PUT', body: JSON.stringify({ calendar, ics, uid }) }),
+  deleteEvent: (calendar: string, uid: string) =>
+    api(`/calendar/event?calendar=${encodeURIComponent(calendar)}&uid=${encodeURIComponent(uid)}`, { method: 'DELETE' }),
+  importICS: (calendar: string, ics: string) =>
+    api('/calendar/import', { method: 'POST', body: JSON.stringify({ calendar, ics }) }),
+}
+
+export const ContactsAPI = {
+  addressBooks: () => api('/contacts/calendars'),
+  contacts: (book: string, q?: string) =>
+    api(`/contacts?book=${encodeURIComponent(book)}${q ? `&q=${encodeURIComponent(q)}` : ''}`),
+  saveContact: (book: string, vcf: string) =>
+    api('/contact', { method: 'PUT', body: JSON.stringify({ book, vcf }) }),
+  deleteContact: (book: string, uid: string) =>
+    api(`/contact?book=${encodeURIComponent(book)}&uid=${encodeURIComponent(uid)}`, { method: 'DELETE' }),
+  importVCF: (book: string, vcf: string) =>
+    api('/contacts/import', { method: 'POST', body: JSON.stringify({ book, vcf }) }),
 }

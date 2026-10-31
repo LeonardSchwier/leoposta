@@ -1,5 +1,31 @@
 <script lang="ts">
   import { store, getState, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, deleteMessage, updateMessage, selectMessage } from '../store'
+  import DOMPurify from 'dompurify'
+
+  // Mail HTML is adversarial (arbitrary third-party senders). Strip script /
+  // event handlers / dangerous URL schemes before injecting via {@html}.
+  // Whitelist keeps the usual inline-email styling (font-family, color, width,
+  // <img>, <a href>, <table>, <ul>/<ol>/<li>, <p>, <br>, etc.).
+  function sanitizeHtml(html: string): string {
+    if (!html) return ''
+    const cfg = {
+      ALLOWED_TAGS: [
+        'a','b','blockquote','br','caption','code','div','em','h1','h2','h3','h4','h5','h6',
+        'hr','i','img','li','ol','p','pre','small','span','strong','sub','sup','table',
+        'tbody','td','tfoot','th','thead','tr','u','ul','del','ins','mark','figure','figcaption'
+      ],
+      ALLOWED_ATTR: [
+        'accept','align','alt','bgcolor','border','cellpadding','cellspacing','checked',
+        'colspan','color','disabled','dir','face','height','href','hreflang','id','lang',
+        'longdesc','mailto','name','rel','role','scope','selected','shape','size','span',
+        'src','start','style','summary','target','title','type','valign','value','width'
+      ],
+      FORBID_CONTENTS: ['style'],
+      ADD_ATTR: ['target','rel']
+    }
+    const win = DOMPurify(window)
+    return win.sanitize(html, cfg as any) || ''
+  }
 
   let {
     onDelete: propDelete,
@@ -121,8 +147,40 @@
       </div>
 
       <div class="message-content">
+        {#if msg.pgp && msg.pgp.encrypted}
+          <div class="pgp-banner" class:pgp-banner-decrypted={!!msg.pgp.decrypted}>
+            <div class="pgp-banner-row">
+              <span class="pgp-ico">🔐</span>
+              {#if msg.pgp.decrypted}
+                <span class="pgp-title">Encrypted message — <b>decrypted</b> below</span>
+              {:else}
+                <span class="pgp-title">Encrypted message — <b>cannot decrypt</b></span>
+              {/if}
+              {#if msg.pgp.signed}
+                <span class="pgp-chip" class:verified={!!msg.pgp.verified}>
+                  {#if msg.pgp.verified === true}✓ signature verified
+                  {:else if msg.pgp.verified === false}✕ signature invalid
+                  {:else}signed (not verified){/if}
+                </span>
+              {/if}
+            </div>
+            {#if !msg.pgp.decrypted}
+              <p class="pgp-help">
+                {msg.pgp.error || 'OpenPGP private key not configured.'}
+                Add your private key in <b>Settings → PGP</b> and reopen this message.
+              </p>
+              {#if msg.pgp.armored}
+                <details class="pgp-armor">
+                  <summary>Raw armored message</summary>
+                  <pre>{msg.pgp.armored}</pre>
+                </details>
+              {/if}
+            {/if}
+          </div>
+        {/if}
+
         {#if msg.bodyHtml}
-          {@html msg.bodyHtml}
+          {@html sanitizeHtml(msg.bodyHtml)}
         {:else if msg.body}
           <div class="plain-body">{msg.body}</div>
         {:else}
@@ -170,13 +228,49 @@
   .action-btn { display: flex; align-items: center; gap: 4px; padding: 8px 12px; background: transparent; border: 1px solid var(--color-border); border-radius: var(--radius-sm); font-size: 13px; color: var(--color-text); cursor: pointer; transition: all var(--transition); white-space: nowrap; }
   .action-btn:hover { background: var(--color-hover); }
   .action-btn.starred { background: var(--color-selected); border-color: var(--color-star); }
-  .action-btn.danger:hover { background: rgba(255, 59, 48, 0.1); border-color: var(--color-danger); color: var(--color-danger); }
+  .action-btn.danger:hover { background: var(--danger-bg); border-color: var(--color-danger); color: var(--color-danger); }
   .message-content { flex: 1; overflow-y: auto; padding: 24px; font-size: 14px; line-height: 1.7; color: var(--color-text); }
   .message-content img { max-width: 100%; height: auto; }
   .message-content a { color: var(--color-accent); text-decoration: underline; }
   .message-content pre { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; font-size: 13px; }
   .plain-body { white-space: pre-wrap; word-wrap: break-word; }
   .empty-body { color: var(--color-text-secondary); font-style: italic; padding: 40px; text-align: center; }
+
+  /* ---- PGP banner ---- */
+  .pgp-banner {
+    margin-bottom: 16px;
+    padding: 12px 14px;
+    border: 1px solid var(--color-border);
+    border-left: 4px solid var(--color-star);
+    background: var(--accent-soft);
+    border-radius: var(--radius-sm);
+    font-size: 13px;
+    line-height: 1.5;
+    color: var(--color-text);
+  }
+  .pgp-banner.pgp-banner-decrypted { border-left-color: var(--color-success); background: var(--accent-soft); }
+  .pgp-banner-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .pgp-ico { font-size: 18px; }
+  .pgp-title { font-weight: 600; }
+  .pgp-title b { color: var(--color-star); }
+  .pgp-banner.pgp-banner-decrypted .pgp-title b { color: var(--color-success); }
+  .pgp-help { margin: 8px 0 0 26px; color: var(--color-text-secondary); font-size: 12px; }
+  .pgp-chip {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(0,0,0,.05);
+    color: var(--color-text-secondary);
+  }
+  .pgp-chip.verified { background: var(--accent-soft); color: var(--color-success); }
+  .pgp-chip:not(.verified) { background: var(--accent-soft); color: var(--color-star); }
+  .pgp-armor { margin: 8px 0 0 26px; }
+  .pgp-armor summary { cursor: pointer; font-size: 12px; color: var(--color-text-secondary); }
+  .pgp-armor pre {
+    max-height: 240px; overflow: auto; margin-top: 6px;
+    background: var(--code-bg); color: var(--code-fg); padding: 10px 12px; border-radius: 6px;
+    font-size: 11px; line-height: 1.4; white-space: pre-wrap; word-break: break-word;
+  }
   .attachments { padding: 16px 24px; border-top: 1px solid var(--color-border); background: var(--color-bg); }
   .attachments h3 { font-size: 13px; font-weight: 600; color: var(--color-text-secondary); margin-bottom: 12px; }
   .attachment-list { display: flex; flex-direction: column; gap: 8px; }
