@@ -48,7 +48,7 @@ for (const f of Object.values(FOLDERS)) {
       from: m.from,
       to: m.to,
       cc: m.cc || [],
-      messageId: m.messageId || `<msg-${m.uid}@demo.mailbox.org>`,
+      messageId: m.messageId || `<msg-${m.uid}@demo.example.com>`,
       inReplyTo: m.inReplyTo || '',
       html: m.html || '',
       text: m.text || '',

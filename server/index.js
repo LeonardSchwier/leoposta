@@ -128,7 +128,7 @@ function extractAddrs(field) {
 function createImapClient() {
   if (!account) throw new Error('No account configured')
   const isIP = /^[0-9.]+$/.test(account.imapHost)
-  const servername = isIP ? 'imap.mailbox.org' : account.imapHost
+  const servername = isIP ? 'imap.example.com' : account.imapHost
   const client = new ImapFlow({
     host: account.imapHost,
     port: account.imapPort,
@@ -162,7 +162,7 @@ function createImapClient() {
 }
 
 // Shared IMAP client
-// mailbox.org (and most shared IMAP providers) rate-limit newly-opened
+// example.com (and most shared IMAP providers) rate-limit newly-opened
 // sessions. The previous design opened a fresh connection for EVERY API
 // request, so bursty UI activity was hitting 'NO' -> "Command failed".
 // We now keep ONE authenticated connection for all REST IMAP operations and
@@ -746,7 +746,7 @@ app.delete('/api/folder', async (req, res) => {
 import https from 'https'
 import http from 'http'
 
-const DAV_HOST = process.env.DAV_HOST || 'dav.mailbox.org'
+const DAV_HOST = process.env.DAV_HOST || 'dav.example.com'
 const DAV_PORT = parseInt(process.env.DAV_PORT || '443', 10)
 const DAV_TLS = (process.env.DAV_TLS || (process.env.DAV_HOST ? 'true' : 'false')) === 'true'
 const DAV_PATH_PREFIX = (user) => (process.env.DAV_PREFIX || '/dav/' + user)

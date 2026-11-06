@@ -1,19 +1,25 @@
 <script lang="ts">
   import { store, getState } from '../store'
-  
+  import { normalizeSignature } from '../lib/signature'
+
   let { onClose } = $props()
   
   let accountName = $state('')
   let email = $state('')
-  let imapHost = $state('imap.mailbox.org')
+  let imapHost = $state('imap.example.com')
   let imapPort = $state('993')
   let imapTls = $state(true)
-  let smtpHost = $state('smtp.mailbox.org')
+  let smtpHost = $state('smtp.example.com')
   let smtpPort = $state('465')
   let smtpTls = $state(true)
   let password = $state('')
   let isLoading = $state(false)
   let error = $state('')
+
+  // ---- Signature ----
+  let sigEnabled = $state(false)
+  let sigText = $state('')
+  let sigPosition = $state<'standard' | 'after_quote'>('standard')
   
   // ---- PGP ----
   let pgpPrivate = $state('')
@@ -79,7 +85,8 @@
         smtpHost,
         smtpPort: parseInt(smtpPort),
         smtpTls,
-        password
+        password,
+        signature: { enabled: sigEnabled, text: sigText, position: sigPosition }
       })
     })
     .then(res => res.json())
@@ -187,6 +194,27 @@
       <div class="form-group">
         <label>Password</label>
         <input type="password" bind:value={password} placeholder="••••••••" />
+      </div>
+
+      <div class="form-section">
+        <h3>Signature</h3>
+        <div class="form-group checkbox">
+          <label>
+            <input type="checkbox" bind:checked={sigEnabled} />
+            <span>Append signature to new mail</span>
+          </label>
+        </div>
+        <div class="form-group">
+          <label>Signature text</label>
+          <textarea rows="3" bind:value={sigText} placeholder="Best regards&#10;Leo" spellcheck="true"></textarea>
+        </div>
+        <div class="form-group">
+          <label>Position in replies</label>
+          <select bind:value={sigPosition}>
+            <option value="standard">Above the quoted message</option>
+            <option value="after_quote">Below the quoted message</option>
+          </select>
+        </div>
       </div>
 
       <div class="divider"></div>
@@ -319,7 +347,8 @@
   .form-group input[type="text"],
   .form-group input[type="email"],
   .form-group input[type="number"],
-  .form-group input[type="password"] {
+  .form-group input[type="password"],
+  .form-group select {
     width: 100%;
     padding: 10px 12px;
     border: 1px solid var(--color-border);
