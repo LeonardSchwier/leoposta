@@ -39,3 +39,6 @@ pgp_passphrase.txt
 
 # stray bundle-backend run artifacts
 scripts/src-tauri/
+
+# Git worktrees
+.worktrees/
