@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store'
 import { get } from 'svelte/store'
+import type { Signature } from '../lib/signature'
 
 export interface MailMessage {
   id: string
@@ -50,6 +51,7 @@ export interface MailAccount {
   smtpTls: boolean
   smtpUser: string
   smtpPass: string
+  signature: Signature
 }
 
 export interface Folder {
