@@ -267,23 +267,22 @@ app.get('/api/status', (req, res) => {
 // GET /api/account
 app.get('/api/account', (req, res) => {
   if (!account) return res.json({ connected: false })
-  // Don't leak password
-  const safe = { ...account }
-  delete safe.imapPass
-  delete safe.smtpPass
+  const { imapPass, smtpPass, ...safe } = account
+  if (!safe.signature) safe.signature = { enabled: false, text: '', position: 'standard' }
   res.json(safe)
 })
 
 // POST /api/account
 app.post('/api/account', (req, res) => {
   try {
-    const { email, imapHost, imapPort, imapTls, imapUser, imapPass, smtpHost, smtpPort, smtpTls, smtpUser, smtpPass, name } = req.body
+    const { email, imapHost, imapPort, imapTls, imapUser, imapPass, smtpHost, smtpPort, smtpTls, smtpUser, smtpPass, name, signature } = req.body
     account = {
       email, name: name || email,
       imapHost, imapPort: Number(imapPort) || 993, imapTls: imapTls !== false,
       imapUser, imapPass,
       smtpHost, smtpPort: Number(smtpPort) || 465, smtpTls: smtpTls !== false,
-      smtpUser, smtpPass
+      smtpUser, smtpPass,
+      signature: signature || { enabled: false, text: '', position: 'standard' }
     }
     saveAccount()
     pool.reset().catch(() => {})
