@@ -1,8 +1,70 @@
-# Evolution Mail — Apple-Mail-inspired Web Mail Client
+# Leoposta — Apple-Mail-inspired web/desktop mail client
 
 ## Mission
 Build a complete, standalone web-based mail client with Apple Mail UX.
 It must work offline (PWA), support IMAP/SMTP, and include all mail features.
+
+## Roadmap (source of truth for open work)
+**Open features and their status: see [`ROADMAP.md`](./ROADMAP.md).**
+Update it every time a P0/P1 item lands or a new item enters the backlog;
+this file describes _how_ we build, `ROADMAP.md` describes _what_ is left
+to build. Before starting any feature, check `ROADMAP.md` and move the
+checkbox when done.
+
+## Mandatory workflow for any ROADMAP.md item
+This repo follows the **superpowers** methodology
+(https://github.com/obra/superpowers). Superpowers is installed as an
+opencode plugin under the V1 `plugin` key in
+`~/.config/opencode/opencode.jsonc` (`superpowers@git+https://github.com/obra/superpowers.git`).
+For every item picked up from `ROADMAP.md`, run the full pipeline —
+no skipping, no "this is small" exceptions:
+
+1. **brainstorming** — load the skill. Interview the user on intent and
+   constraints until the spec is digestible in small chunks. Tiny items:
+   agree the spec in chat. Anything bigger: write it to
+   `docs/design/<slug>.md`.
+2. **using-git-worktrees** — load the skill. Create the worktree + branch
+   on top of a clean baseline. Confirm `npm run lint` and
+   `npm run test` (or `npm test` / `node --test server`) pass before any
+   code is written; record the failing-state baseline.
+3. **writing-plans** — load the skill. Produce
+   `docs/plans/<slug>.md` with 2–5 minute tasks, each carrying exact file
+   paths, full diffs/snippets, and a verification command. No task may rely
+   on the implementer's guess.
+4. **executing-plans** _or_ **subagent-driven-development** — load one.
+   Prefer subagent-driven-development for `server/index.js` and
+   cross-cutting refactor work; use executing-plans for small, contained
+   tasks. Either way, do **not** drift from the plan; if a task needs to
+   change, update the plan file first and re-approve.
+5. **test-driven-development** — load every time code is being written.
+   RED (write the failing test, run it, watch it fail) → GREEN (minimal
+   code that passes) → REFACTOR. Delete any code written before its test.
+   If the project has no test for the area you're touching, the first task
+   in the plan is "add the test harness / first test for X" — not
+   "implement X".
+6. **requesting-code-review** — load before marking a task done. Review
+   the diff against the plan and the design doc; report findings by
+   severity; Critical blocks.
+7. **finishing-a-development-branch** — load when the last task is green.
+   Verify tests + lint, present merge/PR/keep/discard options, then
+   cleanup. Only then move the checkbox in `ROADMAP.md` to `[x]` and
+   update `PROGRESS.md`.
+
+Skill triggers are mandatory, not suggestions. If a skill is not yet
+loaded in the session, invoke it before the corresponding step. If the
+plugin is missing or skills fail to trigger, stop and tell the user
+instead of falling back to ad-hoc work.
+
+Local state lives in `PROGRESS.md` (per repo root, written by the
+`context-budget` skill) **and** `docs/plans/<slug>.md` + the per-task
+checklist. Delete `PROGRESS.md` when the task is fully merged; keep it
+only when deliberately paused/blocked.
+Currently open (P0):
+- **Multi-account support** (frontend store already models `accounts[]` +
+  `activeAccountId`; backend `server/index.js:20,31` and the IMAP `pool`
+  at `:163` are still single-account; see ROADMAP "Now".)
+- **Email signature** (per-account, settings-driven, inserted on compose
+  + reply; see ROADMAP "Now".)
 
 ## Tech Stack
 - **Frontend:** Svelte 5 + TypeScript (or React 18 + TypeScript — your choice)
@@ -76,6 +138,28 @@ It must work offline (PWA), support IMAP/SMTP, and include all mail features.
 - [ ] XSS sanitization of HTML mail
 - [ ] CSRF protection on API endpoints
 - [ ] No third-party trackers, no external fonts (system font stack)
+
+## Security audits (`security-audit` skill)
+Leoposta is a mail client: HTML body rendering, IMAP/SMTP credentials on the
+backend, and a REST API are the three trust boundaries to defend.
+
+- Skill installed at `~/.config/opencode/skills/security-audit/` (Cloudflare
+  `security-audit-skill`, MIT). It is an OpenCode agent skill — run it from
+  the agent, not from the app; it is not a runtime dependency.
+- **Trigger phrases** for guidance mode: "review the HTML rendering for XSS",
+  "check the SMTP credential handling", "audit the REST endpoints".
+- **Trigger phrases** for full audit mode: "security audit leoposta",
+  "pen-test `./server`", "find vulnerabilities in `src/components/Message.svelte`".
+- Output directory for leoposta runs: `~/security-audit-skill/leoposta/run-<N>`
+  (skill default). Never commit the run output to the repo.
+- The skill's two zero-dependency validators ship with it:
+  `node ~/.config/opencode/skills/security-audit/validate-findings.cjs findings.json`
+  and `node ~/.config/opencode/skills/security-audit/validate-coverage-ledger.cjs coverage-ledger.json` —
+  run them after Phases 1 and 4 to keep the artifacts schema-clean.
+- Sandboxing: this machine has no `doas`/`landlock`/firejail preinstalled.
+  Until one is added, the skill's `needs_validation` verdict is the floor —
+  do **not** execute candidate payloads against the running backend;
+  read the code and stop.
 
 ## Architecture
 ```
