@@ -21,7 +21,14 @@
         'src','start','style','summary','target','title','type','valign','value','width'
       ],
       FORBID_CONTENTS: ['style'],
-      ADD_ATTR: ['target','rel']
+      ADD_ATTR: ['target','rel'],
+      FORBID_ATTR: ['srcset'],
+      ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|cid:)\S*$/i,
+      afterSanitizeAttributes: (node: any) => {
+        if (node.tagName === 'A' && (node.getAttribute('target') || '').toLowerCase() === '_blank') {
+          node.setAttribute('rel', 'noopener noreferrer')
+        }
+      }
     }
     const win = DOMPurify(window)
     return win.sanitize(html, cfg as any) || ''

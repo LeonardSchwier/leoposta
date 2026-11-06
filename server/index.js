@@ -12,8 +12,22 @@ import * as openpgp from 'openpgp'
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
 
+// Server-side scrub for outbound HTML (defense-in-depth; the client also
+// sanitizes on render). Strips <script>/<style>/on*-handlers/executable
+// data: URIs so pasted attacker content is not delivered live to recipients.
+function scrubOutboundHtml(html) {
+  if (typeof html !== 'string' || !html) return html
+  return html
+    .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
+    .replace(/<style[\s\S]*?<\/style\s*>/gi, '')
+    .replace(/<(iframe|object|embed|form|link|meta|base|svg|math)\b[^>]*>/gi, '')
+    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    .replace(/(href|src|xlink:href)\s*=\s*("|')\s*(?:javascript|vbscript|data)\s*?:[^"']*(")/gi, '$1=$2#$4')
+}
+
 const app = express()
-app.use(cors())
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001').split(',').map(s => s.trim()).filter(Boolean)
+app.use(cors({ origin: (origin, cb) => { if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true); cb(new Error('Not allowed by CORS'), false) } }))
 app.use(express.json({ limit: '50mb' }))
 
 // In-memory storage (for demo)
@@ -41,7 +55,7 @@ if (fs.existsSync(SCHEDULED_FILE)) {
 
 function saveAccount() {
   if (account) {
-    fs.writeFileSync(ACCOUNT_FILE, JSON.stringify(account, null, 2))
+    fs.writeFileSync(ACCOUNT_FILE, JSON.stringify(account, null, 2), { mode: 0o600 })
   }
 }
 
@@ -1223,7 +1237,7 @@ app.post('/api/send', async (req, res) => {
       bcc: bcc?.join(', '),
       subject: subject || '(No Subject)',
       text: body || '',
-      html: bodyHtml || body || ''
+      html: scrubOutboundHtml(bodyHtml || body || '')
     }
     
     // Attachments (base64 data)
@@ -1384,9 +1398,9 @@ async function sendScheduledMessage(msg) {
     bcc: msg.bcc,
     subject: msg.subject,
     text: msg.text,
-    html: msg.html
+    html: scrubOutboundHtml(msg.html)
   }
-  
+
   const transporter = createSmtpTransporter()
   await transporter.sendMail(messageData)
 }
