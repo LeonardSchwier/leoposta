@@ -2,6 +2,7 @@
   import { store, getState, setComposeTo, setComposeSubject, setComposeBody, setIsLoading, setComposeScheduled, clearCompose, setComposing } from '../store'
   import { onMount } from 'svelte'
   import { addQueuedMessage } from '../lib/offlineQueue'
+  import { buildMessageBody, normalizeAccount, type Signature } from '../lib/signature'
 
   let { onClose } = $props()
   
@@ -9,6 +10,42 @@
   // Local editable state
   let subjectInput = $state(getState().composeSubject || '')
   let bodyInput = $state(getState().composeBody || '')
+
+  // ---- Signature seeding ----
+  // The compose body is finalized the moment the panel opens so the user types
+  // above the signature. New compose seeds the signature text only; reply and
+  // forward place it per the account's `position` setting, above/below the
+  // quoted original. The backend is the source of truth for the active
+  // account's signature (GET /api/account returns it normalized).
+  function quotedOriginal(): string | null {
+    const m = getState().composeOriginalMessage
+    if (!m) return null
+    return m.body || m.bodyHtml || null
+  }
+  function applySignature(sig: Signature, original: string | null): boolean {
+    if (!sig || !sig.enabled || !sig.text.trim()) return false
+    const body = buildMessageBody(sig, '', original)
+    if (body) { bodyInput = body; setComposeBody(body) }
+    return true
+  }
+  async function seedBody() {
+    // Prefer the store account (already normalized); fall back to the backend.
+    const s = getState()
+    const account = s.accounts.find(a => a.id === s.activeAccountId)
+    if (account && (account as any).signature) {
+      applySignature((account as any).signature, quotedOriginal())
+      return
+    }
+    try {
+      const res = await fetch('/api/account')
+      if (!res.ok) return
+      const raw = await res.json()
+      if (!raw || raw.connected === false || !raw.signature) return
+      applySignature(normalizeAccount(raw as Record<string, unknown>).signature, quotedOriginal())
+    } catch {
+      /* offline / no backend: seed with nothing */
+    }
+  }
   
   let toInput = $state('')
   let showCc = $state(false)
@@ -156,6 +193,7 @@
   }
 
   onMount(() => {
+    void seedBody()
     window.addEventListener('keydown', handleKeyDown)
     // Move initial focus to the first recipient input for keyboard entry.
     requestAnimationFrame(() => {
