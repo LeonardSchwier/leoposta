@@ -12,7 +12,7 @@
   import Contacts from './components/Contacts.svelte'
   import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward } from './store'
   import { MailAPI } from './api'
-  import { flushQueue, queueCount } from './lib/offlineQueue'
+  import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache } from './lib/offlineQueue'
 
   let activeView = $state('inbox')
   let appMode = $state<'mail' | 'calendar' | 'contacts'>('mail')
@@ -99,6 +99,12 @@
       if (sent > 0) showToast(`${sent} queued message${sent > 1 ? 's' : ''} sent`)
       if (failed > 0) showToast(`${failed} queued message${failed > 1 ? 's' : ''} failed`)
     }
+    // Re-sync the current folder from the server now that we're back.
+    if (offlineServing) {
+      offlineServing = false
+      setError(null)
+      loadMessages(getState().activeFolder)
+    }
   }
 
   async function loadFolders() {
@@ -110,18 +116,33 @@
     }
   }
 
+  let offlineServing = $state(false)
+
   async function loadMessages(folder: string) {
+    setIsLoading(true)
     try {
-      setIsLoading(true)
       const data = await MailAPI.messages(folder)
       if (data.messages) {
         setMessages(data.messages)
-        setUnreadCount(data.messages.filter((m: any) => 
+        setUnreadCount(data.messages.filter((m: any) =>
           !m.flags?.includes('\\Seen') && !m.flags?.includes('Seen')
         ).length)
+        cacheFolderList(folder, data.messages).catch(() => {})
       }
-    } catch (e) {
-      setError(e.message)
+      offlineServing = false
+      setError(null)
+    } catch (e: any) {
+      // Offline / server down: fall back to the local cache for this folder.
+      const cached = await cachedMessagesForFolder(folder).catch(() => [] as any[])
+      if (cached.length) {
+        setMessages(cached)
+        setUnreadCount(0)
+        offlineServing = true
+        setError(`Offline — showing ${cached.length} cached message${cached.length === 1 ? '' : 's'}`)
+      } else {
+        setError(e.message)
+        offlineServing = false
+      }
     } finally {
       setIsLoading(false)
     }
@@ -190,6 +211,7 @@
     const folder = getState().activeFolder
     MailAPI.message(id, folder).then(data => {
       if (data) {
+        putMessageCache({ key: `${folder}:${id}`, folder, id, message: data, full: true }).catch(() => {})
         updateMessage(id, {
           body: data.body,
           bodyHtml: data.bodyHtml,
@@ -199,7 +221,21 @@
           bcc: data.bcc
         })
       }
-    }).catch(e => console.error('Failed to load message:', e))
+    }).catch(e => {
+      // Offline: load the full message from the local cache (if it was ever opened).
+      getMessageCache(folder, id).then(c => {
+        if (c?.full && c.message) {
+          updateMessage(id, {
+            body: c.message.body,
+            bodyHtml: c.message.bodyHtml,
+            pgp: c.message.pgp,
+            attachments: c.message.attachments,
+            cc: c.message.cc,
+            bcc: c.message.bcc
+          })
+        }
+      }).catch(() => console.error('Failed to load message:', e))
+    })
   }
 
   function handleDelete() {
