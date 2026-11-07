@@ -121,7 +121,39 @@ export const de = {
   'contacts.editor.delete': 'Löschen',
   'contacts.editor.cancel': 'Abbrechen',
   'contacts.editor.save': 'Änderungen speichern',
-  'contacts.editor.create': 'Anlegen'
+  'contacts.editor.create': 'Anlegen',
+
+  // Calendar
+  'calendar.title': 'Kalender',
+  'calendar.new': '+ Neues Ereignis',
+  'calendar.empty': 'Keine Kalender gefunden.',
+  'calendar.import': '.ics importieren',
+  'calendar.retry': 'Erneut versuchen',
+  'calendar.more': '+{n} weitere',
+  'calendar.unnamed': '(ohne Titel)',
+  'calendar.updated': 'Ereignis aktualisiert',
+  'calendar.created': 'Ereignis angelegt',
+  'calendar.deletedToast': 'Ereignis gelöscht',
+  'calendar.imported': '{n} Ereignis(se) importiert',
+  'calendar.requirement': 'Gib einen Titel oder eine Beschreibung ein',
+  'calendar.delete.confirm': 'Dieses Ereignis löschen?',
+  'calendar.editor.titleNew': 'Neues Ereignis',
+  'calendar.editor.titleEdit': 'Ereignis bearbeiten',
+  'calendar.editor.summary': 'Titel',
+  'calendar.editor.summaryPh': 'Titel des Ereignisses',
+  'calendar.editor.allDay': 'Ganztägig',
+  'calendar.editor.start': 'Beginn',
+  'calendar.editor.end': 'Ende',
+  'calendar.editor.time': 'Uhrzeit',
+  'calendar.editor.location': 'Ort',
+  'calendar.editor.description': 'Beschreibung',
+  'calendar.editor.delete': 'Löschen',
+  'calendar.editor.cancel': 'Abbrechen',
+  'calendar.editor.save': 'Änderungen speichern',
+  'calendar.editor.create': 'Anlegen',
+  'calendar.nav.prev': 'Vorheriger Monat',
+  'calendar.nav.next': 'Nächster Monat',
+  'calendar.nav.today': 'Heute'
 } as const
 
 export default de

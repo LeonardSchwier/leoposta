@@ -361,3 +361,38 @@ describe('Contacts locale keys (task 6)', () => {
     expect(t('contacts.books')).toBe('Adressbücher')
   })
 })
+
+describe('Calendar locale keys (task 7)', () => {
+  it('resolves calendar.editor.* in en and de', () => {
+    setLang('en')
+    expect(t('calendar.editor.titleNew')).toBe('New event')
+    expect(t('calendar.editor.titleEdit')).toBe('Edit event')
+    expect(t('calendar.editor.allDay')).toBe('All-day')
+    expect(t('calendar.editor.save')).toBe('Save changes')
+    setLang('de')
+    expect(t('calendar.editor.titleNew')).toBe('Neues Ereignis')
+    expect(t('calendar.editor.titleEdit')).toBe('Ereignis bearbeiten')
+    expect(t('calendar.editor.allDay')).toBe('Ganztägig')
+    expect(t('calendar.editor.save')).toBe('Änderungen speichern')
+  })
+
+  it('resolves calendar.delete.confirm', () => {
+    expect(t('calendar.delete.confirm')).toBe('Delete this event?')
+    setLang('de')
+    expect(t('calendar.delete.confirm')).toBe('Dieses Ereignis löschen?')
+  })
+
+  it('substitutes {n} in calendar.imported', () => {
+    setLang('en')
+    expect(t('calendar.imported', { n: 3 })).toBe('Imported 3 event(s)')
+    setLang('de')
+    expect(t('calendar.imported', { n: 3 })).toBe('3 Ereignis(se) importiert')
+  })
+
+  it('substitutes {n} in calendar.more', () => {
+    setLang('en')
+    expect(t('calendar.more', { n: 4 })).toBe('+4 more')
+    setLang('de')
+    expect(t('calendar.more', { n: 4 })).toBe('+4 weitere')
+  })
+})
