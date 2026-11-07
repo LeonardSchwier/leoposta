@@ -14,7 +14,7 @@ export default defineConfig({
       manifest: {
         name: 'Leoposta',
         short_name: 'Mail',
-        description: 'A modern mail client with Apple Mail UX',
+        description: 'A modern mail client with a clean, native-mail UX',
         theme_color: '#faf9f6',
         background_color: '#faf9f6',
         display: 'standalone',
