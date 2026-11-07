@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '../api'
   import { store, getState, setComposeTo, setComposeSubject, setComposeBody, setIsLoading, setComposeScheduled, clearCompose, setComposing } from '../store'
   import { onMount } from 'svelte'
   import { addQueuedMessage } from '../lib/offlineQueue'
@@ -37,7 +38,7 @@
       return
     }
     try {
-      const res = await fetch('/api/account')
+      const res = await apiFetch('/api/account')
       if (!res.ok) return
       const raw = await res.json()
       if (!raw || raw.connected === false || !raw.signature) return
@@ -128,7 +129,7 @@
       scheduled: getState().composeScheduled
     }
     
-    fetch('/api/send', {
+    apiFetch('/api/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(message)

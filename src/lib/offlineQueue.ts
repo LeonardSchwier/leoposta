@@ -1,3 +1,4 @@
+import { apiFetch } from '../api'
 const DB_NAME = 'leoposta-queue'
 const STORE = 'outbox'
 const DB_VERSION = 1
@@ -84,7 +85,7 @@ export async function flushQueue(): Promise<{ sent: number; failed: number }> {
         bodyHtml: msg.bodyHtml,
         scheduled: msg.scheduled
       }
-      const res = await fetch('/api/send', {
+      const res = await apiFetch('/api/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)

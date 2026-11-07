@@ -2,6 +2,11 @@ const API_BASE = import.meta.env.VITE_API_URL || ''
 const API_TOKEN: string = import.meta.env.VITE_LEOPOSTA_TOKEN || ''
 const withToken = (url: string) => (API_TOKEN ? `${url}?token=${encodeURIComponent(API_TOKEN)}` : url)
 
+/** fetch() with the API token header; use for every call to the local server. */
+export function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  return fetch(input, { ...init, headers: { 'x-leoposta-token': API_TOKEN, ...init.headers } })
+}
+
 async function api(path: string, options: RequestInit = {}): Promise<any> {
   const res = await fetch(`${API_BASE}/api${path}`, {
     ...options,
