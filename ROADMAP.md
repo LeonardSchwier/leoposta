@@ -123,7 +123,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
   - Steps: (1) in `sanitizeHtml.ts` add an `afterSanitizeAttributes` branch: for `IMG` with `src` matching `/^https?:/i`, move the value to `data-remote-src` and remove `src`. (2) Export `hasRemoteImages(html: string): boolean`. (3) In `MessageView.svelte` show a one-line banner "Remote images blocked" with a button "Load images" when `hasRemoteImages(msg.bodyHtml)`; the button re-renders with an option `{ allowRemoteImages: true }` that skips step (1). (4) Per-message only; do not persist anything.
   - Accept: tests: default sanitize turns `<img src="https://t/p.gif">` into an element with `data-remote-src` and no `src`; with `allowRemoteImages: true` the `src` stays. `npx vitest run` passes.
 
-- [ ] **B5. PGP passphrase is stored in plain text next to the private key**
+- [x] **B5. PGP passphrase is stored in plain text next to the private key**
   - Problem: `server/index.js:1113` defines `PGP_PASS_FILE` (`pgp_passphrase.txt`), line 1138 writes the passphrase to it, line 1163 reads it back to unlock the private key. Anyone who can read the folder has key and passphrase, which makes the passphrase pointless.
   - Steps: (1) remove the write at line 1138 and the read at line 1163. (2) Keep the unlocked key only in memory in a variable `unlocked = { key, expiresAt }` with a 15 minute idle timeout (`const KEY_TTL_MS = 15 * 60 * 1000`), refreshed on each use. (3) Add route `POST /api/pgp/unlock` taking `{ passphrase }` and returning `{ ok: true }` or 401; sign/decrypt routes return 409 `{ error: 'pgp_locked' }` while locked. (4) On startup, if `pgp_passphrase.txt` exists, log a warning "pgp_passphrase.txt is no longer used; delete it" and do NOT read or delete it. (5) Make the `hasPassphrase` field (line ~1120) mean "private key is passphrase protected".
   - Accept: server tests: signing while locked gives 409; after `/api/pgp/unlock` with the right passphrase signing works; a wrong passphrase gives 401; no code path reads `pgp_passphrase.txt` (`grep -n pgp_passphrase server/index.js` shows only the warning).
@@ -192,6 +192,8 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
   - Accept: `npx vite build` passes; `npm test` passes; a screenshot comparison in light and dark shows the same layout.
 
 ## Standing rules
+
+- needs_validation (security-audit guidance, B5): `POST /api/pgp/unlock` has no attempt throttling (token-gated only). Frontend still needs an unlock prompt; `pgp_locked` is returned as `error` inside the message's pgp status, there is no sign route yet.
 
 - needs_validation (security-audit guidance, B1): how the Tauri sidecar and frontend share `LEOPOSTA_TOKEN` (the Vite build bakes `VITE_LEOPOSTA_TOKEN` into the bundle; `src-tauri` not reviewed). `?token=` on idle/attachment GETs may reach logs.
 
