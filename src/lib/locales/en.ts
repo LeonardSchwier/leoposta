@@ -14,7 +14,41 @@ export const en = {
   'misc.bare': '{n} bare items',
   'en-only.key': 'EN only',
   'greet.user': 'Hello, {user}!',
-  'wrap.err': 'Err: {err}.'
+  'wrap.err': 'Err: {err}.',
+
+  // Compose
+  'compose.window.aria': 'Compose message',
+  'compose.title.reply': 'Reply',
+  'compose.title.forward': 'Forward',
+  'compose.title.new': 'New Message',
+  'compose.close.aria': 'Close compose (Esc)',
+  'compose.to.placeholder': 'recipient@example.com',
+  'compose.cc.label': 'Cc',
+  'compose.cc.placeholder': 'Add Cc...',
+  'compose.cc.show': 'Add Cc',
+  'compose.cc.hide': 'Hide Cc',
+  'compose.bcc.label': 'Bcc',
+  'compose.bcc.placeholder': 'Add Bcc...',
+  'compose.bcc.show': 'Add Bcc',
+  'compose.bcc.hide': 'Hide Bcc',
+  'compose.subject.label': 'Subject',
+  'compose.subject.placeholder': 'Subject',
+  'compose.body.placeholder': 'Write your message...',
+  'compose.schedule.heading': 'Schedule Send',
+  'compose.schedule.cancel': 'Cancel',
+  'compose.schedule.confirm': 'Schedule',
+  'compose.attach.tooltip': 'Attach file',
+  'compose.attach.remove.aria': 'Remove {filename}',
+  'compose.schedule.tooltip': 'Schedule send',
+  'compose.scheduled.badge': 'Scheduled: {time}',
+  'compose.saveDraft': 'Save Draft',
+  'compose.send.loading': 'Sending...',
+  'compose.send.label': 'Send',
+  'compose.alert.noRecipient': 'Please add at least one recipient',
+  'compose.send.failed': 'Failed to send: {err}',
+  'compose.queue.failed': 'Failed to queue message: {err}',
+  'compose.error.generic': 'Error: {err}',
+  'compose.attach.failed': 'Could not attach {name}: {err}'
 } as const
 
 export default en
