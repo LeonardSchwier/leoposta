@@ -107,7 +107,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
   - Steps: (1) after A1, add `server/lib/auth.js` exporting `requireToken(token)` that reads header `x-leoposta-token`, compares with `crypto.timingSafeEqual` (compare equal-length Buffers; return 401 JSON `{error:'unauthorized'}` otherwise). (2) In `createApp()` generate `const token = process.env.LEOPOSTA_TOKEN || crypto.randomBytes(32).toString('hex')`; mount `app.use('/api', requireToken(token))` right after the `cors(...)` line, except `GET /api/health` (add it, returns `{ok:true}`). (3) Print the token once at start when it was generated. (4) `src/api/index.ts`: add the header to every request from `import.meta.env.VITE_LEOPOSTA_TOKEN`. (5) Document `LEOPOSTA_TOKEN` and `VITE_LEOPOSTA_TOKEN` in `README.md`.
   - Accept: tests in `server/server.test.js`: no header gives 401, wrong header gives 401, right header gives 200, `/api/health` gives 200 without a header. `npm run test:server` passes.
 
-- [ ] **B2. Tauri content security policy is disabled while untrusted mail HTML is rendered**
+- [x] **B2. Tauri content security policy is disabled while untrusted mail HTML is rendered**
   - Problem: `src-tauri/tauri.conf.json:26` has `"csp": null`, and `src/components/MessageView.svelte:190` injects mail HTML with `{@html sanitizeHtml(msg.bodyHtml)}`. One sanitizer bypass is then script execution inside the desktop app.
   - Steps: (1) set `"csp"` to `"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: cid: https:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:3001; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"`. (2) Add `src/__tests__/tauriConf.test.ts` that reads `src-tauri/tauri.conf.json` with `fs.readFileSync`, parses it, and asserts `app.security.csp` (check the real key path in the file) is a string containing `default-src 'self'`, `object-src 'none'` and `frame-src 'none'`, and does not contain `script-src 'unsafe-inline'`.
   - Accept: `npm test` passes the new test; `grep -n '"csp": null' src-tauri/tauri.conf.json` prints nothing.
@@ -151,7 +151,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
 
 ### Review C. Quality and truthfulness
 
-- [ ] **C1. Add CI**
+- [x] **C1. Add CI**
   - Problem: there is no `.github/` directory, so nothing runs the tests on push.
   - Steps: create `.github/workflows/ci.yml` triggered on `push` and `pull_request`, one job on `ubuntu-latest`: `actions/checkout@v4`, `actions/setup-node@v4` with `node-version: 22` and `cache: npm`, then `npm ci`, `npm test`, `npm run test:server`, `npx vite build`. Do not add steps that need secrets.
   - Accept: `python3 -c "import yaml;yaml.safe_load(open('.github/workflows/ci.yml'))"` exits 0 and the first hosted run is green (record its run id in the roadmap).
@@ -161,7 +161,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
   - Steps: (1) create `LICENSE` with the standard MIT text and `Copyright (c) 2026 Leonard Schwier`. (2) In `package.json` set `"name": "leoposta"` and `"license": "MIT"`. (3) Regenerate the lockfile name fields with `npm install --package-lock-only`.
   - Accept: `test -f LICENSE && node -p "require('./package.json').license"` prints `MIT`.
 
-- [ ] **C3. README describes a different project**
+- [x] **C3. README describes a different project**
   - Problem: `README.md` is titled "Evolution Mail", says `cd evolution-mail`, and lists Zustand as state management. `zustand` is in `package.json` but `grep -rn zustand src` finds nothing. "Local-First: your mail stays on your device" is not explained.
   - Steps: (1) rename to Leoposta everywhere in `README.md`. (2) Replace `git clone <repo-url>` with `git clone https://github.com/LeonardSchwier/leoposta.git` and `cd leoposta`. (3) Remove the Zustand line; run `npm uninstall zustand`. (4) Delete `src/assets/hero.png`, `src/assets/svelte.svg`, `src/assets/vite.svg` if `grep -rn "hero.png\|svelte.svg\|vite.svg" src index.html` finds no use. (5) Add a short "What is stored where" table (see B6).
   - Accept: `grep -rni "evolution" README.md package.json` prints nothing; `npm test` and `npx vite build` pass.
