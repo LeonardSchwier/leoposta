@@ -56,11 +56,21 @@ function warnOnce(key: string) {
   console.warn(`[i18n] missing key: ${key}`)
 }
 
-export function t(key: LocaleKey | string, params?: Record<string, string | number>): string {
-  const active = get(lang)
-  const v = dicts[active][key as string] ?? dicts.en[key as string]
+function _t(active: Lang, key: string, params?: Record<string, string | number>): string {
+  const v = dicts[active][key] ?? dicts.en[key]
   if (v === undefined) { warnOnce(key); return key }
   return substitute(v, params)
+}
+
+// Overload 1 — classic, works in scripts and Svelte 4 templates:
+//   t('settings.title')
+// Overload 2 — Svelte 5 runes template helper, pass $lang explicitly
+//   to create a tracked reactive dependency:  {t($lang, 'settings.title')}
+export function t(key: LocaleKey | string, params?: Record<string, string | number>): string
+export function t(active: Lang, key: LocaleKey | string, params?: Record<string, string | number>): string
+export function t(a: Lang | LocaleKey | string, b?: LocaleKey | string | Record<string, string | number>, c?: Record<string, string | number>): string {
+  if (a === 'en' || a === 'de') return _t(a, b as string, c)
+  return _t(get(lang), a as string, b as Record<string, string | number> | undefined)
 }
 
 function withFallback(base: string, suffix: '.one' | '.other'): string {

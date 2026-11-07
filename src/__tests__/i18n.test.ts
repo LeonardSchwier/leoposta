@@ -163,3 +163,41 @@ describe('cross-tab', () => {
     expect(get(lang)).toBe('en')
   })
 })
+
+describe('Settings language keys (task 2 seed)', () => {
+  it('resolves settings.title in en and de', () => {
+    expect(t('settings.title')).toBe('Settings')
+    setLang('de')
+    expect(t('settings.title')).toBe('Einstellungen')
+  })
+
+  it('resolves settings.close in en and de', () => {
+    setLang('en')
+    expect(t('settings.close')).toBe('Close')
+    setLang('de')
+    expect(t('settings.close')).toBe('Schließen')
+  })
+
+  it('resolves settings.language.option.en and .de', () => {
+    setLang('en')
+    expect(t('settings.language.option.en')).toBe('English')
+    expect(t('settings.language.option.de')).toBe('Deutsch')
+    setLang('de')
+    expect(t('settings.language.option.en')).toBe('Englisch')
+    expect(t('settings.language.option.de')).toBe('Deutsch')
+  })
+
+  it('resolves settings.language.hint in both locales', () => {
+    setLang('en')
+    expect(t('settings.language.hint')).toContain('all leoposta screens')
+    setLang('de')
+    expect(t('settings.language.hint')).toContain('in diesem Browser gespeichert')
+  })
+
+  it('resolves settings.tab.language', () => {
+    setLang('en')
+    expect(t('settings.tab.language')).toBe('Language')
+    setLang('de')
+    expect(t('settings.tab.language')).toBe('Sprache')
+  })
+})
