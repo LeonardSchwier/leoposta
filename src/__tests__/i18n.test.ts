@@ -247,3 +247,50 @@ describe('Compose locale keys (task 3)', () => {
   })
 })
 
+
+describe('MessageList locale keys (task 4)', () => {
+  it('resolves list.star.star and list.star.unstar in en and de', () => {
+    expect(t('list.star.star')).toBe('Star')
+    expect(t('list.star.unstar')).toBe('Unstar')
+    setLang('de')
+    expect(t('list.star.star')).toBe('Markieren')
+    expect(t('list.star.unstar')).toBe('Markierung entfernen')
+  })
+
+  it('picks list.attachments.one at n=1', () => {
+    expect(tPl('list.attachments', 1)).toBe('📎 1 attachment')
+    setLang('de')
+    expect(tPl('list.attachments', 1)).toBe('📎 1 Anhang')
+  })
+
+  it('picks list.attachments.other at n=5 and fills {n}', () => {
+    setLang('en')
+    expect(tPl('list.attachments', 5)).toBe('📎 5 attachments')
+    setLang('de')
+    expect(tPl('list.attachments', 5)).toBe('📎 5 Anhänge')
+  })
+
+  it('resolves list.actions.reply and list.actions.delete', () => {
+    setLang('en')
+    expect(t('list.actions.reply')).toBe('Reply')
+    expect(t('list.actions.delete')).toBe('Delete')
+    setLang('de')
+    expect(t('list.actions.reply')).toBe('Antworten')
+    expect(t('list.actions.delete')).toBe('Löschen')
+  })
+
+  it('resolves list.date.yesterday', () => {
+    expect(t('list.date.yesterday')).toBe('Yesterday')
+    setLang('de')
+    expect(t('list.date.yesterday')).toBe('Gestern')
+  })
+
+  it('resolves list.empty and list.empty.search', () => {
+    setLang('en')
+    expect(t('list.empty')).toBe('No messages')
+    expect(t('list.empty.search')).toBe('No results')
+    setLang('de')
+    expect(t('list.empty')).toBe('Keine Nachrichten')
+    expect(t('list.empty.search')).toBe('Keine Ergebnisse')
+  })
+})

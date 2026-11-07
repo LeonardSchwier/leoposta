@@ -73,14 +73,26 @@ export function t(a: Lang | LocaleKey | string, b?: LocaleKey | string | Record<
   return _t(get(lang), a as string, b as Record<string, string | number> | undefined)
 }
 
-function withFallback(base: string, suffix: '.one' | '.other'): string {
+function withFallback(base: string, active: Lang, suffix: '.one' | '.other'): string {
   const full = `${base}${suffix}`
-  return (dicts[get(lang)][full] !== undefined || dicts.en[full] !== undefined) ? full : base
+  return (dicts[active][full] !== undefined || dicts.en[full] !== undefined) ? full : base
 }
 
-export function tPl(key: LocaleKey | string, n: number): string {
-  const slot = n === 1 ? withFallback(key, '.one') : withFallback(key, '.other')
-  return t(slot, { n })
+export function tPl(key: LocaleKey | string, n: number): string
+export function tPl(active: Lang, key: LocaleKey | string, n: number): string
+export function tPl(a: Lang | LocaleKey | string, b?: number | (LocaleKey | string), c?: number): string {
+  if (a === 'en' || a === 'de') {
+    const L = a as Lang
+    const key = b as string
+    const n = c as number
+    const slot = n === 1 ? withFallback(key, L, '.one') : withFallback(key, L, '.other')
+    return _t(L, slot, { n })
+  }
+  const L = get(lang)
+  const key = a as string
+  const n = b as number
+  const slot = n === 1 ? withFallback(key, L, '.one') : withFallback(key, L, '.other')
+  return _t(L, slot, { n })
 }
 
 // Cross-tab sync — installed at import time. The listener is a no-op in

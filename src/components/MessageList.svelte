@@ -2,6 +2,7 @@
   import { store, getState, selectMessage, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, updateMessage, setComposeCc } from '../store'
   import ContextMenu from './ContextMenu.svelte'
   import { computeVirtualRange } from '../lib/virtualList'
+  import { lang, t, tPl, type Lang } from '../lib/i18n'
 
   let { onCompose, onSelectMessage, onDelete, onArchive, onStar, onSearch, searchQuery = '', isLoading = false, error = null } = $props()
 
@@ -66,25 +67,25 @@
     setComposing(true)
   }
 
-  function menuItems(message: any): MenuItem[] {
+  function menuItems(L: Lang, message: any): MenuItem[] {
     return [
-      { label: 'Reply', icon: '↩', action: () => handleReply(message) },
-      { label: 'Reply All', icon: '↩↩', action: () => handleReplyAll(message) },
-      { label: 'Forward', icon: '⪡', action: () => handleForward(message) },
-      { label: 'Archive', icon: '⬇', action: () => onArchive?.() },
+      { label: t(L, 'list.actions.reply'), icon: '↩', action: () => handleReply(message) },
+      { label: t(L, 'list.actions.replyAll'), icon: '↩↩', action: () => handleReplyAll(message) },
+      { label: t(L, 'list.actions.forward'), icon: '⪡', action: () => handleForward(message) },
+      { label: t(L, 'list.actions.archive'), icon: '⬇', action: () => onArchive?.() },
       { divider: true, label: '', action: undefined },
-      { label: 'Delete', icon: '✕', danger: true, action: () => onDelete?.() },
+      { label: t(L, 'list.actions.delete'), icon: '✕', danger: true, action: () => onDelete?.() },
     ]
   }
   
-  function formatDate(dateStr: string) {
+  function formatDate(L: Lang, dateStr: string) {
     if (!dateStr) return ''
     const date = new Date(dateStr)
     const now = new Date()
     const diff = now.getTime() - date.getTime()
     const days = Math.floor(diff / (1000 * 60 * 60 * 24))
     if (days === 0) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    if (days === 1) return 'Yesterday'
+    if (days === 1) return t(L, 'list.date.yesterday')
     if (days < 7) return date.toLocaleDateString([], { weekday: 'short' })
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
   }
@@ -95,10 +96,10 @@
   function isFlagged(message: any) {
     return message.flags?.includes('\\Flagged') || message.flags?.includes('Flagged')
   }
-  function getPreview(message: any): string {
+  function getPreview(L: Lang, message: any): string {
     if (message.body) return message.body.substring(0, 100)
     if (message.bodyHtml) return message.bodyHtml.replace(/<[^>]*>/g, '').substring(0, 100)
-    if (message.attachments?.length) return '📎 ' + message.attachments.length + ' attachment(s)'
+    if (message.attachments?.length) return tPl(L, 'list.attachments', message.attachments.length)
     return ''
   }
   
@@ -135,7 +136,7 @@
     <div class="search-box">
       <input
         type="text"
-        placeholder="Search…"
+        placeholder={t($lang, 'list.search.placeholder')}
         value={searchQuery}
         oninput={(e) => onSearch?.((e.target as HTMLInputElement).value)}
         class="search-input"
@@ -143,7 +144,7 @@
       />
     </div>
     <div class="actions">
-      <button class="action-btn" title="New Message" onclick={onCompose}>✉</button>
+      <button class="action-btn" title={t($lang, 'list.newMessage')} onclick={onCompose}>✉</button>
     </div>
   </div>
   
@@ -156,15 +157,15 @@
   {#if isLoading}
     <div class="loading">
       <div class="spinner"></div>
-      <p>Loading…</p>
+      <p>{t($lang, 'list.loading')}</p>
     </div>
   {:else if $store.messages.length === 0}
     <div class="empty-state">
       <div class="empty-icon">📭</div>
-      <h3>{searchQuery ? 'No results' : 'No messages'}</h3>
+      <h3>{searchQuery ? t($lang, 'list.empty.search') : t($lang, 'list.empty')}</h3>
     </div>
   {:else}
-    <div class="message-list" role="listbox" aria-label="Messages" tabindex="-1" bind:this={scrollEl}>
+    <div class="message-list" role="listbox" aria-label={t($lang, 'list.aria')} tabindex="-1" bind:this={scrollEl}>
       <div class="virtual-spacer" style={`height:${virtual.paddingTop}px`}></div>
       {#each slice as message (message.id)}
         <div
@@ -180,7 +181,7 @@
             <button 
               class="star-btn"
               class:starred={isFlagged(message)}
-              title={isFlagged(message) ? 'Unstar' : 'Star'}
+              title={isFlagged(message) ? t($lang, 'list.star.unstar') : t($lang, 'list.star.star')}
               onclick={(e) => { e.stopPropagation(); onStar?.() }}
             >
               {#if isFlagged(message)}★{:else}☆{/if}
@@ -189,16 +190,16 @@
           <div class="message-info">
             <div class="message-top">
               <span class="sender-name">{message.from}</span>
-              <span class="message-date">{formatDate(message.date)}</span>
+              <span class="message-date">{formatDate($lang, message.date)}</span>
             </div>
-            <div class="message-subject">{message.subject || '(no subject)'}</div>
-            <div class="message-preview">{getPreview(message)}</div>
+            <div class="message-subject">{message.subject || t($lang, 'list.noSubject')}</div>
+            <div class="message-preview">{getPreview($lang, message)}</div>
           </div>
           <div class="message-actions" onclick={(e) => e.stopPropagation()}>
-            <button class="msg-btn" title="Reply" onclick={() => handleReply(message)}>↩</button>
-            <button class="msg-btn" title="Forward" onclick={() => handleForward(message)}>⪡</button>
-            <button class="msg-btn" title="Archive" onclick={() => onArchive?.()}>⬇</button>
-            <button class="msg-btn danger" title="Delete" onclick={() => onDelete?.()}>✕</button>
+            <button class="msg-btn" title={t($lang, 'list.actions.reply')} onclick={() => handleReply(message)}>↩</button>
+            <button class="msg-btn" title={t($lang, 'list.actions.forward')} onclick={() => handleForward(message)}>⪡</button>
+            <button class="msg-btn" title={t($lang, 'list.actions.archive')} onclick={() => onArchive?.()}>⬇</button>
+            <button class="msg-btn danger" title={t($lang, 'list.actions.delete')} onclick={() => onDelete?.()}>✕</button>
           </div>
         </div>
       {/each}
@@ -210,7 +211,7 @@
     <ContextMenu
       x={menuPos.x}
       y={menuPos.y}
-      items={menuItems(menuFor)}
+      items={menuItems($lang, menuFor)}
       onClose={closeMenu}
     />
   {/if}
