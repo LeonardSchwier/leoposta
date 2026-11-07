@@ -180,7 +180,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
     - Offline item says `sw.js` exists; `public/` contains no `sw.js` (`ls public`). Check `vite.config.ts` for a PWA plugin and correct the sentence to match.
   - Accept: `grep -n "scheduled.json" .gitignore` matches, and re-reading each bullet above against the files shows no false statement.
 
-- [ ] **C6. Split `server/index.js` (1425 lines) after A1 and B1 are done**
+- [ ] **C6. Split `server/index.js` (1425 lines) after A1 and B1 are done**** (not started: server agent ran out of budget; B1/A1 done, snapshot test first)
   - Steps: move code without changing behavior, one commit per module: `server/lib/store.js` (account, scheduled and PGP files), `server/lib/imapPool.js` (the `pool`, line ~163), `server/lib/sanitize.js` (B7), `server/routes/account.js`, `mail.js`, `send.js`, `pgp.js`, `dav.js`. Before the first move add a test that records the sorted list of `METHOD path` pairs of `createApp()` (walk `app._router.stack`) in `server/routes.snapshot.json` and compares it.
   - Accept: the snapshot test and `npm run test:server` pass after every commit; `wc -l server/index.js` is below 200.
 
