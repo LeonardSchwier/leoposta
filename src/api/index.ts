@@ -1,9 +1,11 @@
 const API_BASE = import.meta.env.VITE_API_URL || ''
+const API_TOKEN: string = import.meta.env.VITE_LEOPOSTA_TOKEN || ''
+const withToken = (url: string) => (API_TOKEN ? `${url}?token=${encodeURIComponent(API_TOKEN)}` : url)
 
 async function api(path: string, options: RequestInit = {}): Promise<any> {
   const res = await fetch(`${API_BASE}/api${path}`, {
     ...options,
-    headers: { 'Content-Type': 'application/json', ...options.headers }
+    headers: { 'Content-Type': 'application/json', 'x-leoposta-token': API_TOKEN, ...options.headers }
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
@@ -36,10 +38,10 @@ export const MailAPI = {
     method: 'POST', body: JSON.stringify({ from, to })
   }),
   attachmentUrl: (id: string, partId: string) =>
-    `${API_BASE}/api/message/${id}/attachment/${partId}`,
+    withToken(`${API_BASE}/api/message/${id}/attachment/${partId}`),
   scheduled: () => api('/scheduled'),
   cancelScheduled: (id: string) => api(`/scheduled/${id}`, { method: 'DELETE' }),
-  idle: () => `${API_BASE}/api/idle`,
+  idle: () => withToken(`${API_BASE}/api/idle`),
 }
 
 export const CalendarAPI = {

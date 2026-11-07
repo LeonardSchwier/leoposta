@@ -102,7 +102,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
 
 ### Review B. Security (highest risk first)
 
-- [ ] **B1. Local API has no authentication**
+- [x] **B1. Local API has no authentication**
   - Problem: all 33 routes in `server/index.js` (`grep -nE "app\.(get|post|put|delete)" server/index.js`) answer any local process or any page that passes the CORS check at line 30. Nothing checks a credential, and the routes read mail, send mail and sign with the PGP key.
   - Steps: (1) after A1, add `server/lib/auth.js` exporting `requireToken(token)` that reads header `x-leoposta-token`, compares with `crypto.timingSafeEqual` (compare equal-length Buffers; return 401 JSON `{error:'unauthorized'}` otherwise). (2) In `createApp()` generate `const token = process.env.LEOPOSTA_TOKEN || crypto.randomBytes(32).toString('hex')`; mount `app.use('/api', requireToken(token))` right after the `cors(...)` line, except `GET /api/health` (add it, returns `{ok:true}`). (3) Print the token once at start when it was generated. (4) `src/api/index.ts`: add the header to every request from `import.meta.env.VITE_LEOPOSTA_TOKEN`. (5) Document `LEOPOSTA_TOKEN` and `VITE_LEOPOSTA_TOKEN` in `README.md`.
   - Accept: tests in `server/server.test.js`: no header gives 401, wrong header gives 401, right header gives 200, `/api/health` gives 200 without a header. `npm run test:server` passes.
@@ -192,6 +192,8 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
   - Accept: `npx vite build` passes; `npm test` passes; a screenshot comparison in light and dark shows the same layout.
 
 ## Standing rules
+
+- needs_validation (security-audit guidance, B1): how the Tauri sidecar and frontend share `LEOPOSTA_TOKEN` (the Vite build bakes `VITE_LEOPOSTA_TOKEN` into the bundle; `src-tauri` not reviewed). `?token=` on idle/attachment GETs may reach logs.
 
 - Check this file before starting any feature; update as you go.
 - Before merging anything that touches HTML rendering, credentials, or the
