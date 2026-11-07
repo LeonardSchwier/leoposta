@@ -48,7 +48,26 @@ export const en = {
   'compose.send.failed': 'Failed to send: {err}',
   'compose.queue.failed': 'Failed to queue message: {err}',
   'compose.error.generic': 'Error: {err}',
-  'compose.attach.failed': 'Could not attach {name}: {err}'
+  'compose.attach.failed': 'Could not attach {name}: {err}',
+
+  // MessageList
+  'list.search.placeholder': 'Search…',
+  'list.newMessage': 'New Message',
+  'list.loading': 'Loading…',
+  'list.empty.search': 'No results',
+  'list.empty': 'No messages',
+  'list.aria': 'Messages',
+  'list.star.star': 'Star',
+  'list.star.unstar': 'Unstar',
+  'list.noSubject': '(no subject)',
+  'list.attachments.one': '📎 1 attachment',
+  'list.attachments.other': '📎 {n} attachments',
+  'list.actions.reply': 'Reply',
+  'list.actions.replyAll': 'Reply All',
+  'list.actions.forward': 'Forward',
+  'list.actions.archive': 'Archive',
+  'list.actions.delete': 'Delete',
+  'list.date.yesterday': 'Yesterday'
 } as const
 
 export default en

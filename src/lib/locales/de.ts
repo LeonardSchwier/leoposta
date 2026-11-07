@@ -47,7 +47,26 @@ export const de = {
   'compose.send.failed': 'Senden fehlgeschlagen: {err}',
   'compose.queue.failed': 'Nachricht wurde nicht in die Warteschlange aufgenommen: {err}',
   'compose.error.generic': 'Fehler: {err}',
-  'compose.attach.failed': 'Datei konnte nicht angehängt werden: {name} — {err}'
+  'compose.attach.failed': 'Datei konnte nicht angehängt werden: {name} — {err}',
+
+  // MessageList
+  'list.search.placeholder': 'Suchen…',
+  'list.newMessage': 'Neue Nachricht',
+  'list.loading': 'Wird geladen…',
+  'list.empty.search': 'Keine Ergebnisse',
+  'list.empty': 'Keine Nachrichten',
+  'list.aria': 'Nachrichten',
+  'list.star.star': 'Markieren',
+  'list.star.unstar': 'Markierung entfernen',
+  'list.noSubject': '(kein Betreff)',
+  'list.attachments.one': '📎 1 Anhang',
+  'list.attachments.other': '📎 {n} Anhänge',
+  'list.actions.reply': 'Antworten',
+  'list.actions.replyAll': 'Allen antworten',
+  'list.actions.forward': 'Weiterleiten',
+  'list.actions.archive': 'Archivieren',
+  'list.actions.delete': 'Löschen',
+  'list.date.yesterday': 'Gestern'
 } as const
 
 export default de
