@@ -131,3 +131,24 @@ test('PGP: passphrase never persisted; locked until unlocked; wrong passphrase 4
   assert.match(r.text, /secret body/)
   assert.equal(fs.existsSync(path.join(DATA_DIR, 'pgp_passphrase.txt')), false)
 })
+
+test('credentials: env passwords override and are never written to account.json', async () => {
+  process.env.LEOPOSTA_IMAP_PASS = 'envsecret-imap'
+  try {
+    const res = await fetch(`${base}/api/account`, {
+      method: 'POST',
+      headers: { ...authed, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        email: 'a@example.com', imapHost: 'localhost', imapUser: 'a', imapPass: 'filepass',
+        smtpHost: 'localhost', smtpUser: 'a', smtpPass: 'smtpfilepass'
+      })
+    })
+    assert.equal(res.status, 200)
+    const raw = fs.readFileSync(path.join(DATA_DIR, 'account.json'), 'utf-8')
+    assert.ok(!raw.includes('envsecret-imap'))
+    assert.ok(!raw.includes('"imapPass"'), 'env-sourced imapPass omitted')
+    assert.ok(raw.includes('smtpfilepass'), 'non-env smtpPass still stored')
+  } finally {
+    delete process.env.LEOPOSTA_IMAP_PASS
+  }
+})

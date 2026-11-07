@@ -62,9 +62,20 @@ if (fs.existsSync(SCHEDULED_FILE)) {
   scheduledMessages = JSON.parse(fs.readFileSync(SCHEDULED_FILE, 'utf-8'))
 }
 
+// Passwords may come from the environment instead of account.json.
+function applyEnvPasswords() {
+  if (!account) return
+  if (process.env.LEOPOSTA_IMAP_PASS) account.imapPass = process.env.LEOPOSTA_IMAP_PASS
+  if (process.env.LEOPOSTA_SMTP_PASS) account.smtpPass = process.env.LEOPOSTA_SMTP_PASS
+}
+applyEnvPasswords()
+
 function saveAccount() {
   if (account) {
-    fs.writeFileSync(ACCOUNT_FILE, JSON.stringify(account, null, 2), { mode: 0o600 })
+    const toSave = { ...account }
+    if (process.env.LEOPOSTA_IMAP_PASS) delete toSave.imapPass
+    if (process.env.LEOPOSTA_SMTP_PASS) delete toSave.smtpPass
+    fs.writeFileSync(ACCOUNT_FILE, JSON.stringify(toSave, null, 2), { mode: 0o600 })
   }
 }
 
@@ -293,6 +304,7 @@ app.post('/api/account', (req, res) => {
       smtpUser, smtpPass,
       signature: signature || { enabled: false, text: '', position: 'standard' }
     }
+    applyEnvPasswords()
     saveAccount()
     pool.reset().catch(() => {})
     res.json({ success: true })
