@@ -34,6 +34,7 @@
     "vitest": "^3.2.0"
   },
   "dependencies": {
+    "@leonardschwier/leoforma": "https://github.com/LeonardSchwier/leoforma/releases/download/v0.2.0/leonardschwier-leoforma-0.2.0.tgz",
     "@tanstack/solid-store": "^0.11.2",
     "@types/dompurify": "^3.0.5",
     "cors": "^2.8.6",
