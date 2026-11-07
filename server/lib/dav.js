@@ -7,11 +7,11 @@ export const DAV_PORT = parseInt(process.env.DAV_PORT || '443', 10)
 export const DAV_TLS = (process.env.DAV_TLS || (process.env.DAV_HOST ? 'true' : 'false')) === 'true'
 export const DAV_PATH_PREFIX = (user) => (process.env.DAV_PREFIX || '/dav/' + user)
 
-export function davRequest(method, urlPath, body, contentType) {
+export function davRequest(method, urlPath, body, contentType, acct) {
   return new Promise((resolve, reject) => {
-    const acct = state.accounts[0]
-    const user = acct && acct.imapUser ? acct.imapUser : ''
-    const pass = acct && acct.imapPass ? acct.imapPass : ''
+    const account = acct || state.accounts[0] || {}
+    const user = account.imapUser || ''
+    const pass = account.imapPass || ''
     const token = Buffer.from(`${user}:${pass}`).toString('base64')
     const opts = {
       hostname: DAV_HOST,
