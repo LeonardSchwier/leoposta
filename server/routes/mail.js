@@ -4,6 +4,7 @@ import { state } from '../lib/state.js'
 import { pool } from '../lib/imap.js'
 import { normalizeFlags, parseFromAddr, toISO } from '../lib/address.js'
 import { processPgp } from '../lib/pgp.js'
+import { applyRules } from '../lib/rules.js'
 
 const router = Router()
 
@@ -84,7 +85,7 @@ router.get('/messages', async (req, res) => {
         }
 
         messages.sort((a, b) => new Date(b.date) - new Date(a.date))
-        res.json({ messages, unreadCount })
+        res.json({ messages: applyRules(messages, state.rules), unreadCount })
       } finally {
         lock.release()
       }
@@ -267,7 +268,7 @@ router.get('/search', async (req, res) => {
           })
         }
 
-        res.json({ messages, total: searchUids.length })
+        res.json({ messages: applyRules(messages, state.rules), total: searchUids.length })
       } finally {
         lock.release()
       }

@@ -64,9 +64,31 @@ update it as each item lands.
 - [ ] **Offline mail cache** — a service worker is generated at build time by `vite-plugin-pwa` (`dist/sw.js`; there is no hand-written `public/sw.js`), but the
   read-cache in `store/index.ts` is per-session; move to IndexedDB
   (`idb-kv` / `dexie`) so the inbox survives reload + offline.
-- [ ] **Filter / rules** — `AGENTS.md:47`; not present. Plan: rule
-  list in `account.json.rules`, evaluated on FETCH path, action
-  = move / flag / label.
+- [x] **Filter / rules** — done 2026-11-07.
+  - `server/lib/rules.js` (`matchRule` + `applyRules`, 18 tests):
+    pure rule engine — `when` (list of
+    `{field,operator,value}` AND'd) + `do` (`flag` / `move` / `label`).
+    Operators: contains, not_contains, equals, not_equals, starts_with,
+    ends_with, regex (invalid regex is a no-match, not a crash).
+  - `server/lib/state.js`: `state.rules` persisted to `rules.json`
+    (`saveRules()`), loaded on boot, `{ mode: 0o600 }`.
+  - `server/routes/rules.js` (new): `GET /api/rules` + `PUT /api/rules`
+    (replace the full list). Registered in `server/index.js` after
+    mailRoutes.
+  - `server/routes/mail.js`: `GET /api/messages` and `GET /api/search`
+    now wrap their results in `applyRules(messages, state.rules)` before
+    sending — the first matching enabled rule wins; disabled rules are
+    skipped; a match that fails every condition is a no-op.
+  - `src/lib/rules.ts`: `Rule` / `RuleCondition` / `RuleAction` types +
+    `RULE_FIELDS` / `RULE_OPERATORS` / `RULE_ACTIONS` metadata +
+    `describeRule()`.
+  - `Settings.svelte`: new **Rules** tab (alongside Account). Each rule
+    card: enable toggle, one or more condition rows (field / operator /
+    value), an action row (flag / move / label), add-condition and
+    remove buttons. `Save rules` → `PUT /api/rules`.
+  - Accept (verified 2026-11-07): `npx vitest run` → 53 pass / 0 fail;
+    `node --test server/lib/rules.test.js` → 18 pass; `npx tsc --noEmit`
+    clean; `npx vite build` clean.
 
 ## Later (P2)
 
