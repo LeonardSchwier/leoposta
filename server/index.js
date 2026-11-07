@@ -1119,14 +1119,34 @@ app.post('/api/contacts/import', async (req, res) => {
 // ---------- PGP: key storage + per-message decryption ----------
 const PGP_PRIVATE_FILE = path.join(DATA_DIR, 'pgp_private.asc')
 const PGP_PUBLIC_FILE  = path.join(DATA_DIR, 'pgp_publics.asc')
-const PGP_PASS_FILE    = path.join(DATA_DIR, 'pgp_passphrase.txt')
+// The passphrase is never persisted: the unlocked key lives in memory only,
+// with a 15 minute idle timeout.
+const KEY_TTL_MS = 15 * 60 * 1000
+let unlocked = null // { key, expiresAt }
+function getUnlockedKey() {
+  if (!unlocked) return null
+  if (Date.now() > unlocked.expiresAt) { unlocked = null; return null }
+  unlocked.expiresAt = Date.now() + KEY_TTL_MS
+  return unlocked.key
+}
+if (fs.existsSync(path.join(DATA_DIR, 'pgp_passphrase.txt'))) {
+  console.warn('pgp_passphrase.txt is no longer used; delete it')
+}
 const PGP_ARMOR_RE     = /-----BEGIN PGP (?:MESSAGE|SIGNED MESSAGE|ENCRYPTED MESSAGE)[\s\S]*?-----END PGP (?:MESSAGE|SIGNED MESSAGE|ENCRYPTED MESSAGE)[\s\S]*?-----/
 
-function pgpState() {
+async function pgpState() {
+  let hasPassphrase = false
+  if (fs.existsSync(PGP_PRIVATE_FILE)) {
+    try {
+      const k = await openpgp.readPrivateKey({ armoredKey: fs.readFileSync(PGP_PRIVATE_FILE, 'utf-8') })
+      hasPassphrase = !k.isDecrypted() // true = private key is passphrase protected
+    } catch {}
+  }
   return {
     hasPrivateKey: fs.existsSync(PGP_PRIVATE_FILE),
     hasPublicKey:  fs.existsSync(PGP_PUBLIC_FILE),
-    hasPassphrase: fs.existsSync(PGP_PASS_FILE)
+    hasPassphrase,
+    unlocked: !!getUnlockedKey()
   }
 }
 
@@ -1134,6 +1154,7 @@ async function savePgp({ privateAsc, publicAsc, passphrase }) {
   if (privateAsc) {
     await openpgp.readPrivateKey({ armoredKey: privateAsc })
     fs.writeFileSync(PGP_PRIVATE_FILE, privateAsc.trim() + '\n', { mode: 0o600 })
+    unlocked = null
   }
   if (publicAsc) {
     await openpgp.readKey({ armoredKey: publicAsc })
@@ -1143,22 +1164,21 @@ async function savePgp({ privateAsc, publicAsc, passphrase }) {
       fs.writeFileSync(PGP_PUBLIC_FILE, (existing ? existing.replace(/\s+$/, '') + '\n\n' : '') + trimmed + '\n')
     }
   }
-  if (passphrase !== undefined) {
-    if (passphrase) fs.writeFileSync(PGP_PASS_FILE, passphrase, { mode: 0o600 })
-    else if (fs.existsSync(PGP_PASS_FILE)) fs.unlinkSync(PGP_PASS_FILE)
-  }
+  // `passphrase` is accepted for backward compatibility but never stored;
+  // use POST /api/pgp/unlock to unlock the key in memory.
   return pgpState()
 }
 
 function deletePgp() {
-  for (const f of [PGP_PRIVATE_FILE, PGP_PUBLIC_FILE, PGP_PASS_FILE]) {
+  unlocked = null
+  for (const f of [PGP_PRIVATE_FILE, PGP_PUBLIC_FILE]) {
     try { fs.unlinkSync(f) } catch {}
   }
   return pgpState()
 }
 
 // Returns null if body has no PGP armor; otherwise a status object.
-async function processPgp(plainBody) {
+export async function processPgp(plainBody) {
   if (!plainBody || !PGP_ARMOR_RE.test(plainBody)) return null
   const armored = plainBody.match(PGP_ARMOR_RE)[0]
   if (/BEGIN PGP (?:PUBLIC|PRIVATE) KEY/.test(armored)) {
@@ -1169,10 +1189,11 @@ async function processPgp(plainBody) {
   }
   try {
     const privateKey = await openpgp.readPrivateKey({ armoredKey: fs.readFileSync(PGP_PRIVATE_FILE, 'utf-8') })
-    const passphrase = fs.existsSync(PGP_PASS_FILE) ? fs.readFileSync(PGP_PASS_FILE, 'utf-8').trim() || undefined : undefined
-    const decryptedKey = passphrase
-      ? await openpgp.decryptKey({ privateKey, passphrase })
-      : privateKey
+    let decryptedKey = privateKey
+    if (!privateKey.isDecrypted()) {
+      decryptedKey = getUnlockedKey()
+      if (!decryptedKey) return { encrypted: true, decrypted: false, armored, error: 'pgp_locked' }
+    }
     const msg = await openpgp.readMessage({ armoredMessage: armored })
     const { data } = await openpgp.decrypt({ message: msg, decryptionKeys: [decryptedKey] })
     const mime = await data.toString()
@@ -1211,7 +1232,21 @@ async function processPgp(plainBody) {
   }
 }
 
-app.get('/api/pgp/status', (req, res) => res.json(pgpState()))
+app.get('/api/pgp/status', async (req, res) => res.json(await pgpState()))
+app.post('/api/pgp/unlock', async (req, res) => {
+  if (!fs.existsSync(PGP_PRIVATE_FILE)) return res.status(404).json({ error: 'no_private_key' })
+  try {
+    const passphrase = req.body && req.body.passphrase
+    if (typeof passphrase !== 'string' || !passphrase) return res.status(401).json({ error: 'bad_passphrase' })
+    const privateKey = await openpgp.readPrivateKey({ armoredKey: fs.readFileSync(PGP_PRIVATE_FILE, 'utf-8') })
+    const key = privateKey.isDecrypted() ? privateKey : await openpgp.decryptKey({ privateKey, passphrase })
+    unlocked = { key, expiresAt: Date.now() + KEY_TTL_MS }
+    res.json({ ok: true })
+  } catch {
+    res.status(401).json({ error: 'bad_passphrase' })
+  }
+})
+app.post('/api/pgp/lock', (req, res) => { unlocked = null; res.json({ ok: true }) })
 app.put('/api/pgp', async (req, res) => {
   try {
     const { privateAsc, publicAsc, passphrase } = req.body || {}
@@ -1223,7 +1258,7 @@ app.put('/api/pgp', async (req, res) => {
     res.status(400).json({ error: err.message })
   }
 })
-app.delete('/api/pgp', (req, res) => res.json({ success: true, state: deletePgp() }))
+app.delete('/api/pgp', async (req, res) => res.json({ success: true, state: await deletePgp() }))
 
 // POST /api/send
 app.post('/api/send', express.json({ limit: '35mb' }), async (req, res) => {
