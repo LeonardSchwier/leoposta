@@ -1,41 +1,38 @@
-# PROGRESS — leoposta
-task: P0 email signature (superpowers pipeline)
-updated: 2026-11-06
+# PROGRESS — leoposta open-todos batch
 
-## Done
-- 4 security fixes from audit run-1 (server/index.js:43 mode:0o600, :16 CORS
-  allowlist, MessageView.svelte URI-scheme forbid + rel=noopener hook,
-  :1226 outbound scrub + sendScheduledMessage scrub). `node --check` OK.
-- Security-audit run-1 artifacts at `~/security-audit-skill/leoposta/run-1/`
-  (findings.json PASS: 6, REPORT.md).
-- Brainstorming complete; spec written and approved:
-  `docs/superpowers/specs/2026-11-06-email-signature-design.md`
-  (per-account `signature:{enabled,text,position:'standard'|'after_quote'}`,
-  backend-persisted on account via existing GET/POST /api/account,
-  Settings tab, compose + reply/forward seeding, plain text only).
+## Goal
+Work through remaining open ROADMAP items independently, commit + push each, until done or blocked.
+
+## Done (this batch)
+- (none yet)
+
+## Active
+- C6 — Split server/index.js (1425 lines) → modules under `server/lib/`
+  - Snapshot test first: capture HTTP behavior via `node:test` harness (A1 already added createApp)
+  - Target: index.js under ~200 lines (wiring only)
 
 ## Blocked
 - (none)
 
-## Next (in order)
-1. git baseline check (status, tests green) in /home/leonard/opencode/leoposta.
-2. `using-git-worktrees` skill → feature branch.
-3. Baseline: `npm test` + `npm run build` (record failures if any), then
-   `writing-plans` skill → `docs/plans/email-signature.md` with TDD tasks.
-4. Execute plan (TDD RED→GREEN→REFACTOR): store shape + normalizeAccount,
-   buildMessageBody pure fn + tests, Compose seeding, Settings tab,
-   backend account.json read/write extension.
-5. `requesting-code-review` → `finishing-a-development-branch` →
-   flip ROADMAP P0 signature checkbox to [x].
-6. THEN (new session): multi-account P0 — same pipeline.
+## Remaining backlog (in order)
+1. C6 — split server/index.js  [ACTIVE]
+2. C4 — Playwright E2E tests
+3. Attachments on compose
+4. Email signature
+5. D1 — Leoforma tokens
+6. Filter / rules
+7. Attach on inbound (if missing)
+8. Virtualised list
+9. i18n
+10. Offline mail cache
+11. Multi-account
+12. Mobile / touch refinements
 
 ## Context
-- Repo `/home/leonard/opencode/leoposta`. NOT a git repo? — check `git status`.
-- AGENTS.md mandates the full superpowers pipeline for every ROADMAP item;
-  no skipping.
-- `server/account.json.REAL.bak` at `/tmp/opencode/` — do NOT lose; current
-  `server/account.json` may be a dummy. Restore before push.
-- Baseline commands: `npm test` (vitest, 1 test: src/__tests__/store.test.ts),
-  `npm run build` (tsc). No lint script.
-- Vite dev port 3000. Backend `server/index.js` ~1413 lines, single-account.
-- Design doc is the source of truth for shape/behaviour right now.
+- Repo: /home/leonard/opencode/leoposta
+- Remotes: `github` (https://github.com/LeonardSchwier/leoposta.git)
+- Parallel session is active — rebase/reset to `github/main` before each commit
+- Node v22, `node:test` available, A1 already exported `createApp()`
+- 32/32 vitest passing as of 5b3019a
+- Commit style: `type(scope): summary (item)` with Accept: line
+- Push after each verified commit
