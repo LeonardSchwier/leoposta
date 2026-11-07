@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { lang, t } from '../lib/i18n'
 
   export interface PaletteCommand {
     id: string
@@ -88,13 +89,13 @@
 </script>
 
 <div class="palette-backdrop" onclick={onClose} onkeydown={(e) => e.stopPropagation()}>
-  <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette" onclick={e => e.stopPropagation()}>
+  <div class="palette" role="dialog" aria-modal="true" aria-label={t($lang, 'palette.label')} onclick={e => e.stopPropagation()}>
     <div class="palette-input-row">
       <span class="palette-glyph" aria-hidden="true">⌘</span>
       <input
         class="palette-input"
         type="text"
-        placeholder="Type a command…"
+        placeholder={t($lang, 'palette.placeholder')}
         bind:value={raw}
         bind:this={inputEl}
         role="combobox"
@@ -108,7 +109,7 @@
     </div>
     <div class="palette-list" role="listbox" id="palette-list">
       {#if filtered.length === 0}
-        <div class="palette-empty">No matches</div>
+        <div class="palette-empty">{t($lang, 'palette.empty')}</div>
       {:else}
         {#each filtered as cmd, i (cmd.id)}
           <button
@@ -128,7 +129,7 @@
       {/if}
     </div>
     <div class="palette-footer">
-      <span>↑↓ navigate</span><span>↵ run</span><span>esc close</span>
+      <span>{t($lang, 'palette.footer.nav')}</span><span>{t($lang, 'palette.footer.run')}</span><span>{t($lang, 'palette.footer.close')}</span>
     </div>
   </div>
 </div>
