@@ -10,22 +10,10 @@ import { fileURLToPath, pathToFileURL } from 'url'
 import * as openpgp from 'openpgp'
 import crypto from 'crypto'
 import { requireToken } from './lib/auth.js'
+import { scrubOutboundHtml } from './lib/sanitize.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
-
-// Server-side scrub for outbound HTML (defense-in-depth; the client also
-// sanitizes on render). Strips <script>/<style>/on*-handlers/executable
-// data: URIs so pasted attacker content is not delivered live to recipients.
-function scrubOutboundHtml(html) {
-  if (typeof html !== 'string' || !html) return html
-  return html
-    .replace(/<script[\s\S]*?<\/script\s*>/gi, '')
-    .replace(/<style[\s\S]*?<\/style\s*>/gi, '')
-    .replace(/<(iframe|object|embed|form|link|meta|base|svg|math)\b[^>]*>/gi, '')
-    .replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-    .replace(/(href|src|xlink:href)\s*=\s*("|')\s*(?:javascript|vbscript|data)\s*?:[^"']*(")/gi, '$1=$2#$4')
-}
 
 const app = express()
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001').split(',').map(s => s.trim()).filter(Boolean)
