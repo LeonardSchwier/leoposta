@@ -2,6 +2,8 @@
   import { apiFetch } from '../api'
   import { store, getState, setComposeTo, setComposeSubject, setComposeBody, setIsLoading, setComposeScheduled, clearCompose, setComposing } from '../store'
   import { onMount } from 'svelte'
+  import { get } from 'svelte/store'
+  import { lang, t } from '../lib/i18n'
   import { addQueuedMessage } from '../lib/offlineQueue'
   import { buildMessageBody, normalizeAccount, type Signature } from '../lib/signature'
   import { fileToAttachment, type OutboundAttachment, AttachmentTooLargeError } from '../lib/attachments'
@@ -123,7 +125,7 @@
   function handleSend() {
     if (toInput.trim()) addRecipient(toInput)
     if (getState().composeTo.length === 0) {
-      alert('Please add at least one recipient')
+      alert(t(get(lang), 'compose.alert.noRecipient'))
       return
     }
     
@@ -157,7 +159,7 @@
         onClose()
         alert(data.message)
       } else {
-        alert('Failed to send: ' + data.error)
+        alert(t(get(lang), 'compose.send.failed', { err: data.error }))
       }
     })
     .catch(async (err: any) => {
@@ -178,10 +180,10 @@
           setComposing(false)
           onClose()
         } catch {
-          alert('Failed to queue message: ' + err.message)
+          alert(t(get(lang), 'compose.queue.failed', { err: err.message }))
         }
       } else {
-        alert('Error: ' + err.message)
+        alert(t(get(lang), 'compose.error.generic', { err: err.message }))
       }
     })
     .finally(() => {
@@ -207,7 +209,7 @@
       } catch (err) {
         lastError = err instanceof AttachmentTooLargeError
           ? err.message
-          : `Could not attach ${f.name}: ${err?.message ?? String(err)}`
+           : t(get(lang), 'compose.attach.failed', { name: f.name, err: err?.message ?? String(err) })
       }
     }
     attachmentError = lastError
@@ -232,108 +234,110 @@
   })
 </script>
 
-<div class="compose-window" role="dialog" aria-modal="true" aria-label="Compose message" onclick={e => e.stopPropagation()}>
+<div class="compose-window" role="dialog" aria-modal="true" aria-label={t($lang, 'compose.window.aria')} onclick={e => e.stopPropagation()}>
   <div class="compose-header">
     <h2 class="compose-title">
-      {#if $store.composeReplyTo}Reply{:else if $store.composeForward}Forward{:else}New Message{/if}
+      {#if $store.composeReplyTo}{t($lang, 'compose.title.reply')}
+      {:else if $store.composeForward}{t($lang, 'compose.title.forward')}
+      {:else}{t($lang, 'compose.title.new')}{/if}
     </h2>
-    <button class="close-btn" onclick={onClose} aria-label="Close compose (Esc)">✕</button>
+    <button class="close-btn" onclick={onClose} aria-label={t($lang, 'compose.close.aria')}>✕</button>
   </div>
-  
+
   <div class="compose-body">
     <div class="field-row">
-      <label class="field-label">To</label>
+      <label class="field-label">{t($lang, 'compose.to.label')}</label>
       <div class="recipient-input" class:focused={toInput}>
         {#each $store.composeTo as email (email)}
           <span class="chip">{email} <button onclick={() => removeRecipient(email)}>✕</button></span>
         {/each}
-        <input 
+        <input
           type="text"
           bind:value={toInput}
-          placeholder={$store.composeTo.length === 0 ? "recipient@example.com" : ""}
+          placeholder={$store.composeTo.length === 0 ? t($lang, 'compose.to.placeholder') : ""}
           onkeydown={handleToKey}
         />
       </div>
     </div>
-    
+
     {#if showCc}
       <div class="field-row">
-        <label class="field-label">Cc</label>
+        <label class="field-label">{t($lang, 'compose.cc.label')}</label>
         <div class="recipient-input">
           {#each $store.composeCc as email (email)}
             <span class="chip">{email}</span>
           {/each}
-          <input type="text" placeholder="Add Cc..." />
+          <input type="text" placeholder={t($lang, 'compose.cc.placeholder')} />
         </div>
       </div>
     {/if}
-    
+
     {#if showBcc}
       <div class="field-row">
-        <label class="field-label">Bcc</label>
+        <label class="field-label">{t($lang, 'compose.bcc.label')}</label>
         <div class="recipient-input">
           {#each $store.composeBcc as email (email)}
             <span class="chip">{email}</span>
           {/each}
-          <input type="text" placeholder="Add Bcc..." />
+          <input type="text" placeholder={t($lang, 'compose.bcc.placeholder')} />
         </div>
       </div>
     {/if}
-    
+
     <div class="field-row">
       <label class="field-label">&nbsp;</label>
       <div class="field-actions">
         <button class="text-btn" onclick={() => showCc = !showCc}>
-          {#if showCc}Hide Cc{:else}Add Cc{/if}
+          {#if showCc}{t($lang, 'compose.cc.hide')}{:else}{t($lang, 'compose.cc.show')}{/if}
         </button>
         <button class="text-btn" onclick={() => showBcc = !showBcc}>
-          {#if showBcc}Hide Bcc{:else}Add Bcc{/if}
+          {#if showBcc}{t($lang, 'compose.bcc.hide')}{:else}{t($lang, 'compose.bcc.show')}{/if}
         </button>
       </div>
     </div>
-    
+
     <div class="field-row">
-      <label class="field-label">Subject</label>
-      <input 
+      <label class="field-label">{t($lang, 'compose.subject.label')}</label>
+      <input
         type="text"
         bind:value={subjectInput}
         oninput={() => setComposeSubject(subjectInput)}
-        placeholder="Subject"
+        placeholder={t($lang, 'compose.subject.placeholder')}
       />
     </div>
-    
+
     <div class="compose-editor">
       <textarea
         bind:value={bodyInput}
         oninput={() => setComposeBody(bodyInput)}
-        placeholder="Write your message..."
+        placeholder={t($lang, 'compose.body.placeholder')}
         rows="15"
       ></textarea>
     </div>
   </div>
-  
+
   {#if showSchedule}
     <div class="schedule-panel">
-      <h3>Schedule Send</h3>
+      <h3>{t($lang, 'compose.schedule.heading')}</h3>
       <div class="schedule-row">
         <input type="date" bind:value={scheduleDate} />
         <input type="time" bind:value={scheduleTime} />
       </div>
       <div class="schedule-actions">
-        <button class="btn-secondary" onclick={() => showSchedule = false}>Cancel</button>
-        <button class="btn-primary" onclick={handleSchedule}>Schedule</button>
+        <button class="btn-secondary" onclick={() => showSchedule = false}>{t($lang, 'compose.schedule.cancel')}</button>
+        <button class="btn-primary" onclick={handleSchedule}>{t($lang, 'compose.schedule.confirm')}</button>
       </div>
     </div>
   {/if}
-  
+
   <div class="compose-footer">
     <div class="footer-left">
-      <button class="icon-btn" title="Attach file" onclick={() => attachFile?.click()}>
+      <button class="icon-btn" title={t($lang, 'compose.attach.tooltip')} onclick={() => attachFile?.click()}>
         <span>📎</span>
       </button>
-      <input 
-        type="file" 
-        multiple 
+      <input
+        type="file"
+        multiple
         bind:this={attachFile}
         onchange={handleAttach}
         hidden
@@ -342,16 +346,16 @@
         {#each attachments as att, i (att.filename + i)}
           <span class="attachment-chip" title="{att.contentType}">
             <span class="attachment-name">{att.filename}</span>
-            <button class="attachment-remove" onclick={() => removeAttachment(i)} aria-label="Remove {att.filename}">✕</button>
+            <button class="attachment-remove" onclick={() => removeAttachment(i)} aria-label={t($lang, 'compose.attach.remove.aria', { filename: att.filename })}>✕</button>
           </span>
         {/each}
       </div>
       {#if attachmentError}
         <span class="attachment-error">{attachmentError}</span>
       {/if}
-      <button 
-        class="icon-btn" 
-        title="Schedule send"
+      <button
+        class="icon-btn"
+        title={t($lang, 'compose.schedule.tooltip')}
         class:active={showSchedule || $store.composeScheduled}
         onclick={() => showSchedule = !showSchedule}
       >
@@ -359,19 +363,19 @@
       </button>
       {#if $store.composeScheduled}
         <span class="schedule-badge">
-          Scheduled: {new Date($store.composeScheduled).toLocaleString()}
+          {t($lang, 'compose.scheduled.badge', { time: new Date($store.composeScheduled).toLocaleString() })}
           <button onclick={() => setComposeScheduled(null)}>✕</button>
         </span>
       {/if}
     </div>
     <div class="footer-right">
-      <button class="btn-secondary" onclick={onClose}>Save Draft</button>
-      <button 
-        class="btn-primary" 
+      <button class="btn-secondary" onclick={onClose}>{t($lang, 'compose.saveDraft')}</button>
+      <button
+        class="btn-primary"
         onclick={handleSend}
         disabled={$store.isLoading}
       >
-        {#if $store.isLoading}Sending...{:else}Send{/if}
+        {#if $store.isLoading}{t($lang, 'compose.send.loading')}{:else}{t($lang, 'compose.send.label')}{/if}
       </button>
     </div>
   </div>

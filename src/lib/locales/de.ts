@@ -13,7 +13,41 @@ export const de = {
   'misc.count.other': '{n} Elemente',
   'misc.bare': '{n} nackte Elemente',
   'greet.user': 'Hallo, {user}!',
-  'wrap.err': 'Fehler: {err}.'
+  'wrap.err': 'Fehler: {err}.',
+
+  // Compose
+  'compose.window.aria': 'Nachricht verfassen',
+  'compose.title.reply': 'Antwort',
+  'compose.title.forward': 'Weiterleiten',
+  'compose.title.new': 'Neue Nachricht',
+  'compose.close.aria': 'Verfassen schließen (Esc)',
+  'compose.to.placeholder': 'empfaenger@beispiel.de',
+  'compose.cc.label': 'Cc',
+  'compose.cc.placeholder': 'Cc hinzufügen...',
+  'compose.cc.show': 'Cc hinzufügen',
+  'compose.cc.hide': 'Cc ausblenden',
+  'compose.bcc.label': 'Bcc',
+  'compose.bcc.placeholder': 'Bcc hinzufügen...',
+  'compose.bcc.show': 'Bcc hinzufügen',
+  'compose.bcc.hide': 'Bcc ausblenden',
+  'compose.subject.label': 'Betreff',
+  'compose.subject.placeholder': 'Betreff',
+  'compose.body.placeholder': 'Schreiben Sie Ihre Nachricht...',
+  'compose.schedule.heading': 'Senden planen',
+  'compose.schedule.cancel': 'Abbrechen',
+  'compose.schedule.confirm': 'Planen',
+  'compose.attach.tooltip': 'Datei anhängen',
+  'compose.attach.remove.aria': '{filename} entfernen',
+  'compose.schedule.tooltip': 'Senden planen',
+  'compose.scheduled.badge': 'Geplant: {time}',
+  'compose.saveDraft': 'Entwurf speichern',
+  'compose.send.loading': 'Wird gesendet...',
+  'compose.send.label': 'Senden',
+  'compose.alert.noRecipient': 'Bitte mindestens einen Empfänger hinzufügen',
+  'compose.send.failed': 'Senden fehlgeschlagen: {err}',
+  'compose.queue.failed': 'Nachricht wurde nicht in die Warteschlange aufgenommen: {err}',
+  'compose.error.generic': 'Fehler: {err}',
+  'compose.attach.failed': 'Datei konnte nicht angehängt werden: {name} — {err}'
 } as const
 
 export default de

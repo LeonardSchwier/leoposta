@@ -201,3 +201,49 @@ describe('Settings language keys (task 2 seed)', () => {
     expect(t('settings.tab.language')).toBe('Sprache')
   })
 })
+
+describe('Compose locale keys (task 3)', () => {
+  it('resolves compose.to.label in en and de', () => {
+    expect(t('compose.to.label')).toBe('To')
+    setLang('de')
+    expect(t('compose.to.label')).toBe('An')
+  })
+
+  it('resolves compose.title.new and compose.close.aria', () => {
+    setLang('en')
+    expect(t('compose.title.new')).toBe('New Message')
+    expect(t('compose.close.aria')).toBe('Close compose (Esc)')
+    setLang('de')
+    expect(t('compose.title.new')).toBe('Neue Nachricht')
+    expect(t('compose.close.aria')).toBe('Verfassen schließen (Esc)')
+  })
+
+  it('substitutes {err} in compose.send.failed', () => {
+    setLang('en')
+    expect(t('compose.send.failed', { err: 'no network' })).toBe('Failed to send: no network')
+    setLang('de')
+    expect(t('compose.send.failed', { err: 'kein Netz' })).toBe('Senden fehlgeschlagen: kein Netz')
+  })
+
+  it('substitutes {filename} in compose.attach.remove.aria', () => {
+    setLang('en')
+    expect(t('compose.attach.remove.aria', { filename: 'x.pdf' })).toBe('Remove x.pdf')
+    setLang('de')
+    expect(t('compose.attach.remove.aria', { filename: 'x.pdf' })).toBe('x.pdf entfernen')
+  })
+
+  it('resolves compose.saveDraft in en and de', () => {
+    setLang('en')
+    expect(t('compose.saveDraft')).toBe('Save Draft')
+    setLang('de')
+    expect(t('compose.saveDraft')).toBe('Entwurf speichern')
+  })
+
+  it('substitutes {name} and {err} in compose.attach.failed', () => {
+    setLang('en')
+    const out = t('compose.attach.failed', { name: 'a.txt', err: 'too big' })
+    expect(out).toContain('a.txt')
+    expect(out).toContain('too big')
+  })
+})
+
