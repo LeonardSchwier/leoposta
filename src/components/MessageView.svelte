@@ -1,6 +1,7 @@
 <script lang="ts">
   import { store, getState, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, deleteMessage, updateMessage, selectMessage } from '../store'
   import { sanitizeHtml, hasRemoteImages } from '../lib/sanitizeHtml'
+  import { lang, t, tPl, type Lang } from '../lib/i18n'
 
   let {
     onDelete: propDelete,
@@ -105,22 +106,22 @@
         <div class="header-left">
           <button class="back-btn" onclick={() => selectMessage(null)}>←</button>
           <div class="subject-area">
-            <h2 class="message-subject">{msg.subject || '(no subject)'}</h2>
+            <h2 class="message-subject">{msg.subject || t($lang, 'view.noSubject')}</h2>
             <div class="message-meta">
-              <span class="sender">From: {msg.from}</span>
-              <span class="recipient">To: {msg.to?.join(', ')}</span>
+              <span class="sender">{t($lang, 'view.from')}: {msg.from}</span>
+              <span class="recipient">{t($lang, 'view.to')}: {msg.to?.join(', ')}</span>
               <span class="date">{formatFullDate(msg.date || '')}</span>
             </div>
           </div>
         </div>
         <div class="header-actions">
-          <button class="action-btn" class:starred={hasFlag(msg.flags || [], 'Flagged')} onclick={handleStar} title="Star">
+          <button class="action-btn" class:starred={hasFlag(msg.flags || [], 'Flagged')} onclick={handleStar} title={t($lang, 'view.star')}>
             {#if hasFlag(msg.flags || [], 'Flagged')}⭐{:else}☆{/if}
           </button>
-          <button class="action-btn" onclick={handleReply} title="Reply">↩ Reply</button>
-          <button class="action-btn" onclick={handleForward} title="Forward">↪ Forward</button>
-          <button class="action-btn" onclick={handleArchive} title="Archive">⬇</button>
-          <button class="action-btn danger" onclick={handleDelete} title="Delete">🗑</button>
+          <button class="action-btn" onclick={handleReply} title={t($lang, 'view.reply')}>↩ {t($lang, 'view.reply')}</button>
+          <button class="action-btn" onclick={handleForward} title={t($lang, 'view.forward')}>↪ {t($lang, 'view.forward')}</button>
+          <button class="action-btn" onclick={handleArchive} title={t($lang, 'view.archive')}>⬇</button>
+          <button class="action-btn danger" onclick={handleDelete} title={t($lang, 'view.delete')}>🗑</button>
         </div>
       </div>
 
@@ -130,26 +131,26 @@
             <div class="pgp-banner-row">
               <span class="pgp-ico">🔐</span>
               {#if msg.pgp.decrypted}
-                <span class="pgp-title">Encrypted message — <b>decrypted</b> below</span>
+                <span class="pgp-title">{@html t($lang, 'view.pgp.decrypted')}</span>
               {:else}
-                <span class="pgp-title">Encrypted message — <b>cannot decrypt</b></span>
+                <span class="pgp-title">{@html t($lang, 'view.pgp.locked')}</span>
               {/if}
               {#if msg.pgp.signed}
                 <span class="pgp-chip" class:verified={!!msg.pgp.verified}>
-                  {#if msg.pgp.verified === true}✓ signature verified
-                  {:else if msg.pgp.verified === false}✕ signature invalid
-                  {:else}signed (not verified){/if}
+                  {#if msg.pgp.verified === true}{t($lang, 'view.pgp.signature.verified')}
+                  {:else if msg.pgp.verified === false}{t($lang, 'view.pgp.signature.invalid')}
+                  {:else}{t($lang, 'view.pgp.signature.unverified'){/if}
                 </span>
               {/if}
             </div>
             {#if !msg.pgp.decrypted}
               <p class="pgp-help">
-                {msg.pgp.error || 'OpenPGP private key not configured.'}
-                Add your private key in <b>Settings → PGP</b> and reopen this message.
+                {msg.pgp.error || t($lang, 'view.pgp.defaultErr')}
+                {@html t($lang, 'view.pgp.settingsHint')}
               </p>
               {#if msg.pgp.armored}
                 <details class="pgp-armor">
-                  <summary>Raw armored message</summary>
+                  <summary>{t($lang, 'view.pgp.armored')}</summary>
                   <pre>{msg.pgp.armored}</pre>
                 </details>
               {/if}
@@ -160,21 +161,21 @@
         {#if msg.bodyHtml}
           {#if hasRemoteImages(msg.bodyHtml) && imagesLoadedFor !== msg.id}
             <div class="remote-images-banner">
-              Remote images blocked
-              <button type="button" onclick={() => (imagesLoadedFor = msg.id)}>Load images</button>
+              {t($lang, 'view.remoteBlocked')}
+              <button type="button" onclick={() => (imagesLoadedFor = msg.id)}>{t($lang, 'view.loadImages')}</button>
             </div>
           {/if}
           {@html sanitizeHtml(msg.bodyHtml, { allowRemoteImages: imagesLoadedFor === msg.id })}
         {:else if msg.body}
           <div class="plain-body">{msg.body}</div>
         {:else}
-          <p class="empty-body">This message has no visible content. It may be PGP-encrypted or empty.</p>
+          <p class="empty-body">{t($lang, 'view.emptyBody')}</p>
         {/if}
       </div>
 
       {#if msg.attachments?.length > 0}
         <div class="attachments">
-          <h3>📎 {msg.attachments.length} Attachment{msg.attachments.length !== 1 ? 's' : ''}</h3>
+          <h3>{tPl($lang, 'view.attachments', msg.attachments.length)}</h3>
           <div class="attachment-list">
             {#each msg.attachments as att, i (i)}
               <button class="attachment-item" onclick={() => downloadAttachment(att)}>
@@ -194,7 +195,7 @@
 {:else}
   <div class="no-message">
     <div class="empty-icon">📧</div>
-    <p>Select a message to view</p>
+    <p>{t($lang, 'view.selectMessage')}</p>
   </div>
 {/if}
 
