@@ -182,9 +182,12 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
     - Offline item says `sw.js` exists; `public/` contains no `sw.js` (`ls public`). Check `vite.config.ts` for a PWA plugin and correct the sentence to match.
   - Accept: `grep -n "scheduled.json" .gitignore` matches, and re-reading each bullet above against the files shows no false statement.
 
-- [ ] **C6. Split `server/index.js` (1425 lines) after A1 and B1 are done**** (not started: server agent ran out of budget; B1/A1 done, snapshot test first)
-  - Steps: move code without changing behavior, one commit per module: `server/lib/store.js` (account, scheduled and PGP files), `server/lib/imapPool.js` (the `pool`, line ~163), `server/lib/sanitize.js` (B7), `server/routes/account.js`, `mail.js`, `send.js`, `pgp.js`, `dav.js`. Before the first move add a test that records the sorted list of `METHOD path` pairs of `createApp()` (walk `app._router.stack`) in `server/routes.snapshot.json` and compares it.
-  - Accept: the snapshot test and `npm run test:server` pass after every commit; `wc -l server/index.js` is below 200.
+- [x] **C6. Split `server/index.js` (1425 lines) after A1 and B1 are done** — done 2026-11-07.
+  - `server/index.js` is 84 lines of wiring (CORS/auth/JSON/mount/static/413).
+  - `server/lib/`: `state.js`, `address.js`, `imap.js`, `dav.js`, `pgp.js`.
+  - `server/routes/`: `account.js`, `mail.js`, `calendar.js`, `carddav.js`, `pgp.js`, `send.js`, `idle.js`.
+  - New: `server/routes.snapshot.test.js` records the sorted `METHOD path` pairs of `createApp()` in `server/routes.snapshot.json` (35 routes; all preserved from the monolith).
+  - Accept (verified 2026-11-07): `npm run test:server` → 17 pass / 0 fail; `wc -l server/index.js` = 84 (< 200).
 
 ### Review D. Design system
 
