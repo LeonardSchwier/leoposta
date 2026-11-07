@@ -84,7 +84,7 @@ update it as each item lands.
    Source fixes applied 2026-11-06:
    - [x] `server/index.js:43` write `account.json` with `{ mode: 0o600 }`
    - [x] `server/index.js:16` collapse wildcard `cors()` to an origin allowlist
-   - [x] `MessageView.svelte:11` add URI-scheme forbid + `rel=noopener` hook
+   - [x] `src/lib/sanitizeHtml.ts` URI-scheme forbid + `rel=noopener` hook (registered via `addHook`; real since review B3)
    - [x] outbound `bodyHtml` sanitize / force text/plain (server: `scrubOutboundHtml`)
 - Re-run in full-audit mode after each P0 lands (multi-account, signature)
   and after provisioning an OS sandbox to flip `needs_validation` → confirmed.
@@ -112,7 +112,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
   - Steps: (1) set `"csp"` to `"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: cid: https:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:3001; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"`. (2) Add `src/__tests__/tauriConf.test.ts` that reads `src-tauri/tauri.conf.json` with `fs.readFileSync`, parses it, and asserts `app.security.csp` (check the real key path in the file) is a string containing `default-src 'self'`, `object-src 'none'` and `frame-src 'none'`, and does not contain `script-src 'unsafe-inline'`.
   - Accept: `npm test` passes the new test; `grep -n '"csp": null' src-tauri/tauri.conf.json` prints nothing.
 
-- [ ] **B3. The `rel="noopener noreferrer"` hook never runs, and the sanitizer allows risky attributes**
+- [x] **B3. The `rel="noopener noreferrer"` hook never runs, and the sanitizer allows risky attributes**
   - Problem: in `src/components/MessageView.svelte` the function `afterSanitizeAttributes` (line 27) is placed inside the DOMPurify config object. DOMPurify ignores it there; hooks only work through `DOMPurify.addHook`. The security-audit entry above marks this `[x]`, which is not true. `ALLOWED_ATTR` (lines 18-21) also allows `id` and `name` (DOM clobbering), `style` (can load remote `url(...)`), and form leftovers (`checked`, `disabled`, `selected`, `value`, `type`, `accept`).
   - Steps: (1) create `src/lib/sanitizeHtml.ts` with `export function sanitizeHtml(html: string): string` containing the current tag list and a trimmed attribute list: remove `id`, `name`, `checked`, `disabled`, `selected`, `value`, `type`, `accept`, `longdesc`, `mailto`. (2) Register hooks once at module load: `DOMPurify.addHook('afterSanitizeAttributes', (node) => { ... })` that (a) sets `rel="noopener noreferrer"` on every `A` with a `target`, and (b) deletes the `style` attribute when its value matches `/url\s*\(|expression\s*\(|@import/i`. (3) Delete the inline function from `MessageView.svelte` and import this one. (4) Add `src/__tests__/sanitizeHtml.test.ts` (first line `// @vitest-environment jsdom`; if the `jsdom` package is missing, add it as a devDependency pinned exactly).
   - Tests that must exist and pass: `<a href="https://x" target="_blank">` gets `rel="noopener noreferrer"`; `<a href="javascript:alert(1)">x</a>` has no `href`; `<img src="x" onerror="alert(1)">` has no `onerror`; `<div id="a" name="b">` has neither attribute; `<p style="background:url(http://t/p.gif)">` has no `style`; `<p style="color:red">` keeps `style`.
