@@ -2,6 +2,8 @@
   import { apiFetch } from '../api'
   import { store, getState } from '../store'
   import { normalizeSignature } from '../lib/signature'
+  import type { Rule, RuleCondition } from '../lib/rules'
+  import { RULE_FIELDS, RULE_OPERATORS, RULE_ACTIONS } from '../lib/rules'
 
   let { onClose } = $props()
   
@@ -29,6 +31,53 @@
   let pgpLoading = $state(false)
   let pgpMsg = $state('')
   let pgpErr = $state('')
+
+  let activeTab = $state<'account' | 'rules'>('account')
+
+  // ---- Rules ----
+  let rules: Rule[] = $state([])
+  let rulesMsg = $state('')
+  let rulesErr = $state('')
+  let rulesLoading = $state(false)
+
+  async function loadRules() {
+    try {
+      const r = await apiFetch('/api/rules')
+      const d = await r.json()
+      rules = Array.isArray(d.rules) ? d.rules : []
+    } catch { /* no rules yet */ }
+  }
+
+  function addRule() {
+    rules = [...rules, { enabled: true, conditions: [{ field: 'from', operator: 'contains', value: '' }], action: { type: 'flag' } }]
+  }
+
+  function removeRule(index: number) {
+    rules = rules.filter((_, i) => i !== index)
+  }
+
+  async function saveRules() {
+    rulesLoading = true
+    rulesMsg = ''
+    rulesErr = ''
+    try {
+      const r = await apiFetch('/api/rules', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rules })
+      })
+      const d = await r.json()
+      if (d.success) rulesMsg = `Saved ${rules.length} rule${rules.length === 1 ? '' : 's'}`
+      else rulesErr = d.error || 'Failed to save rules'
+    } catch (e: any) {
+      rulesErr = e.message
+    }
+    rulesLoading = false
+  }
+
+  $effect(() => {
+    if (activeTab === 'rules') loadRules().catch(() => {})
+  })
 
   async function pgpStatus() {
     const r = await apiFetch('/api/pgp/status')
@@ -122,14 +171,66 @@
 <div class="settings-overlay" onclick={onClose}>
   <div class="settings-modal" onclick={(e) => e.stopPropagation()}>
     <div class="modal-header">
-      <h2>Account Settings</h2>
+      <h2>Settings</h2>
       <button class="close-btn" onclick={onClose}>✕</button>
+    </div>
+
+    <div class="settings-tabs">
+      <button class={activeTab === 'account' ? 'tab active' : 'tab'} onclick={() => activeTab = 'account'}>Account</button>
+      <button class={activeTab === 'rules' ? 'tab active' : 'tab'} onclick={() => activeTab = 'rules'}>Rules</button>
     </div>
     
     <div class="modal-body">
       {#if error}
         <div class="error-banner">{error}</div>
       {/if}
+
+      {#if activeTab === 'rules'}
+        <p class="hint">Rules run on every message fetch. The first matching rule wins.</p>
+        {#if rulesMsg}<div class="error-banner" style="background:rgba(52,199,89,0.1);border-color:var(--color-success);color:var(--color-success)">{rulesMsg}</div>{/if}
+        {#if rulesErr}<div class="error-banner">{rulesErr}</div>{/if}
+
+        {#each rules as rule, i (i)}
+          <div class="rule-card">
+            <div class="rule-row">
+              <label class="rule-toggle">
+                <input type="checkbox" bind:checked={rule.enabled} />
+                <span>Enabled</span>
+              </label>
+              <button class="btn-secondary btn-tiny" onclick={() => removeRule(i)}>Remove</button>
+            </div>
+            {#each rule.conditions as cond, ci (ci)}
+              <div class="rule-cond">
+                <select bind:value={cond.field}>
+                  {#each RULE_FIELDS as f (f.value)}<option value={f.value}>{f.label}</option>{/each}
+                </select>
+                <select bind:value={cond.operator}>
+                  {#each RULE_OPERATORS as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
+                </select>
+                <input type="text" bind:value={cond.value} placeholder="value" />
+                <button class="btn-tiny" onclick={() => rule.conditions = rule.conditions.filter((_, j) => j !== ci)} title="Remove condition">✕</button>
+              </div>
+            {/each}
+            <button class="btn-secondary btn-tiny" onclick={() => rule.conditions = [...rule.conditions, { field: 'subject', operator: 'contains', value: '' }]}>+ Add condition</button>
+            <div class="rule-action">
+              <span class="rule-arrow">→</span>
+              <select bind:value={rule.action.type}>
+                {#each RULE_ACTIONS as a (a.value)}<option value={a.value}>{a.label}</option>{/each}
+              </select>
+              {#if rule.action.type !== 'flag'}
+                <input type="text" bind:value={rule.action.value} placeholder={rule.action.type === 'move' ? 'folder path' : 'label name'} />
+              {/if}
+            </div>
+          </div>
+        {/each}
+
+        <div class="pgp-actions">
+          <button class="btn-primary" onclick={addRule}>+ Add rule</button>
+          <button class="btn-secondary" onclick={saveRules} disabled={rulesLoading}>
+            {#if rulesLoading}Saving...{:else}Save rules{/if}
+          </button>
+        </div>
+      {:else}
       
       <div class="form-group">
         <label>Account Name</label>
@@ -246,18 +347,25 @@
         </button>
         <button class="btn-secondary" onclick={handlePgpDelete}>Remove</button>
       </div>
+      {/if}
     </div>
 
     <div class="modal-footer">
-      {#if getState().activeAccountId}
-        <button class="btn-danger" onclick={handleDelete}>Remove Account</button>
+      {#if activeTab === 'account'}
+        {#if getState().activeAccountId}
+          <button class="btn-danger" onclick={handleDelete}>Remove Account</button>
+        {/if}
+        <div class="footer-right">
+          <button class="btn-secondary" onclick={onClose}>Cancel</button>
+          <button class="btn-primary" onclick={handleSave} disabled={isLoading}>
+            {#if isLoading}Saving...{:else}Save{/if}
+          </button>
+        </div>
+      {:else}
+        <div class="footer-right">
+          <button class="btn-secondary" onclick={onClose}>Close</button>
+        </div>
       {/if}
-      <div class="footer-right">
-        <button class="btn-secondary" onclick={onClose}>Cancel</button>
-        <button class="btn-primary" onclick={handleSave} disabled={isLoading}>
-          {#if isLoading}Saving...{:else}Save{/if}
-        </button>
-      </div>
     </div>
   </div>
 </div>
@@ -525,5 +633,122 @@
     display: flex;
     gap: 8px;
     margin-top: 12px;
+  }
+
+  .settings-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 12px 24px 0;
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .settings-tabs .tab {
+    padding: 8px 14px;
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--color-text-secondary);
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all var(--transition);
+  }
+
+  .settings-tabs .tab.active {
+    color: var(--color-accent);
+    border-bottom-color: var(--color-accent);
+  }
+
+  .rule-card {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    padding: 12px;
+    margin-bottom: 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .rule-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .rule-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 13px;
+    color: var(--color-text);
+    cursor: pointer;
+  }
+
+  .rule-toggle input {
+    accent-color: var(--color-accent);
+  }
+
+  .rule-cond {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .rule-cond select,
+  .rule-cond input {
+    flex: 1;
+    min-width: 0;
+    padding: 6px 8px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: 12px;
+  }
+
+  .rule-cond select {
+    flex: 0 0 auto;
+    width: auto;
+    max-width: 140px;
+  }
+
+  .rule-action {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+  }
+
+  .rule-action select {
+    padding: 6px 8px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: 12px;
+  }
+
+  .rule-action input {
+    flex: 1;
+    padding: 6px 8px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-size: 12px;
+  }
+
+  .rule-arrow {
+    color: var(--color-text-secondary);
+    font-weight: 600;
+  }
+
+  .btn-tiny {
+    padding: 4px 10px;
+    font-size: 12px;
+    background: transparent;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    color: var(--color-text);
+    cursor: pointer;
   }
 </style>

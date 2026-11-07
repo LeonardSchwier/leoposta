@@ -9,6 +9,7 @@ const SERVER_DIR = path.dirname(path.dirname(__filename))
 export const DATA_DIR = process.env.LEOPOSTA_DATA_DIR || SERVER_DIR
 export const ACCOUNT_FILE = path.join(DATA_DIR, 'account.json')
 export const SCHEDULED_FILE = path.join(DATA_DIR, 'scheduled.json')
+export const RULES_FILE = path.join(DATA_DIR, 'rules.json')
 
 export const API_TOKEN = process.env.LEOPOSTA_TOKEN
   || crypto.randomBytes(32).toString('hex')
@@ -20,7 +21,8 @@ export const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS
 // Mutable shared state — every route module reads/writes through this.
 export const state = {
   account: null,
-  scheduledMessages: []
+  scheduledMessages: [],
+  rules: []
 }
 
 if (fs.existsSync(ACCOUNT_FILE)) {
@@ -28,6 +30,13 @@ if (fs.existsSync(ACCOUNT_FILE)) {
 }
 if (fs.existsSync(SCHEDULED_FILE)) {
   state.scheduledMessages = JSON.parse(fs.readFileSync(SCHEDULED_FILE, 'utf-8'))
+}
+if (fs.existsSync(RULES_FILE)) {
+  state.rules = JSON.parse(fs.readFileSync(RULES_FILE, 'utf-8'))
+}
+
+export function saveRules() {
+  fs.writeFileSync(RULES_FILE, JSON.stringify(state.rules, null, 2), { mode: 0o600 })
 }
 
 export function applyEnvPasswords() {

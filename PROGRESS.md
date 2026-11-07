@@ -27,9 +27,9 @@ Work through remaining open ROADMAP items independently, commit + push each, unt
 - (none)
 
 ## Remaining backlog (in order)
-1. Multi-account support (P0)
+1. Multi-account support (P0 — cross-cutting; needs its own session)
 2. Filter / rules (P1)
-3. Virtualised list (P1)
+3. ~~Virtualised list (P1)~~ — done 261ac09
 4. Design-system restyle (P1, gated on `LeonardSchwier/design-system` repo)
 5. Offline mail cache (P1)
 6. Mobile / touch refinements (P2)

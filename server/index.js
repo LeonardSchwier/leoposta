@@ -9,6 +9,7 @@ import { API_TOKEN, TOKEN_FROM_ENV, ALLOWED_ORIGINS, state } from './lib/state.j
 
 import accountRoutes from './routes/account.js'
 import mailRoutes from './routes/mail.js'
+import rulesRoutes from './routes/rules.js'
 import calendarRoutes from './routes/calendar.js'
 import carddavRoutes from './routes/carddav.js'
 import pgpRoutes from './routes/pgp.js'
@@ -42,6 +43,7 @@ app.use((req, res, next) => (req.path === '/api/send' ? next() : defaultJson(req
 
 app.use('/api', accountRoutes)
 app.use('/api', mailRoutes)
+app.use('/api', rulesRoutes)
 app.use('/api', calendarRoutes)
 app.use('/api', carddavRoutes)
 app.use('/api', pgpRoutes)
