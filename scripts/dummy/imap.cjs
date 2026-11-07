@@ -21,6 +21,7 @@ const net = require('net')
 const path = require('path')
 const fs = require('fs')
 
+const CRLF = Buffer.from('\r\n')
 const LISTEN_HOST = '127.0.0.1'
 const LISTEN_PORT = Number(process.env.IMAP_PORT || 1143)
 const SEED_FILE = process.env.LEO_IMAP_SEED || path.join(__dirname, 'seed.json')
@@ -106,13 +107,13 @@ function esc (s) {
 
 // ---------------------------------------------------------------- utils ----
 const CAPABILITY =
-  'IMAP4rev1 AUTH=PLAIN AUTH=LOGIN LOGIN-REFERRALS ID ' +
+  'IMAP4rev1 LOGIN-REFERRALS ID ' +
   'CHILDREN LITERAL+ SORT THROTTLED'
 function log (connTag, level, msg) {
   const tag = connTag ? `[${connTag}] ` : ''
   process.stderr.write(`${new Date().toISOString()} ${tag}${level} ${msg}\n`)
 }
-function buf (s) {
+function toBuf (s) {
   return Buffer.from(s, 'utf-8')
 }
 function q (s) {
@@ -163,13 +164,13 @@ function onConn (socket) {
   let currentFolder = null // FOLDER object after SELECT
   log(tag, 'INFO', 'client connected')
 
-  socket.write(buf(`* OK dummy-IMAP ready\r\n`))
+  socket.write(toBuf(`* OK dummy-IMAP ready\r\n`))
 
   function send (s) {
-    socket.write(buf(s + '\r\n'))
+    socket.write(toBuf(s + '\r\n'))
   }
   function sendRaw (s) {
-    socket.write(buf(s))
+    socket.write(toBuf(s))
   }
 
   function parseCommand (buf, onResult) {
@@ -231,20 +232,19 @@ function onConn (socket) {
     log(tag, 'DEBUG', 'CMD ' + cmd.parts.slice(1).join(' '))
     switch (first) {
       case 'CAPABILITY':
-        send('* ' + CAPABILITY)
-        send('* AUTH=PLAIN')
-        send(`OK ${cmd.tag} CAPABILITY OK`)
+        send('* CAPABILITY ' + CAPABILITY)
+        send(`${cmd.tag} OK CAPABILITY OK`)
         break
       case 'LOGIN':
         log(tag, 'INFO', 'LOGIN user=' + cmd.parts[2])
-        send(`OK ${cmd.tag} LOGIN OK`)
+        send(`${cmd.tag} OK LOGIN OK`)
         break
       case 'SELECT':
       case 'EXAMINE': {
         const name = dequote(cmd.parts[2])
         const f = FOLDERS[name]
         if (!f) {
-          send(`NO ${cmd.tag} unknown mailbox ${name}`)
+          send(`${cmd.tag} NO unknown mailbox ${name}`)
           currentFolder = null
           break
         }
@@ -255,7 +255,7 @@ function onConn (socket) {
         send(`* OK [UIDVALIDITY 1001]`)
         send(`* FLAGS (\\Seen \\Flagged \\Draft \\Answered \\Deleted)`)
         send(`* OK [PERMANENTFLAGS (\\Seen \\Flagged \\Draft \\Answered \\Deleted)]`)
-        send(`OK ${cmd.tag} SELECT OK (READ-ONLY)`)
+        send(`${cmd.tag} OK SELECT OK (READ-ONLY)`)
         break
       }
       case 'LIST': {
@@ -268,19 +268,19 @@ function onConn (socket) {
           const name = p.split('/').pop()
           send(`* LIST (\\HasNoChildren \\NoInferiors) "/" "${name}"`)
         }
-        send(`OK ${cmd.tag} LIST OK`)
+        send(`${cmd.tag} OK LIST OK`)
         break
       }
       case 'STATUS': {
         const folder = FOLDERS[dequote(cmd.parts[2])]
         if (!folder) {
-          send(`NO ${cmd.tag} unknown mailbox`)
+          send(`${cmd.tag} NO unknown mailbox`)
           break
         }
         send(
           `* STATUS ${dequote(cmd.parts[2])} (MESSAGES ${folder.exists} RECENT ${folder.recent} UNSEEN ${folder.unseen} UIDNEXT ${folder.exists + 1} UIDVALIDITY 1001)`
         )
-        send(`OK ${cmd.tag} STATUS OK`)
+        send(`${cmd.tag} OK STATUS OK`)
         break
       }
       case 'SEARCH': {
@@ -295,11 +295,18 @@ function onConn (socket) {
           })
         }
         send(`* SEARCH ${uids.join(' ')}`)
-        send(`OK ${cmd.tag} SEARCH OK`)
+        send(`${cmd.tag} OK SEARCH OK`)
         break
       }
+      case 'ID':
+        send('* ID NIL')
+        send(`${cmd.tag} OK ID completed`)
+        break
+      case 'ENABLE':
+        send(`${cmd.tag} OK ENABLE completed`)
+        break
       case 'NOOP':
-        send(`OK ${cmd.tag} NOOP OK`)
+        send(`${cmd.tag} OK NOOP OK`)
         break
       case 'TAGGED':
       case 'IDLE': {
@@ -312,19 +319,19 @@ function onConn (socket) {
           setTimeout(() => {
             if (socket.destroyed) return
             send(`* RECENT 1`)
-            send(`OK ${cmd.tag} IDLE terminated`),
+            send(`${cmd.tag} OK IDLE terminated`),
             setTimeout(() => {
               if (socket.destroyed) return
             }, 200)
           }, 3000)
         } else {
-          send(`OK ${cmd.tag} OK`)
+          send(`${cmd.tag} OK OK`)
         }
         break
       }
       case 'LOGOUT':
         send('* BYE dummy-IMAP logging out')
-        send(`OK ${cmd.tag} LOGOUT OK`)
+        send(`${cmd.tag} OK LOGOUT OK`)
         socket.end()
         break
       case 'STORE': {
@@ -332,7 +339,7 @@ function onConn (socket) {
         const add = (rest[0] || '').toUpperCase() === 'FLAGS'
         const flags = flag
         if (!currentFolder) {
-          send(`BAD ${cmd.tag} not SELECTed`)
+          send(`${cmd.tag} BAD not SELECTed`)
           break
         }
         for (const mail of currentFolder.mails) {
@@ -342,7 +349,7 @@ function onConn (socket) {
           }
         }
         currentFolder.unseen = currentFolder.mails.filter(m => !m.seen).length
-        send(`OK ${cmd.tag} STORE OK`)
+        send(`${cmd.tag} OK STORE OK`)
         break
       }
       case 'UID': {
@@ -356,7 +363,7 @@ function onConn (socket) {
           // Re-dispatch
           return handle(cmd)
         }
-        send(`BAD ${cmd.tag} UID ${sub} not supported`)
+        send(`${cmd.tag} BAD UID ${sub} not supported`)
         break
       }
       case 'FETCH': {
@@ -371,18 +378,18 @@ function onConn (socket) {
         socket.end()
         break
       default:
-        send(`BAD ${cmd.tag} unknown command ${first}`)
+        send(`${cmd.tag} BAD unknown command ${first}`)
     }
   }
 
   function handleFetch (cmd) {
     if (!currentFolder) {
-      send(`BAD ${cmd.tag} not SELECTed`)
+      send(`${cmd.tag} BAD not SELECTed`)
       return
     }
     // parts: [tag, FETCH, range, '(' attrs ')', ...]
     const range = cmd.parts[2] || '*'
-    const attrsStr = (cmd.parts[3] || '').toUpperCase()
+    const attrsStr = cmd.parts.slice(3).join(' ').toUpperCase()
     const attrs = new Set(attrsStr.replace(/[()]/g, '').split(/\s+/).filter(Boolean))
     const uidMode = attrs.has('UID') || cmd.parts.some(p => p === 'UID')
     const rangeUids = parseRange(range, currentFolder)
@@ -416,15 +423,17 @@ function onConn (socket) {
         attrs.has('BODY.PEEK[HEADER]') ||
         attrs.has('BODY[1.HEADER]') ||
         attrs.has('BODY.PEEK[1.HEADER]') ||
-        attrs.has('BODY.PEEK[header]')
+        attrs.has('BODY.PEEK[header]') ||
+        attrs.has('BODY.PEEK[]') ||
+        attrs.has('BODY[]')
       ) {
         seg.push(`BODY[${hdrOnly(attrs)}] {${mail.source.length}}\r\n${mail.source}`)
       }
       seg.push(')')
       sendRaw(seg.join(' '))
-      socket.write(buf('\r\n'))
+      socket.write(toBuf('\r\n'))
     }
-    send(`OK ${cmd.tag} FETCH OK`)
+    send(`${cmd.tag} OK FETCH OK`)
   }
   function hdrOnly (attrs) {
     if (attrs.has('BODY.PEEK[HEADER]')) return ''

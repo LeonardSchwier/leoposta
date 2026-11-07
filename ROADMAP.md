@@ -67,7 +67,7 @@ update it as each item lands.
 
 - [x] Public GitHub repo + `MIT LICENSE` + leotheca-style README —
   `LICENSE` (MIT) added in review C2; README rewritten in review C3.
-- [ ] E2E tests (Playwright) — `AGENTS.md:142`.
+- [x] E2E tests (Playwright) — `AGENTS.md:142`.
 - [ ] Mobile / touch refinements — `AGENTS.md:27`.
 - [ ] Calendar + Contacts: already wired to CalDAV/CardDAV via
   `davRequest` (`server/index.js:741`) against `DAV_HOST` env —
@@ -168,9 +168,9 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
   - Steps: (1) rename to Leoposta everywhere in `README.md`. (2) Replace `git clone <repo-url>` with `git clone https://github.com/LeonardSchwier/leoposta.git` and `cd leoposta`. (3) Remove the Zustand line; run `npm uninstall zustand`. (4) Delete `src/assets/hero.png`, `src/assets/svelte.svg`, `src/assets/vite.svg` if `grep -rn "hero.png\|svelte.svg\|vite.svg" src index.html` finds no use. (5) Add a short "What is stored where" table (see B6).
   - Accept: `grep -rni "evolution" README.md package.json` prints nothing; `npm test` and `npx vite build` pass.
 
-- [ ] **C4. Real end-to-end tests (the script exists, the tests do not)**
+- [x] **C4. Real end-to-end tests (the script exists, the tests do not)**
   - Problem: `package.json` has `"test:e2e": "playwright test"` but there is no Playwright config and no `tests/e2e`. `AGENTS.md` demands E2E.
-  - Steps: (1) create `playwright.config.ts` with `webServer` entries starting `node scripts/dummy/imap.js`, `node server/index.js` (with `LEOPOSTA_TOKEN=test-token`) and `npx vite preview --port 3000`, `baseURL: 'http://127.0.0.1:3000'`, `retries: 0`. (2) Create `tests/e2e/mail.spec.ts` with three tests: add the dummy account in Settings; the folder list shows INBOX; opening the first message shows its body text. (3) Add a fixture that fails a test on any `console.error` or `pageerror`. (4) Pin `@playwright/test` to an exact version (now `^1.52.0`). Reference: the sibling project `LeonardSchwier/leotheca` has a working suite in `tests/e2e` with this fixture pattern.
+  - Steps: (1) create `playwright.config.ts` with `webServer` entries starting `node scripts/dummy/imap.cjs`, `node server/index.js` (with `LEOPOSTA_TOKEN=test-token`) and `npx vite preview --port 3000`, `baseURL: 'http://127.0.0.1:3000'`, `retries: 0`. (2) Create `tests/e2e/mail.spec.ts` with three tests: add the dummy account in Settings; the folder list shows INBOX; opening the first message shows its body text. (3) Add a fixture that fails a test on any `console.error` or `pageerror`. (4) Pin `@playwright/test` to an exact version (now `^1.52.0`). Reference: the sibling project `LeonardSchwier/leotheca` has a working suite in `tests/e2e` with this fixture pattern.
   - Accept: `npx playwright install chromium && npm run test:e2e` exits 0 with 3 passing tests; add `npm run test:e2e` as a CI step after C1.
 
 - [x] **C5. Roadmap and rules claim things that are not true**

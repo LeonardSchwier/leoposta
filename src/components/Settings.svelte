@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { apiFetch } from '../api'
   import { store, getState } from '../store'
   import { normalizeSignature } from '../lib/signature'
 
@@ -30,7 +31,7 @@
   let pgpErr = $state('')
 
   async function pgpStatus() {
-    const r = await fetch('/api/pgp/status')
+    const r = await apiFetch('/api/pgp/status')
     return r.json()
   }
 
@@ -38,7 +39,7 @@
     if (!pgpPrivate && !pgpPublic) { pgpErr = 'Paste a private key (or at least a public key)'; return }
     pgpLoading = true; pgpErr = ''; pgpMsg = ''
     try {
-      const r = await fetch('/api/pgp', {
+      const r = await apiFetch('/api/pgp', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ privateAsc: pgpPrivate, publicAsc: pgpPublic, passphrase: pgpPassphrase })
@@ -52,12 +53,12 @@
 
   async function handlePgpDelete() {
     if (!confirm('Remove stored PGP keys?')) return
-    await fetch('/api/pgp', { method: 'DELETE' })
+    await apiFetch('/api/pgp', { method: 'DELETE' })
     pgpPrivate = ''; pgpPublic = ''; pgpPassphrase = ''; pgpErr = ''; pgpMsg = 'PGP keys removed'
   }
 
   $effect(() => {
-    fetch('/api/pgp/status').then(r => r.json()).then(s => {
+    apiFetch('/api/pgp/status').then(r => r.json()).then(s => {
       if (s && (s.hasPrivateKey || s.hasPublicKey || s.hasPassphrase)) {
         pgpMsg = `PGP ready: private=${!!s.hasPrivateKey}, public=${!!s.hasPublicKey}, passphrase=${!!s.hasPassphrase}`
       }
@@ -73,7 +74,7 @@
     isLoading = true
     error = ''
     
-    fetch('/api/account', {
+    apiFetch('/api/account', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -85,7 +86,10 @@
         smtpHost,
         smtpPort: parseInt(smtpPort),
         smtpTls,
-        password,
+        imapUser: email,
+        imapPass: password,
+        smtpUser: email,
+        smtpPass: password,
         signature: { enabled: sigEnabled, text: sigText, position: sigPosition }
       })
     })

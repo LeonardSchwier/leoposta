@@ -59,7 +59,7 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': 'http://localhost:3001'
+      '/api': process.env.LEOPOSTA_API_URL || 'http://localhost:3001'
     }
   }
 })

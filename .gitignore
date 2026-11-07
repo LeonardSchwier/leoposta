@@ -43,3 +43,6 @@ scripts/src-tauri/
 
 # Git worktrees
 .worktrees/
+.e2e-data/
+test-results/
+playwright-report/

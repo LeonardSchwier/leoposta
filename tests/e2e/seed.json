@@ -1,0 +1,45 @@
+{
+  "folders": [
+    {
+      "path": "INBOX",
+      "name": "INBOX",
+      "specialUse": null
+    },
+    {
+      "path": "Sent",
+      "name": "Sent",
+      "specialUse": "\\Sent"
+    },
+    {
+      "path": "Drafts",
+      "name": "Drafts",
+      "specialUse": "\\Drafts"
+    },
+    {
+      "path": "Trash",
+      "name": "Trash",
+      "specialUse": "\\Trash"
+    }
+  ],
+  "messages": [
+    {
+      "folder": "INBOX",
+      "uid": 1,
+      "seen": false,
+      "date": "2026-11-01T09:00:00Z",
+      "subject": "Welcome to Leoposta",
+      "from": {
+        "name": "Ada Tester",
+        "address": "ada@example.test"
+      },
+      "to": [
+        {
+          "name": "Me",
+          "address": "me@example.test"
+        }
+      ],
+      "text": "Hello from the e2e fixture mailbox.",
+      "html": ""
+    }
+  ]
+}
