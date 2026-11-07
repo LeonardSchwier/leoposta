@@ -2,21 +2,45 @@ const API_BASE = import.meta.env.VITE_API_URL || ''
 const API_TOKEN: string = import.meta.env.VITE_LEOPOSTA_TOKEN || ''
 const withToken = (url: string) => (API_TOKEN ? `${url}?token=${encodeURIComponent(API_TOKEN)}` : url)
 
-/** fetch() with the API token header; use for every call to the local server. */
+/** Active account email; when set, every request is scoped to it via x-account. */
+let activeAccountEmail: string | null = null
+export function setActiveAccountEmail(email: string | null) {
+  activeAccountEmail = email
+}
+
+function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+  return {
+    'Content-Type': 'application/json',
+    'x-leoposta-token': API_TOKEN,
+    ...(activeAccountEmail ? { 'x-account': activeAccountEmail } : {}),
+    ...extra
+  }
+}
+
+/** fetch() with the API token + account headers; use for raw stream calls. */
 export function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
-  return fetch(input, { ...init, headers: { 'x-leoposta-token': API_TOKEN, ...init.headers } })
+  return fetch(input, { ...init, headers: authHeaders(init.headers) })
 }
 
 async function api(path: string, options: RequestInit = {}): Promise<any> {
   const res = await fetch(`${API_BASE}/api${path}`, {
     ...options,
-    headers: { 'Content-Type': 'application/json', 'x-leoposta-token': API_TOKEN, ...options.headers }
+    headers: authHeaders(options.headers)
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
     throw new Error(err.error || `API error ${res.status}`)
   }
   return res.json()
+}
+
+export const AccountAPI = {
+  list: () => api('/accounts'),
+  add: (data: any) => api('/accounts', { method: 'POST', body: JSON.stringify(data) }),
+  update: (email: string, data: any) =>
+    api(`/accounts/${encodeURIComponent(email)}`, { method: 'PUT', body: JSON.stringify(data) }),
+  remove: (email: string) =>
+    api(`/accounts/${encodeURIComponent(email)}`, { method: 'DELETE' }),
 }
 
 export const MailAPI = {

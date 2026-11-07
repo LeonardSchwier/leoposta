@@ -7,8 +7,8 @@ const router = Router()
 // GET /api/contacts/calendars  (list address books)
 router.get('/contacts/calendars', async (req, res) => {
   try {
-    if (!state.account) return res.status(400).json({ error: 'No account configured' })
-    const basePath = DAV_PATH_PREFIX(state.account.imapUser)
+    if (!state.accounts[0]) return res.status(400).json({ error: 'No account configured' })
+    const basePath = DAV_PATH_PREFIX(state.accounts[0].imapUser)
     const profindXml = `<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:" xmlns:crd="urn:ietf:params:xml:ns:carddav">
   <d:prop>
@@ -29,10 +29,10 @@ router.get('/contacts/calendars', async (req, res) => {
 // GET /api/contacts?book=<id>&q=<query>
 router.get('/contacts', async (req, res) => {
   try {
-    if (!state.account) return res.status(400).json({ error: 'No account configured' })
+    if (!state.accounts[0]) return res.status(400).json({ error: 'No account configured' })
     const { book, q } = req.query
     if (!book) return res.status(400).json({ error: 'book param required' })
-    const basePath = DAV_PATH_PREFIX(state.account.imapUser)
+    const basePath = DAV_PATH_PREFIX(state.accounts[0].imapUser)
     const profind = `<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:">
   <d:prop>
@@ -74,10 +74,10 @@ router.get('/contacts', async (req, res) => {
 // PUT /api/contact  (create or update a contact)
 router.put('/contact', async (req, res) => {
   try {
-    if (!state.account) return res.status(400).json({ error: 'No account configured' })
+    if (!state.accounts[0]) return res.status(400).json({ error: 'No account configured' })
     const { book, vcf } = req.body || {}
     if (!book || !vcf) return res.status(400).json({ error: 'book and vcf required' })
-    const basePath = DAV_PATH_PREFIX(state.account.imapUser)
+    const basePath = DAV_PATH_PREFIX(state.accounts[0].imapUser)
     const uidMatch = vcf.match(/UID:(.+)/)
     const uid = uidMatch ? uidMatch[1].trim() : ('leoposta_' + Date.now())
     const urlPath = `${basePath}/${book.replace(/^\/+|\/+$/g, '')}/${uid}.vcf`
@@ -92,10 +92,10 @@ router.put('/contact', async (req, res) => {
 // DELETE /api/contact?book=<id>&uid=<uid>
 router.delete('/contact', async (req, res) => {
   try {
-    if (!state.account) return res.status(400).json({ error: 'No account configured' })
+    if (!state.accounts[0]) return res.status(400).json({ error: 'No account configured' })
     const { book, uid } = req.query
     if (!book || !uid) return res.status(400).json({ error: 'book and uid required' })
-    const basePath = DAV_PATH_PREFIX(state.account.imapUser)
+    const basePath = DAV_PATH_PREFIX(state.accounts[0].imapUser)
     const urlPath = `${basePath}/${book.replace(/^\/+|\/+$/g, '')}/${uid}.vcf`
     await davRequest('DELETE', urlPath, null, null)
     res.json({ success: true })
@@ -108,11 +108,11 @@ router.delete('/contact', async (req, res) => {
 // POST /api/contacts/import  (VCF import)
 router.post('/contacts/import', async (req, res) => {
   try {
-    if (!state.account) return res.status(400).json({ error: 'No account configured' })
+    if (!state.accounts[0]) return res.status(400).json({ error: 'No account configured' })
     const { book, vcf } = req.body || {}
     if (!book || !vcf) return res.status(400).json({ error: 'book and vcf required' })
     const parts = vcf.split(/BEGIN:VCARD/).filter(p => p.includes('VERSION:'))
-    const basePath = DAV_PATH_PREFIX(state.account.imapUser)
+    const basePath = DAV_PATH_PREFIX(state.accounts[0].imapUser)
     let imported = 0
     for (const part of parts) {
       const card = 'BEGIN:VCARD' + part

@@ -9,7 +9,7 @@ export const DAV_PATH_PREFIX = (user) => (process.env.DAV_PREFIX || '/dav/' + us
 
 export function davRequest(method, urlPath, body, contentType) {
   return new Promise((resolve, reject) => {
-    const acct = state.account
+    const acct = state.accounts[0]
     const user = acct && acct.imapUser ? acct.imapUser : ''
     const pass = acct && acct.imapPass ? acct.imapPass : ''
     const token = Buffer.from(`${user}:${pass}`).toString('base64')

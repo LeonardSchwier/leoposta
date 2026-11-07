@@ -29,9 +29,11 @@ app.use(cors({
 
 app.get('/api/health', (req, res) => res.json({ ok: true }))
 app.get('/api/status', (req, res) => {
+  const accounts = state.accounts || []
   res.json({
-    connected: !!state.account,
-    account: state.account ? state.account.email : null,
+    connected: accounts.length > 0,
+    account: accounts.length > 0 ? accounts[0].email : null,
+    accounts: accounts.map(a => a.email),
     version: '0.1.0'
   })
 })
@@ -80,7 +82,7 @@ if (isMain) {
   app.listen(PORT, HOST, () => {
     if (!TOKEN_FROM_ENV) console.log(`API token (send as x-leoposta-token): ${API_TOKEN}`)
     console.log(`Mail server running on http://${HOST}:${PORT}`)
-    console.log(`Account: ${state.account ? state.account.email : 'not configured'}`)
+    console.log(`Accounts: ${state.accounts.length ? state.accounts.map(a => a.email).join(', ') : 'not configured'}`)
     console.log(`Scheduled messages: ${state.scheduledMessages.length}`)
   })
 }

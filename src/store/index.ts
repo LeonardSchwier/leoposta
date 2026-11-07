@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store'
 import { get } from 'svelte/store'
+import { setActiveAccountEmail } from '../api'
 import type { Signature } from '../lib/signature'
 
 export interface MailMessage {
@@ -114,11 +115,36 @@ const initialState: State = {
 export const store = writable<State>(initialState)
 
 // Actions (use setState for updates)
-export function setActiveAccount(id: string) {
+function syncActiveHeader() {
+  const s = get(store)
+  const active = s.accounts.find(a => a.id === s.activeAccountId) ?? null
+  setActiveAccountEmail(active?.email ?? null)
+}
+
+export function setActiveAccount(id: string | null) {
   store.update(s => ({ ...s, activeAccountId: id }))
+  syncActiveHeader()
 }
 export function addAccount(account: MailAccount) {
   store.update(s => ({ ...s, accounts: [...s.accounts, account], activeAccountId: account.id }))
+  syncActiveHeader()
+}
+export function setAccounts(accounts: MailAccount[]) {
+  store.update(s => ({
+    ...s,
+    accounts,
+    activeAccountId: s.activeAccountId && accounts.some(a => a.id === s.activeAccountId)
+      ? s.activeAccountId
+      : (accounts[0]?.id ?? null)
+  }))
+  syncActiveHeader()
+}
+export function updateAccount(account: MailAccount) {
+  store.update(s => ({
+    ...s,
+    accounts: s.accounts.map(a => (a.id === account.id ? account : a))
+  }))
+  syncActiveHeader()
 }
 export function removeAccount(id: string) {
   store.update(s => ({
@@ -126,6 +152,13 @@ export function removeAccount(id: string) {
     accounts: s.accounts.filter(a => a.id !== id),
     activeAccountId: s.activeAccountId === id ? null : s.activeAccountId
   }))
+  syncActiveHeader()
+}
+
+/** Convenience selector for the currently-active account object. */
+export function getActiveAccount(): MailAccount | null {
+  const s = get(store)
+  return s.accounts.find(a => a.id === s.activeAccountId) ?? null
 }
 export function setFolders(folders: Folder[]) {
   store.update(s => ({ ...s, folders }))

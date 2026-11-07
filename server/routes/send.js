@@ -1,5 +1,5 @@
 import express, { Router } from 'express'
-import { state, saveScheduled } from '../lib/state.js'
+import { state, saveScheduled, resolveAccount, getActiveAccount } from '../lib/state.js'
 import { createSmtpTransporter } from '../lib/imap.js'
 import { scrubOutboundHtml } from '../lib/sanitize.js'
 
@@ -9,8 +9,9 @@ const router = Router()
 router.post('/send', express.json({ limit: '35mb' }), async (req, res) => {
   try {
     const { to, cc, bcc, subject, body, bodyHtml, scheduled, attachments } = req.body
+    const acct = resolveAccount(req)
 
-    if (!state.account) {
+    if (!acct) {
       return res.status(400).json({ error: 'No account configured' })
     }
 
@@ -19,13 +20,14 @@ router.post('/send', express.json({ limit: '35mb' }), async (req, res) => {
     }
 
     const messageData = {
-      from: `"${state.account.name}" <${state.account.email}>`,
+      from: `"${acct.name}" <${acct.email}>`,
       to: to.join(', '),
       cc: cc?.join(', '),
       bcc: bcc?.join(', '),
       subject: subject || '(No Subject)',
       text: body || '',
-      html: scrubOutboundHtml(bodyHtml || body || '')
+      html: scrubOutboundHtml(bodyHtml || body || ''),
+      accountId: acct.email
     }
 
     if (attachments && attachments.length > 0) {
@@ -47,7 +49,7 @@ router.post('/send', express.json({ limit: '35mb' }), async (req, res) => {
       saveScheduled()
       res.json({ success: true, scheduled: true })
     } else {
-      const transporter = createSmtpTransporter()
+      const transporter = createSmtpTransporter(acct)
       const info = await transporter.sendMail(messageData)
       res.json({ success: true, messageId: info.messageId })
     }
@@ -75,7 +77,10 @@ router.delete('/scheduled/:id', (req, res) => {
 })
 
 export async function sendScheduledMessage(msg) {
-  if (!state.account) throw new Error('No account configured')
+  const acct = msg.accountId
+    ? state.accounts.find(a => a.email.toLowerCase() === msg.accountId.toLowerCase())
+    : getActiveAccount()
+  if (!acct) throw new Error('No account configured')
 
   const messageData = {
     from: msg.from,
@@ -95,7 +100,7 @@ export async function sendScheduledMessage(msg) {
     }))
   }
 
-  const transporter = createSmtpTransporter()
+  const transporter = createSmtpTransporter(acct)
   await transporter.sendMail(messageData)
 }
 
