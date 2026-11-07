@@ -26,20 +26,12 @@ update it as each item lands.
   - Accept: two dummy accounts (see `scripts/dummy`) coexist; switching in
     the UI swaps folders/messages without a reload.
 
-- [ ] **Email signature** (user-requested, 2026-11-06)
-  - `Compose.svelte:11` seeds `composeBody` with `''`; `AGENTS.md:51` marks
-    "Signature support" as a Core item; nothing in `Settings.svelte`
-    persists a signature.
-  - Plan: add settings `signature.html`, `signature.text`,
-    `signaturePosition` (`above-body`/`below-body`), `signatureEnabled`;
-    persist in `account.json` `signature` object (or new
-    `settings.json`); `Compose.svelte` initialises with the signature +
-    `-- -- ` separator; reply / reply-all / forward reuse the same
-    pipeline; Settings screen gains a "Signature" tab (HTML / plain-
-    text editor + preview + enable checkbox + position selector).
-  - Accept: with a signature saved, new compose shows it below the
-    body, disabled → empty body, reply inserts it above the quoted
-    message, position switch persists across reloads.
+- [x] **Email signature** (user-requested, 2026-11-06) — shipped earlier.
+  - `src/lib/signature.ts` (13 tests passing), `Compose.svelte` seeds new
+    compose + reply/reply-all/forward, `Settings.svelte` exposes
+    enable/text/position, `account.signature` persists on the backend
+    (`POST /api/account`), and `normalizeAccount` in `store/index.ts`
+    fills in defaults for older saved accounts.
 
 ## Next (P1 — in-flight or near-term)
 
