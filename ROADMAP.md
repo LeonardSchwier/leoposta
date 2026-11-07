@@ -86,6 +86,7 @@ update it as each item lands.
    - [x] `server/index.js:16` collapse wildcard `cors()` to an origin allowlist
    - [x] `src/lib/sanitizeHtml.ts` URI-scheme forbid + `rel=noopener` hook (registered via `addHook`; real since review B3)
    - [x] outbound `bodyHtml` sanitize / force text/plain (server: `scrubOutboundHtml`)
+- Guidance-mode pass on `sanitizeHtml.ts` + `MessageView.svelte` (2026-11-07, review B3/B4): fixed a tracking bypass (CSS escape `\75rl(` / `image-set()` in `style`) by dropping such styles. `needs_validation`: other browser-specific CSS fetch vectors inside kept `style` values (render-test in the Tauri webview; CSP `img-src https:` does not stop them).
 - Re-run in full-audit mode after each P0 lands (multi-account, signature)
   and after provisioning an OS sandbox to flip `needs_validation` → confirmed.
 
@@ -118,7 +119,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
   - Tests that must exist and pass: `<a href="https://x" target="_blank">` gets `rel="noopener noreferrer"`; `<a href="javascript:alert(1)">x</a>` has no `href`; `<img src="x" onerror="alert(1)">` has no `onerror`; `<div id="a" name="b">` has neither attribute; `<p style="background:url(http://t/p.gif)">` has no `style`; `<p style="color:red">` keeps `style`.
   - Accept: `npx vitest run src/__tests__/sanitizeHtml.test.ts` passes.
 
-- [ ] **B4. Remote images load automatically (tracking pixels)**
+- [x] **B4. Remote images load automatically (tracking pixels)**
   - Problem: `src` with `https:` is allowed by `ALLOWED_URI_REGEXP` (MessageView.svelte line ~25), so opening a mail tells the sender when and from which IP it was read.
   - Steps: (1) in `sanitizeHtml.ts` add an `afterSanitizeAttributes` branch: for `IMG` with `src` matching `/^https?:/i`, move the value to `data-remote-src` and remove `src`. (2) Export `hasRemoteImages(html: string): boolean`. (3) In `MessageView.svelte` show a one-line banner "Remote images blocked" with a button "Load images" when `hasRemoteImages(msg.bodyHtml)`; the button re-renders with an option `{ allowRemoteImages: true }` that skips step (1). (4) Per-message only; do not persist anything.
   - Accept: tests: default sanitize turns `<img src="https://t/p.gif">` into an element with `data-remote-src` and no `src`; with `allowRemoteImages: true` the `src` stays. `npx vitest run` passes.

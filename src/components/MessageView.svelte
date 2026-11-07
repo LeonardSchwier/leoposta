@@ -1,6 +1,6 @@
 <script lang="ts">
   import { store, getState, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, deleteMessage, updateMessage, selectMessage } from '../store'
-  import { sanitizeHtml } from '../lib/sanitizeHtml'
+  import { sanitizeHtml, hasRemoteImages } from '../lib/sanitizeHtml'
 
   let {
     onDelete: propDelete,
@@ -13,6 +13,9 @@
     onStar?: () => void
     onReply?: () => void
   } = $props()
+
+  // Per-message opt-in; not persisted.
+  let imagesLoadedFor = $state<string | null>(null)
 
   function formatFullDate(dateStr: string) {
     return new Date(dateStr).toLocaleString()
@@ -155,7 +158,13 @@
         {/if}
 
         {#if msg.bodyHtml}
-          {@html sanitizeHtml(msg.bodyHtml)}
+          {#if hasRemoteImages(msg.bodyHtml) && imagesLoadedFor !== msg.id}
+            <div class="remote-images-banner">
+              Remote images blocked
+              <button type="button" onclick={() => (imagesLoadedFor = msg.id)}>Load images</button>
+            </div>
+          {/if}
+          {@html sanitizeHtml(msg.bodyHtml, { allowRemoteImages: imagesLoadedFor === msg.id })}
         {:else if msg.body}
           <div class="plain-body">{msg.body}</div>
         {:else}
@@ -265,4 +274,5 @@
     .message-content { padding: 16px; }
     .attachments { padding: 12px; }
   }
+  .remote-images-banner { padding: 6px 10px; margin-bottom: 8px; font-size: 13px; background: rgba(128,128,128,.15); border-radius: 6px; display: flex; gap: 8px; align-items: center; }
 </style>
