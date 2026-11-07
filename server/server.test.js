@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import * as openpgp from 'openpgp'
 
 // Isolate state: data files go to a temp dir, token is fixed. These env vars
 // must be set before server/index.js is imported (it reads them at load).
@@ -13,7 +14,7 @@ process.env.LEOPOSTA_DATA_DIR = DATA_DIR
 delete process.env.LEOPOSTA_IMAP_PASS
 delete process.env.LEOPOSTA_SMTP_PASS
 
-const { createApp } = await import('./index.js')
+const { createApp, processPgp } = await import('./index.js')
 
 let server
 let base
@@ -93,4 +94,40 @@ test('/api/send accepts bodies larger than the 1 MB default', async () => {
     body: JSON.stringify({ pad: 'x'.repeat(2 * 1024 * 1024) })
   })
   assert.notEqual(res.status, 413)
+})
+
+test('PGP: passphrase never persisted; locked until unlocked; wrong passphrase 401', async () => {
+  const pass = 'correct horse'
+  const { privateKey, publicKey } = await openpgp.generateKey({
+    type: 'ecc', curve: 'curve25519Legacy', userIDs: [{ name: 't', email: 't@example.com' }], passphrase: pass, format: 'armored'
+  })
+  const armored = await openpgp.encrypt({
+    message: await openpgp.createMessage({ text: 'Content-Type: text/plain\r\n\r\nsecret body' }),
+    encryptionKeys: await openpgp.readKey({ armoredKey: publicKey })
+  })
+  const json = { ...authed, 'content-type': 'application/json' }
+  const put = await fetch(`${base}/api/pgp`, { method: 'PUT', headers: json, body: JSON.stringify({ privateAsc: privateKey, passphrase: pass }) })
+  assert.equal(put.status, 200)
+  assert.equal(fs.existsSync(path.join(DATA_DIR, 'pgp_passphrase.txt')), false)
+  const st = await (await fetch(`${base}/api/pgp/status`, { headers: authed })).json()
+  assert.equal(st.hasPassphrase, true)
+
+  // PUT with a passphrase must not unlock: lock first via a fresh lock call
+  await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: authed })
+  let r = await processPgp(armored)
+  assert.equal(r.decrypted, false)
+  assert.equal(r.error, 'pgp_locked')
+
+  const bad = await fetch(`${base}/api/pgp/unlock`, { method: 'POST', headers: json, body: JSON.stringify({ passphrase: 'nope' }) })
+  assert.equal(bad.status, 401)
+  r = await processPgp(armored)
+  assert.equal(r.error, 'pgp_locked')
+
+  const ok = await fetch(`${base}/api/pgp/unlock`, { method: 'POST', headers: json, body: JSON.stringify({ passphrase: pass }) })
+  assert.equal(ok.status, 200)
+  assert.deepEqual(await ok.json(), { ok: true })
+  r = await processPgp(armored)
+  assert.equal(r.decrypted, true)
+  assert.match(r.text, /secret body/)
+  assert.equal(fs.existsSync(path.join(DATA_DIR, 'pgp_passphrase.txt')), false)
 })
