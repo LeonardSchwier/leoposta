@@ -8,6 +8,8 @@ import fs from 'fs'
 import path from 'path'
 import { fileURLToPath, pathToFileURL } from 'url'
 import * as openpgp from 'openpgp'
+import crypto from 'crypto'
+import { requireToken } from './lib/auth.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -28,6 +30,10 @@ function scrubOutboundHtml(html) {
 const app = express()
 const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001').split(',').map(s => s.trim()).filter(Boolean)
 app.use(cors({ origin: (origin, cb) => { if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true); cb(new Error('Not allowed by CORS'), false) } }))
+const TOKEN_FROM_ENV = !!process.env.LEOPOSTA_TOKEN
+const API_TOKEN = process.env.LEOPOSTA_TOKEN || crypto.randomBytes(32).toString('hex')
+app.get('/api/health', (req, res) => res.json({ ok: true }))
+app.use('/api', requireToken(API_TOKEN))
 app.use(express.json({ limit: '50mb' }))
 
 // In-memory storage (for demo)
@@ -42,13 +48,14 @@ function normalizeFlags(flags) {
 }
 
 // Load account from file if exists
-const ACCOUNT_FILE = path.join(__dirname, 'account.json')
+const DATA_DIR = process.env.LEOPOSTA_DATA_DIR || __dirname
+const ACCOUNT_FILE = path.join(DATA_DIR, 'account.json')
 if (fs.existsSync(ACCOUNT_FILE)) {
   account = JSON.parse(fs.readFileSync(ACCOUNT_FILE, 'utf-8'))
 }
 
 // Load scheduled messages
-const SCHEDULED_FILE = path.join(__dirname, 'scheduled.json')
+const SCHEDULED_FILE = path.join(DATA_DIR, 'scheduled.json')
 if (fs.existsSync(SCHEDULED_FILE)) {
   scheduledMessages = JSON.parse(fs.readFileSync(SCHEDULED_FILE, 'utf-8'))
 }
@@ -1108,9 +1115,9 @@ app.post('/api/contacts/import', async (req, res) => {
 })
 
 // ---------- PGP: key storage + per-message decryption ----------
-const PGP_PRIVATE_FILE = path.join(__dirname, 'pgp_private.asc')
-const PGP_PUBLIC_FILE  = path.join(__dirname, 'pgp_publics.asc')
-const PGP_PASS_FILE    = path.join(__dirname, 'pgp_passphrase.txt')
+const PGP_PRIVATE_FILE = path.join(DATA_DIR, 'pgp_private.asc')
+const PGP_PUBLIC_FILE  = path.join(DATA_DIR, 'pgp_publics.asc')
+const PGP_PASS_FILE    = path.join(DATA_DIR, 'pgp_passphrase.txt')
 const PGP_ARMOR_RE     = /-----BEGIN PGP (?:MESSAGE|SIGNED MESSAGE|ENCRYPTED MESSAGE)[\s\S]*?-----END PGP (?:MESSAGE|SIGNED MESSAGE|ENCRYPTED MESSAGE)[\s\S]*?-----/
 
 function pgpState() {
@@ -1427,6 +1434,7 @@ if (isMain) {
   const PORT = parseInt(process.env.PORT || '3001', 10)
   const HOST = process.env.HOST || '127.0.0.1'
   app.listen(PORT, HOST, () => {
+    if (!TOKEN_FROM_ENV) console.log(`API token (send as x-leoposta-token): ${API_TOKEN}`)
     console.log(`Mail server running on http://${HOST}:${PORT}`)
     console.log(`Account: ${account ? account.email : 'not configured'}`)
     console.log(`Scheduled messages: ${scheduledMessages.length}`)
