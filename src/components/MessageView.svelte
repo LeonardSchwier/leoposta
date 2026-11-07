@@ -103,7 +103,7 @@
     <div class="message-view">
       <div class="view-header">
         <div class="header-left">
-          <button class="back-btn" onclick={() => selectMessage(null)}>←</button>
+          <button class="back-btn" aria-label="Back to message list" onclick={() => selectMessage(null)}>←</button>
           <div class="subject-area">
             <h2 class="message-subject">{msg.subject || '(no subject)'}</h2>
             <div class="message-meta">
@@ -114,13 +114,13 @@
           </div>
         </div>
         <div class="header-actions">
-          <button class="action-btn" class:starred={hasFlag(msg.flags || [], 'Flagged')} onclick={handleStar} title="Star">
+          <button class="action-btn icon" class:starred={hasFlag(msg.flags || [], 'Flagged')} onclick={handleStar} title="Star" aria-label="Star" aria-pressed={hasFlag(msg.flags || [], 'Flagged') ? 'true' : 'false'}>
             {#if hasFlag(msg.flags || [], 'Flagged')}⭐{:else}☆{/if}
           </button>
-          <button class="action-btn" onclick={handleReply} title="Reply">↩ Reply</button>
-          <button class="action-btn" onclick={handleForward} title="Forward">↪ Forward</button>
-          <button class="action-btn" onclick={handleArchive} title="Archive">⬇</button>
-          <button class="action-btn danger" onclick={handleDelete} title="Delete">🗑</button>
+          <button class="action-btn" onclick={handleReply} title="Reply" aria-label="Reply">↩ Reply</button>
+          <button class="action-btn" onclick={handleForward} title="Forward" aria-label="Forward">↪ Forward</button>
+          <button class="action-btn icon" onclick={handleArchive} title="Archive" aria-label="Archive">⬇</button>
+          <button class="action-btn icon danger" onclick={handleDelete} title="Delete" aria-label="Delete">🗑</button>
         </div>
       </div>
 
@@ -202,14 +202,14 @@
   .message-view { display: flex; flex-direction: column; height: 100%; overflow: hidden; flex: 1; }
   .view-header { display: flex; align-items: flex-start; justify-content: space-between; padding: 16px 24px; border-bottom: 1px solid var(--color-border); gap: 16px; }
   .header-left { display: flex; align-items: flex-start; gap: 16px; flex: 1; min-width: 0; }
-  .back-btn { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; background: transparent; border: 1px solid var(--color-border); border-radius: var(--radius-sm); font-size: 18px; color: var(--color-text); cursor: pointer; transition: all var(--transition); flex-shrink: 0; }
+  .back-btn { display: flex; align-items: center; justify-content: center; min-width: 44px; min-height: 44px; padding: 0; background: transparent; border: 1px solid var(--color-border); border-radius: var(--radius-sm); font-size: 18px; color: var(--color-text); cursor: pointer; transition: all var(--transition); flex-shrink: 0; box-sizing: border-box; }
   .back-btn:hover { background: var(--color-hover); }
   .subject-area { flex: 1; min-width: 0; }
   .message-subject { font-size: 18px; font-weight: 600; color: var(--color-text); margin-bottom: 8px; word-break: break-word; }
   .message-meta { display: flex; flex-direction: column; gap: 4px; }
   .message-meta span { font-size: 13px; color: var(--color-text-secondary); }
   .header-actions { display: flex; gap: 8px; flex-shrink: 0; }
-  .action-btn { display: flex; align-items: center; gap: 4px; padding: 8px 12px; background: transparent; border: 1px solid var(--color-border); border-radius: var(--radius-sm); font-size: 13px; color: var(--color-text); cursor: pointer; transition: all var(--transition); white-space: nowrap; }
+  .action-btn { display: flex; align-items: center; gap: 4px; min-height: 44px; padding: 8px 12px; background: transparent; border: 1px solid var(--color-border); border-radius: var(--radius-sm); font-size: 13px; color: var(--color-text); cursor: pointer; transition: all var(--transition); white-space: nowrap; box-sizing: border-box; }
   .action-btn:hover { background: var(--color-hover); }
   .action-btn.starred { background: var(--color-selected); border-color: var(--color-star); }
   .action-btn.danger:hover { background: var(--danger-bg); border-color: var(--color-danger); color: var(--color-danger); }

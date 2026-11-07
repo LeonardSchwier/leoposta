@@ -166,7 +166,7 @@
               <div class="d1">{(c.emails && c.emails[0]) || c.email || ''}</div>
               <div class="d2">{(c.phones && c.phones[0]) || c.phone || ''}</div>
             </div>
-            <button class="del" onclick={(e) => { e.stopPropagation(); deleteContact(c.uid) }} title="Delete contact">🗑</button>
+            <button class="del" onclick={(e) => { e.stopPropagation(); deleteContact(c.uid) }} title="Delete contact" aria-label={`Delete contact ${c.name || c.uid}`}>🗑</button>
           </div>
         {/each}
       {/if}

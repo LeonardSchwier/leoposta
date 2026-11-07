@@ -9,7 +9,7 @@
   // The math assumes a constant row height — enforced in the .message-row
   // CSS (height: 64px, overflow: hidden). ROW_HEIGHT is the single source
   // of truth passed to the pure helper.
-  const ROW_HEIGHT = 64
+  const ROW_HEIGHT = 76
   let scrollEl: HTMLDivElement | undefined = $state()
   let scrollState = $state({ scrollTop: 0, viewportHeight: 400 })
   function measureScroll() { scrollState = { scrollTop: scrollEl?.scrollTop ?? 0, viewportHeight: scrollEl?.clientHeight ?? 400 } }
@@ -143,7 +143,7 @@
       />
     </div>
     <div class="actions">
-      <button class="action-btn" title="New Message" onclick={onCompose}>✉</button>
+      <button class="action-btn icon" title="New message" aria-label="New message" onclick={onCompose}>✉</button>
     </div>
   </div>
   
@@ -177,10 +177,12 @@
           oncontextmenu={(e) => showMenu(e, message)}
         >
           <div class="message-star">
-            <button 
+            <button
               class="star-btn"
               class:starred={isFlagged(message)}
               title={isFlagged(message) ? 'Unstar' : 'Star'}
+              aria-label={isFlagged(message) ? 'Unstar' : 'Star'}
+              aria-pressed={isFlagged(message) ? 'true' : 'false'}
               onclick={(e) => { e.stopPropagation(); onStar?.() }}
             >
               {#if isFlagged(message)}★{:else}☆{/if}
@@ -195,10 +197,10 @@
             <div class="message-preview">{getPreview(message)}</div>
           </div>
           <div class="message-actions" onclick={(e) => e.stopPropagation()}>
-            <button class="msg-btn" title="Reply" onclick={() => handleReply(message)}>↩</button>
-            <button class="msg-btn" title="Forward" onclick={() => handleForward(message)}>⪡</button>
-            <button class="msg-btn" title="Archive" onclick={() => onArchive?.()}>⬇</button>
-            <button class="msg-btn danger" title="Delete" onclick={() => onDelete?.()}>✕</button>
+            <button class="msg-btn" title="Reply" aria-label="Reply" onclick={() => handleReply(message)}>↩</button>
+            <button class="msg-btn" title="Forward" aria-label="Forward" onclick={() => handleForward(message)}>⪡</button>
+            <button class="msg-btn" title="Archive" aria-label="Archive" onclick={() => onArchive?.()}>⬇</button>
+            <button class="msg-btn danger" title="Delete" aria-label="Delete" onclick={() => onDelete?.()}>✕</button>
           </div>
         </div>
       {/each}
@@ -269,19 +271,21 @@
     margin-left: auto;
   }
   
-  .action-btn {
+   .action-btn {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
     background: transparent;
     border: 1px solid var(--color-border);
     border-radius: 6px;
-    font-size: 14px;
+    font-size: 16px;
     color: var(--color-text-secondary);
     cursor: pointer;
     transition: all 0.1s;
+    box-sizing: border-box;
   }
   
   .action-btn:hover {
@@ -355,9 +359,9 @@
     cursor: pointer;
     transition: background 0.08s;
     position: relative;
-    height: 64px;
-    overflow: hidden;
-    box-sizing: border-box;
+     height: 76px;
+     overflow: hidden;
+     box-sizing: border-box;
   }
   
   .message-row:hover {
@@ -373,21 +377,27 @@
     font-weight: 600;
   }
   
-  .message-star {
-    width: 22px;
+   .message-star {
+    width: 44px;
     display: flex;
     align-items: flex-start;
     justify-content: center;
     flex-shrink: 0;
-    padding-top: 1px;
+    padding: 10px 0;
+    box-sizing: border-box;
   }
-  
+
   .star-btn {
     background: none;
     border: none;
-    font-size: 14px;
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
     cursor: pointer;
-    padding: 1px;
+    padding: 0;
     opacity: 0.25;
     transition: opacity 0.1s;
     color: var(--color-text);
@@ -464,15 +474,21 @@
     display: flex;
   }
   
-  .msg-btn {
+   .msg-btn {
     background: none;
     border: 1px solid var(--color-border);
-    border-radius: 4px;
-    padding: 2px 5px;
-    font-size: 11px;
+    border-radius: 5px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 15px;
     cursor: pointer;
     color: var(--color-text-secondary);
     transition: all 0.1s;
+    box-sizing: border-box;
   }
   
   .msg-btn:hover {
@@ -490,14 +506,30 @@
     to { transform: rotate(360deg); }
   }
   
-  @media (max-width: 768px) {
+   @media (max-width: 768px) {
     .message-row {
       padding: 6px 10px;
-      height: 64px;
+      height: 76px;
     }
     .message-actions {
-      display: none;
+      display: flex;
+      gap: 2px;
+      top: auto;
+      bottom: 4px;
+      right: 8px;
+      padding: 2px;
+      border-radius: 6px;
     }
+    .msg-btn {
+      min-width: 36px;
+      min-height: 36px;
+      font-size: 14px;
+    }
+    .message-star {
+      width: 44px;
+      padding: 8px 0;
+    }
+    .star-btn { width: 22px; height: 22px; font-size: 15px; }
     .search-box {
       max-width: 120px;
     }
