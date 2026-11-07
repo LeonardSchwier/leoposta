@@ -53,6 +53,14 @@ npm run build
 npm run preview
 ```
 
+## API authentication
+
+Every `/api` route except `GET /api/health` requires the header
+`x-leoposta-token`. Set `LEOPOSTA_TOKEN` for the server; if unset, a random
+token is generated and printed once at start. Give the frontend the same value
+through `VITE_LEOPOSTA_TOKEN` at build time. (`GET /api/idle` and attachment
+downloads also accept `?token=` because browsers cannot set headers there.)
+
 ## API Endpoints
 
 | Method | Endpoint | Description |
