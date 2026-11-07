@@ -1,4 +1,4 @@
-# Evolution Mail
+# Leoposta
 
 A modern, web-based mail client with a clean, familiar native-mail UX.
 
@@ -17,7 +17,6 @@ A modern, web-based mail client with a clean, familiar native-mail UX.
 
 - **Frontend**: Svelte 5, TypeScript, Tailwind CSS
 - **Backend**: Node.js, Express, ImapFlow, Nodemailer
-- **State**: Zustand
 - **Build**: Vite
 
 ## Getting Started
@@ -31,8 +30,8 @@ A modern, web-based mail client with a clean, familiar native-mail UX.
 
 ```bash
 # Clone the repo
-git clone <repo-url>
-cd evolution-mail
+git clone https://github.com/LeonardSchwier/leoposta.git
+cd leoposta
 
 # Install dependencies
 npm install
