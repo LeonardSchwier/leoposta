@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { resolveAccount } from '../lib/state.js'
 import { davRequest, DAV_PATH_PREFIX, extractResponseSet } from '../lib/dav.js'
+import { parseVcf } from '../lib/vcf.js'
 
 const router = Router()
 
@@ -80,12 +81,14 @@ router.put('/contact', async (req, res) => {
     if (!acct) return res.status(400).json({ error: 'No account configured' })
     const { book, vcf } = req.body || {}
     if (!book || !vcf) return res.status(400).json({ error: 'book and vcf required' })
+    const { cards, errors } = parseVcf(vcf)
+    if (errors.length) return res.status(400).json({ error: errors[0], errors })
+    if (cards.length !== 1) return res.status(400).json({ error: 'PUT /contact accepts exactly one card' })
     const basePath = DAV_PATH_PREFIX(acct.imapUser)
-    const uidMatch = vcf.match(/UID:(.+)/)
-    const uid = uidMatch ? uidMatch[1].trim() : ('leoposta_' + Date.now())
-    const urlPath = `${basePath}/${book.replace(/^\/+|\/+$/g, '')}/${uid}.vcf`
-    const r = await davRequest('PUT', urlPath, vcf, 'text/vcard; charset=utf-8')
-    res.json({ success: true, uid, etag: r.headers.etag || '' })
+    const card = cards[0]
+    const urlPath = `${basePath}/${book.replace(/^\/+|\/+$/g, '')}/${card.uid}.vcf`
+    const r = await davRequest('PUT', urlPath, card.raw, 'text/vcard; charset=utf-8')
+    res.json({ success: true, uid: card.uid, etag: r.headers.etag || '' })
   } catch (err) {
     console.error('CardDAV contact PUT error:', err.message)
     res.status(500).json({ error: err.message })
@@ -116,20 +119,18 @@ router.post('/contacts/import', async (req, res) => {
     if (!acct) return res.status(400).json({ error: 'No account configured' })
     const { book, vcf } = req.body || {}
     if (!book || !vcf) return res.status(400).json({ error: 'book and vcf required' })
-    const parts = vcf.split(/BEGIN:VCARD/).filter(p => p.includes('VERSION:'))
+    const { cards, errors } = parseVcf(vcf)
+    if (errors.length) return res.status(400).json({ error: errors[0], errors })
     const basePath = DAV_PATH_PREFIX(acct.imapUser)
     let imported = 0
-    for (const part of parts) {
-      const card = 'BEGIN:VCARD' + part
-      const uidMatch = card.match(/UID:(.+)/)
-      const uid = uidMatch ? uidMatch[1].trim() : ('leoposta_' + Date.now() + imported)
-      const urlPath = `${basePath}/${book.replace(/^\/+|\/+$/g, '')}/${uid}.vcf`
+    for (const card of cards) {
+      const urlPath = `${basePath}/${book.replace(/^\/+|\/+$/g, '')}/${card.uid}.vcf`
       try {
-        await davRequest('PUT', urlPath, card, 'text/vcard; charset=utf-8')
+        await davRequest('PUT', urlPath, card.raw, 'text/vcard; charset=utf-8', acct)
         imported++
       } catch {}
     }
-    res.json({ success: true, imported, total: parts.length })
+    res.json({ success: true, imported, total: cards.length })
   } catch (err) {
     console.error('CardDAV import error:', err.message)
     res.status(500).json({ error: err.message })
