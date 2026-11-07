@@ -95,7 +95,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
 
 ### Review A. Make the server testable (do this first)
 
-- [ ] **A1. Export `createApp()` and add a server test harness**
+- [x] **A1. Export `createApp()` and add a server test harness**
   - Problem: `server/index.js` (1425 lines, 33 routes) builds the Express app and calls `app.listen` at the bottom (line ~1421), so nothing can be tested. There are 16 tests in total (`src/__tests__`), none for the server.
   - Steps: (1) in `server/index.js` wrap everything from `const app = express()` to the last route in `export function createApp() { ... return app }`. (2) Keep module-level state (`account`, `scheduledMessages`, `pool`) inside the closure or in a `state` object passed in. (3) At the bottom: `if (import.meta.url === pathToFileURL(process.argv[1]).href) { createApp().listen(PORT, HOST, ...) }`. (4) Create `server/server.test.js` using `node:test` and `fetch`: start `createApp().listen(0, '127.0.0.1')`, call `GET /api/account`, assert status 200 or 404 (read the route first), close the server. (5) Add script `"test:server": "node --test server"` to `package.json`.
   - Accept: `npm run test:server` exits 0 and prints at least 1 passing test; `npm run server` still starts on `127.0.0.1:3001`.
@@ -144,7 +144,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
   - Steps: (1) default `express.json({ limit: '1mb' })`. (2) Mount a second parser only on the send route: `app.post('/api/send', express.json({ limit: '35mb' }), handler)` (a 25 MB attachment is about 33.4 MB as base64). (3) Return 413 JSON `{ error: 'too_large' }` through an error handler for `entity.too.large`.
   - Accept: server tests: 2 MB JSON to `/api/account` gives 413; 1 KB gives the normal status.
 
-- [ ] **B9. `scheduled.json` is not git-ignored and has no file mode**
+- [x] **B9. `scheduled.json` is not git-ignored and has no file mode**
   - Problem: `server/scheduled.json` holds queued mails (recipients, bodies, attachments). `.gitignore` lists `account.json` and the PGP files but not `scheduled.json`, although the Standing rules below say it is covered. The write at `server/index.js:63` has no `mode`.
   - Steps: (1) add `server/scheduled.json` to `.gitignore`. (2) change the write to `fs.writeFileSync(SCHEDULED_FILE, JSON.stringify(scheduledMessages, null, 2), { mode: 0o600 })`.
   - Accept: `git check-ignore server/scheduled.json` prints the path; `grep -n "scheduled" .gitignore` shows the entry.
@@ -156,7 +156,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
   - Steps: create `.github/workflows/ci.yml` triggered on `push` and `pull_request`, one job on `ubuntu-latest`: `actions/checkout@v4`, `actions/setup-node@v4` with `node-version: 22` and `cache: npm`, then `npm ci`, `npm test`, `npm run test:server`, `npx vite build`. Do not add steps that need secrets.
   - Accept: `python3 -c "import yaml;yaml.safe_load(open('.github/workflows/ci.yml'))"` exits 0 and the first hosted run is green (record its run id in the roadmap).
 
-- [ ] **C2. Add the missing `LICENSE` and fix the project name**
+- [x] **C2. Add the missing `LICENSE` and fix the project name**
   - Problem: the item "Public GitHub repo + `MIT LICENSE`" below is ticked `[x]`, but no `LICENSE` file is tracked (`git ls-files | grep -i licen` prints nothing). `package.json` is named `evolution-mail` and has no `license` field.
   - Steps: (1) create `LICENSE` with the standard MIT text and `Copyright (c) 2026 Leonard Schwier`. (2) In `package.json` set `"name": "leoposta"` and `"license": "MIT"`. (3) Regenerate the lockfile name fields with `npm install --package-lock-only`.
   - Accept: `test -f LICENSE && node -p "require('./package.json').license"` prints `MIT`.

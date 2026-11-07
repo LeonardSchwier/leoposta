@@ -6,7 +6,7 @@ import libmime from 'libmime'
 import { simpleParser } from 'mailparser'
 import fs from 'fs'
 import path from 'path'
-import { fileURLToPath } from 'url'
+import { fileURLToPath, pathToFileURL } from 'url'
 import * as openpgp from 'openpgp'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -60,7 +60,7 @@ function saveAccount() {
 }
 
 function saveScheduled() {
-  fs.writeFileSync(SCHEDULED_FILE, JSON.stringify(scheduledMessages, null, 2))
+  fs.writeFileSync(SCHEDULED_FILE, JSON.stringify(scheduledMessages, null, 2), { mode: 0o600 })
 }
 
 // Parse a single address string → { name, address }
@@ -1412,14 +1412,23 @@ if (fs.existsSync(DIST_DIR)) {
   console.log(`Serving PWA from ${DIST_DIR}`)
 }
 
-// Process scheduled messages every 30 seconds
-setInterval(processScheduledMessages, 30000)
+// Expose the app for testing / embedding (server.test.js, supertest, etc.)
+export function createApp() {
+  return app
+}
 
-// Start server
-const PORT = parseInt(process.env.PORT || '3001', 10)
-const HOST = process.env.HOST || '127.0.0.1'
-app.listen(PORT, HOST, () => {
-  console.log(`Mail server running on http://${HOST}:${PORT}`)
-  console.log(`Account: ${account ? account.email : 'not configured'}`)
-  console.log(`Scheduled messages: ${scheduledMessages.length}`)
-})
+// Only auto-wire the scheduler + bind a port when this file is the entry
+// point (`npm run server`, Tauri backend bundle). Importing the module
+// elsewhere (tests, the frontend) must not bind a port or leak a timer.
+const isMain = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
+if (isMain) {
+  setInterval(processScheduledMessages, 30000)
+
+  const PORT = parseInt(process.env.PORT || '3001', 10)
+  const HOST = process.env.HOST || '127.0.0.1'
+  app.listen(PORT, HOST, () => {
+    console.log(`Mail server running on http://${HOST}:${PORT}`)
+    console.log(`Account: ${account ? account.email : 'not configured'}`)
+    console.log(`Scheduled messages: ${scheduledMessages.length}`)
+  })
+}

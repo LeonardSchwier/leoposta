@@ -1,8 +1,9 @@
 {
-  "name": "evolution-mail",
+  "name": "leoposta",
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "license": "MIT",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -14,6 +15,7 @@
     "tauri:dev": "npm run bundle:backend && tauri dev",
     "tauri:build": "tauri build",
     "test": "vitest run",
+    "test:server": "node --test server/server.test.js",
     "test:e2e": "playwright test"
   },
   "devDependencies": {
