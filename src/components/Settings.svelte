@@ -1,14 +1,17 @@
 <script lang="ts">
-  import { apiFetch } from '../api'
-  import { store, getState } from '../store'
-  import { normalizeSignature } from '../lib/signature'
-  import type { Rule, RuleCondition } from '../lib/rules'
+  import { apiFetch, AccountAPI, setActiveAccountEmail } from '../api'
+  import {
+    store, getState, setAccounts, setActiveAccount
+  } from '../store'
+  import type { MailAccount } from '../store'
   import { RULE_FIELDS, RULE_OPERATORS, RULE_ACTIONS } from '../lib/rules'
+  import type { Rule } from '../lib/rules'
 
   let { onClose } = $props()
-  
-  let accountName = $state('')
+  const accounts = $derived($store.accounts)
+
   let email = $state('')
+  let accountName = $state('')
   let imapHost = $state('imap.example.com')
   let imapPort = $state('993')
   let imapTls = $state(true)
@@ -18,6 +21,27 @@
   let password = $state('')
   let isLoading = $state(false)
   let error = $state('')
+  // id of the account being edited; null => adding a new one
+  let editingId = $state<string | null>(null)
+
+  function resetForm() {
+    email = ''; accountName = ''
+    imapHost = 'imap.example.com'; imapPort = '993'; imapTls = true
+    smtpHost = 'smtp.example.com'; smtpPort = '465'; smtpTls = true
+    password = ''; editingId = null; error = ''
+  }
+
+  function startEdit(a: MailAccount) {
+    editingId = a.id
+    email = a.email
+    accountName = a.name
+    imapHost = a.imapHost; imapPort = String(a.imapPort); imapTls = a.imapTls
+    smtpHost = a.smtpHost; smtpPort = String(a.smtpPort); smtpTls = a.smtpTls
+    password = ''
+    const s = a.signature
+    if (s) { sigEnabled = s.enabled; sigText = s.text || ''; sigPosition = s.position === 'after_quote' ? 'after_quote' : 'standard' }
+    error = ''
+  }
 
   // ---- Signature ----
   let sigEnabled = $state(false)
@@ -79,6 +103,15 @@
     if (activeTab === 'rules') loadRules().catch(() => {})
   })
 
+  async function loadAccounts() {
+    try {
+      const saved = await AccountAPI.list()
+      const list = Array.isArray(saved) ? saved : []
+      setAccounts(list)
+    } catch { /* backend not running or no accounts */ }
+  }
+  $effect(() => { loadAccounts().catch(() => {}) })
+
   async function pgpStatus() {
     const r = await apiFetch('/api/pgp/status')
     return r.json()
@@ -115,56 +148,62 @@
   })
 
   function handleSave() {
-    if (!email || !password) {
-      error = 'Email and password are required'
-      return
-    }
-    
+    if (!email) { error = 'Email is required'; return }
+    if (!editingId && !password) { error = 'Password is required for a new account'; return }
+
     isLoading = true
     error = ''
-    
-    apiFetch('/api/account', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        name: accountName || email.split('@')[0],
-        email,
-        imapHost,
-        imapPort: parseInt(imapPort),
-        imapTls,
-        smtpHost,
-        smtpPort: parseInt(smtpPort),
-        smtpTls,
-        imapUser: email,
-        imapPass: password,
-        smtpUser: email,
-        smtpPass: password,
-        signature: { enabled: sigEnabled, text: sigText, position: sigPosition }
-      })
-    })
-    .then(res => res.json())
-    .then(data => {
-      if (data.success) {
-        onClose()
-      } else {
-        error = data.error || 'Failed to save account'
-      }
-    })
-    .catch(err => {
-      error = err.message
-    })
-    .finally(() => {
-      isLoading = false
-    })
-  }
-  
-  function handleDelete() {
-    if (confirm('Remove account?')) {
-      if (getState().activeAccountId) {
-        getState().removeAccount(getState().activeAccountId)
-      }
-      onClose()
+
+    const payload: Record<string, unknown> = {
+      name: accountName || email.split('@')[0],
+      email,
+      imapHost,
+      imapPort: parseInt(imapPort) || 993,
+      imapTls,
+      smtpHost,
+      smtpPort: parseInt(smtpPort) || 465,
+      smtpTls,
+      imapUser: email,
+      smtpUser: email,
+      signature: { enabled: sigEnabled, text: sigText, position: sigPosition }
     }
+    if (password) { payload.imapPass = password; payload.smtpPass = password }
+
+    const op = editingId ? AccountAPI.update(email, payload) : AccountAPI.add(payload)
+
+    op
+      .then(async () => {
+        const saved = await AccountAPI.list()
+        setAccounts(Array.isArray(saved) ? saved : [])
+        if (!editingId) {
+          const added = $store.accounts.find(a => a.email.toLowerCase() === email.toLowerCase())
+          if (added) setActiveAccount(added.id)
+        }
+        resetForm()
+        onClose()
+      })
+      .catch(err => { error = err.message })
+      .finally(() => { isLoading = false })
+  }
+
+  function handleAdd() {
+    resetForm()
+  }
+
+  function handleRemove(id: string) {
+    const acc = getState().accounts.find(a => a.id === id)
+    if (!acc || !confirm(`Remove ${acc.email}?`)) return
+    AccountAPI.remove(acc.email)
+      .then(async () => {
+        const saved = await AccountAPI.list()
+        setAccounts(Array.isArray(saved) ? saved : [])
+        if (getState().activeAccountId === id) {
+          const next = $store.accounts[0]
+          if (next) setActiveAccount(next.id)
+          else setActiveAccountEmail(null)
+        }
+      })
+      .catch(err => { error = err.message })
   }
 </script>
 
@@ -230,17 +269,43 @@
             {#if rulesLoading}Saving...{:else}Save rules{/if}
           </button>
         </div>
-      {:else}
-      
-      <div class="form-group">
-        <label>Account Name</label>
-        <input type="text" bind:value={accountName} placeholder="My Mail" />
-      </div>
-      
-      <div class="form-group">
-        <label>Email Address</label>
-        <input type="email" bind:value={email} placeholder="you@example.com" />
-      </div>
+       {:else if activeTab === 'account'}
+       {#if accounts.length}
+         <div class="acct-list-sec">
+           <h3>Accounts</h3>
+           <div class="acct-list">
+             {#each accounts as a (a.id)}
+               <div class="acct-row" class:active={a.id === $store.activeAccountId}>
+                 <div class="acct-info">
+                   <div class="acct-name">{a.name || a.email}{a.id === $store.activeAccountId ? ' · active' : ''}</div>
+                   <div class="acct-email">{a.email}</div>
+                 </div>
+                 <div class="acct-actions">
+                   <button class="btn-tiny" onclick={() => startEdit(a)}>Edit</button>
+                   <button class="btn-tiny btn-tiny-danger" onclick={() => handleRemove(a.id)}>Remove</button>
+                 </div>
+               </div>
+             {/each}
+           </div>
+           <div class="acct-actions-row">
+             {#if editingId}<button class="btn-secondary btn-tiny" onclick={resetForm}>+ New account</button>{/if}
+           </div>
+         </div>
+       {:else}
+         <p class="hint">No accounts configured yet. Add one below.</p>
+       {/if}
+
+       <div class="form-section">
+         <h3>{editingId ? 'Edit account' : 'Add account'}</h3>
+       </div>
+       <div class="form-group">
+         <label>Account Name</label>
+         <input type="text" bind:value={accountName} placeholder="My Mail" />
+       </div>
+       <div class="form-group">
+         <label>Email Address</label>
+          <input type="email" bind:value={email} placeholder="you@example.com" disabled={!!editingId} />
+       </div>
       
       <div class="form-section">
         <h3>IMAP (Incoming)</h3>
@@ -352,13 +417,10 @@
 
     <div class="modal-footer">
       {#if activeTab === 'account'}
-        {#if getState().activeAccountId}
-          <button class="btn-danger" onclick={handleDelete}>Remove Account</button>
-        {/if}
         <div class="footer-right">
-          <button class="btn-secondary" onclick={onClose}>Cancel</button>
+          <button class="btn-secondary" onclick={onClose}>Done</button>
           <button class="btn-primary" onclick={handleSave} disabled={isLoading}>
-            {#if isLoading}Saving...{:else}Save{/if}
+            {#if isLoading}Saving...{:else}{editingId ? 'Update' : 'Add Account'}{/if}
           </button>
         </div>
       {:else}
@@ -750,5 +812,67 @@
     border-radius: var(--radius-sm);
     color: var(--color-text);
     cursor: pointer;
+  }
+
+  .btn-tiny-danger {
+    color: var(--color-danger, #e5534b);
+    border-color: color-mix(in srgb, var(--color-danger, #e5534b) 40%, var(--color-border));
+  }
+  .btn-tiny-danger:hover {
+    background: color-mix(in srgb, var(--color-danger, #e5534b) 10%, transparent);
+  }
+
+  .acct-list-sec {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+  .acct-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .acct-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    gap: 8px;
+  }
+  .acct-row.active {
+    border-color: var(--color-accent, #3478f6);
+    background: color-mix(in srgb, var(--color-accent, #3478f6) 8%, transparent);
+  }
+  .acct-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .acct-name {
+    font-weight: 600;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .acct-email {
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .acct-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+  .acct-actions-row {
+    display: flex;
+    justify-content: flex-start;
   }
 </style>

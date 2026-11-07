@@ -60,12 +60,9 @@ Local state lives in `PROGRESS.md` (per repo root, written by the
 `context-budget` skill) **and** `docs/plans/<slug>.md` + the per-task
 checklist. Delete `PROGRESS.md` when the task is fully merged; keep it
 only when deliberately paused/blocked.
-Currently open (P0):
-- **Multi-account support** (frontend store already models `accounts[]` +
-  `activeAccountId`; backend `server/index.js:20,31` and the IMAP `pool`
-  at `:163` are still single-account; see ROADMAP "Now".)
-- **Email signature** (per-account, settings-driven, inserted on compose
-  + reply; see ROADMAP "Now".)
+Currently open (P0): see the "Now" section of `ROADMAP.md` for the live
+list. (Multi-account support and email signature are both shipped —
+`[x]` in `ROADMAP.md`.)
 
 ## Tech Stack
 - **Frontend:** Svelte 5 + TypeScript (or React 18 + TypeScript — your choice)

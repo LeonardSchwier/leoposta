@@ -9,22 +9,25 @@ update it as each item lands.
 
 ## Now (P0 — feature gaps, agreed 2026-11-06)
 
-- [ ] **Multi-account support**
-  - Frontend state is already multi-account-shaped (`src/store/index.ts:63`
-    `accounts: MailAccount[]`, `:64` `activeAccountId`) but nothing populates
-    it; backend + UI are single-account.
-  - `server/index.js:20` `let account = null`; `server/index.js:267`
-    `POST /api/account` overwrites the single object; `/api/folders`,
-    `/api/messages`, `/api/send`, `/api/idle` all assume one pool of IMAP
-    connections (`pool` at `server/index.js:163`).
-  - Plan: `accounts.json` (array) + `active_account_id`; per-account IMAP pool,
-    nodemailer transport, IDLE subscription; per-account folders/
-    messages; sidebar "Account →" toggle; Settings "Accounts" list
-    (add / remove / set-default); `/api/account` becomes a list API;
-    `store/index.ts` tracks active account id; `api/index.ts` sends an
-    `x-account` header (or path param).
-  - Accept: two dummy accounts (see `scripts/dummy`) coexist; switching in
-    the UI swaps folders/messages without a reload.
+- [x] **Multi-account support** (shipped 2026-11-07)
+  - `server/lib/state.js`: `accounts[]` + `active_account_id`, migration from
+    legacy single-object store, `getAccount` / `getActiveAccount` /
+    `resolveAccount(req)` (reads `x-account` header, falls back to first).
+  - `server/lib/imap.js`: per-account IMAP pools + SMTP transporters keyed
+    by account id; `createImapClient(acct)` exported.
+  - `server/routes/account.js`: `GET/POST /api/accounts` + `PUT/DELETE
+    /api/accounts/:email` CRUD and legacy `/api/account` shim.
+  - `server/routes/{mail,send,idle}.js` rewritten to `resolveAccount(req)`
+    + `getPoolFor(acct)`.
+  - `src/api/index.ts`: `AccountAPI` (list/add/update/remove) +
+    `setActiveAccountEmail()` sets the `x-account` header on every request.
+  - `src/store/index.ts`: `setAccounts` / `setActiveAccount` /
+    `getActiveAccount`; account mutations in the store keep the header in
+    sync automatically.
+  - `src/components/Settings.svelte`: Accounts tab — list, add, edit,
+    remove; switching sets the active account and re-syncs the header.
+  - Env passwords (`LEOPOSTA_IMAP_PASS`, `LEOPOSTA_SMTP_PASS`) apply to the
+    first account only and are never persisted.
 
 - [x] **Email signature** (user-requested, 2026-11-06) — shipped earlier.
   - `src/lib/signature.ts` (13 tests passing), `Compose.svelte` seeds new

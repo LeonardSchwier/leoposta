@@ -178,7 +178,7 @@ test('credentials: env passwords override and are never written to account.json'
       })
     })
     assert.equal(res.status, 200)
-    const raw = fs.readFileSync(path.join(DATA_DIR, 'account.json'), 'utf-8')
+    const raw = fs.readFileSync(path.join(DATA_DIR, 'accounts.json'), 'utf-8')
     assert.ok(!raw.includes('envsecret-imap'))
     assert.ok(!raw.includes('"imapPass"'), 'env-sourced imapPass omitted')
     assert.ok(raw.includes('smtpfilepass'), 'non-env smtpPass still stored')

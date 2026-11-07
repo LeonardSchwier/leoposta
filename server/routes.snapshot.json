@@ -1,5 +1,6 @@
 [
   "DELETE /account",
+  "DELETE /accounts/:email",
   "DELETE /calendar/event",
   "DELETE /contact",
   "DELETE /folder",
@@ -8,6 +9,7 @@
   "DELETE /scheduled/:id",
   "GET /^\\/(?!api\\/).*/",
   "GET /account",
+  "GET /accounts",
   "GET /api/health",
   "GET /api/status",
   "GET /calendar/calendars",
@@ -20,9 +22,11 @@
   "GET /message/:id/attachment/:partId",
   "GET /messages",
   "GET /pgp/status",
+  "GET /rules",
   "GET /scheduled",
   "GET /search",
   "POST /account",
+  "POST /accounts",
   "POST /calendar/import",
   "POST /contacts/import",
   "POST /folder",
@@ -32,7 +36,9 @@
   "POST /pgp/lock",
   "POST /pgp/unlock",
   "POST /send",
+  "PUT /accounts/:email",
   "PUT /calendar/event",
   "PUT /contact",
-  "PUT /pgp"
+  "PUT /pgp",
+  "PUT /rules"
 ]

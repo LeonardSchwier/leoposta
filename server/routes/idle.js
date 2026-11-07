@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { state } from '../lib/state.js'
+import { resolveAccount } from '../lib/state.js'
 import { createImapClient } from '../lib/imap.js'
 
 const router = Router()
@@ -14,7 +14,8 @@ router.get('/idle', async (req, res) => {
   })
   res.write('event: connected\ndata: {"status":"connected"}\n\n')
 
-  if (!state.account) {
+  const acct = resolveAccount(req)
+  if (!acct) {
     res.write('event: error\ndata: {"error":"No account configured"}\n\n')
     res.end()
     return
@@ -23,7 +24,7 @@ router.get('/idle', async (req, res) => {
   let client
   let lock
   try {
-    client = createImapClient()
+    client = createImapClient(acct)
     await client.connect()
     lock = await client.getMailboxLock('INBOX')
   } catch (err) {

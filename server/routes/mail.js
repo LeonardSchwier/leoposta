@@ -1,7 +1,7 @@
 import { Router } from 'express'
 import { simpleParser } from 'mailparser'
-import { state } from '../lib/state.js'
-import { pool } from '../lib/imap.js'
+import { state, resolveAccount } from '../lib/state.js'
+import { getPoolFor } from '../lib/imap.js'
 import { normalizeFlags, parseFromAddr, toISO } from '../lib/address.js'
 import { processPgp } from '../lib/pgp.js'
 import { applyRules } from '../lib/rules.js'
@@ -15,9 +15,11 @@ router.get('/messages', async (req, res) => {
     const limitN = Math.min(Math.max(1, Number(limit) || 100), 200)
     const offsetN = Math.max(0, Number(offset) || 0)
 
-    if (!state.account) {
+    const acct = resolveAccount(req)
+    if (!acct) {
       return res.json({ messages: [], unreadCount: 0 })
     }
+    const pool = getPoolFor(acct)
 
     await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
@@ -102,9 +104,11 @@ router.get('/message/:id', async (req, res) => {
     const { id } = req.params
     const { folder = 'INBOX' } = req.query
 
-    if (!state.account) {
+    const acct = resolveAccount(req)
+    if (!acct) {
       return res.status(404).json({ error: 'No account configured' })
     }
+    const pool = getPoolFor(acct)
 
     await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
@@ -201,9 +205,11 @@ router.get('/message/:id', async (req, res) => {
 // GET /api/folders
 router.get('/folders', async (req, res) => {
   try {
-    if (!state.account) {
+    const acct = resolveAccount(req)
+    if (!acct) {
       return res.json({ folders: [] })
     }
+    const pool = getPoolFor(acct)
 
     const folders = await pool.run(async (client) => {
       const mailboxes = await client.list()
@@ -228,9 +234,11 @@ router.get('/search', async (req, res) => {
   try {
     const { q, folder = 'INBOX', limit = 50 } = req.query
 
-    if (!state.account || !q) {
+    const acct = resolveAccount(req)
+    if (!acct || !q) {
       return res.json({ messages: [], total: 0 })
     }
+    const pool = getPoolFor(acct)
 
     await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
@@ -284,8 +292,9 @@ router.post('/message/:id/flags', async (req, res) => {
   try {
     const { id } = req.params
     const { folder = 'INBOX', add = [], remove = [] } = req.body
-
-    if (!state.account) return res.status(400).json({ error: 'No account configured' })
+    const acct = resolveAccount(req)
+    if (!acct) return res.status(400).json({ error: 'No account configured' })
+    const pool = getPoolFor(acct)
 
     await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
@@ -310,8 +319,9 @@ router.delete('/message/:id', async (req, res) => {
     const { id } = req.params
     const { folder = 'INBOX' } = req.query
     const { toTrash = false } = req.query
-
-    if (!state.account) return res.status(400).json({ error: 'No account configured' })
+    const acct = resolveAccount(req)
+    if (!acct) return res.status(400).json({ error: 'No account configured' })
+    const pool = getPoolFor(acct)
 
     await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
@@ -337,8 +347,9 @@ router.post('/message/:id/move', async (req, res) => {
   try {
     const { id } = req.params
     const { from = 'INBOX', to } = req.body
-
-    if (!state.account || !to) return res.status(400).json({ error: 'from/to required' })
+    const acct = resolveAccount(req)
+    if (!acct || !to) return res.status(400).json({ error: 'from/to required' })
+    const pool = getPoolFor(acct)
 
     await pool.run(async (client) => {
       const lock = await client.getMailboxLock(from)
@@ -359,7 +370,9 @@ router.post('/message/:id/move', async (req, res) => {
 router.post('/folder', async (req, res) => {
   try {
     const { name, parentId } = req.body
-    if (!state.account || !name) return res.status(400).json({ error: 'name required' })
+    const acct = resolveAccount(req)
+    if (!acct || !name) return res.status(400).json({ error: 'name required' })
+    const pool = getPoolFor(acct)
 
     const folderPath = parentId ? `${parentId}/${name}` : name
     await pool.run(async (client) => { await client.mailboxCreate(folderPath) })
@@ -374,7 +387,10 @@ router.post('/folder', async (req, res) => {
 router.post('/folder/rename', async (req, res) => {
   try {
     const { from, to } = req.body || {}
-    if (!state.account || !from || !to) return res.status(400).json({ error: 'from and to required' })
+    const acct = resolveAccount(req)
+    if (!acct || !from || !to) return res.status(400).json({ error: 'from and to required' })
+    const pool = getPoolFor(acct)
+
     await pool.run(async (client) => { await client.mailboxRename(from, to) })
     res.json({ success: true, path: to })
   } catch (err) {
@@ -387,7 +403,9 @@ router.post('/folder/rename', async (req, res) => {
 router.delete('/folder', async (req, res) => {
   try {
     const { path: folderPath } = req.query
-    if (!state.account || !folderPath) return res.status(400).json({ error: 'path required' })
+    const acct = resolveAccount(req)
+    if (!acct || !folderPath) return res.status(400).json({ error: 'path required' })
+    const pool = getPoolFor(acct)
 
     await pool.run(async (client) => { await client.mailboxDelete(folderPath) })
     res.json({ success: true })
@@ -402,8 +420,9 @@ router.get('/message/:id/attachment/:partId', async (req, res) => {
   try {
     const { id, partId } = req.params
     const { folder = 'INBOX' } = req.query
-
-    if (!state.account) return res.status(404).json({ error: 'No account configured' })
+    const acct = resolveAccount(req)
+    if (!acct) return res.status(404).json({ error: 'No account configured' })
+    const pool = getPoolFor(acct)
 
     await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
