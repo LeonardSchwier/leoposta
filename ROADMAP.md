@@ -122,9 +122,10 @@ update it as each item lands.
   `LICENSE` (MIT) added in review C2; README rewritten in review C3.
 - [x] E2E tests (Playwright) — `AGENTS.md:142`.
 - [ ] Mobile / touch refinements — `AGENTS.md:27`.
-- [ ] Calendar + Contacts: already wired to CalDAV/CardDAV via
+- [x] Calendar + Contacts: already wired to CalDAV/CardDAV via
   `davRequest` (`server/index.js:741`) against `DAV_HOST` env —
-  finish multi-account scoping and import validation.
+  multi-account scoping (commit `4e2f84d`) + import validation
+  (`server/lib/vcf.js` + `server/contactImport.test.js`, 16 tests).
 - [ ] i18n (start en, add de/es/fr).
 
 ## Security audits (recurring)
