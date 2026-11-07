@@ -34,7 +34,9 @@ const TOKEN_FROM_ENV = !!process.env.LEOPOSTA_TOKEN
 const API_TOKEN = process.env.LEOPOSTA_TOKEN || crypto.randomBytes(32).toString('hex')
 app.get('/api/health', (req, res) => res.json({ ok: true }))
 app.use('/api', requireToken(API_TOKEN))
-app.use(express.json({ limit: '50mb' }))
+const defaultJson = express.json({ limit: '1mb' })
+// /api/send carries attachments (25 MB is ~33.4 MB as base64): it gets its own parser.
+app.use((req, res, next) => (req.path === '/api/send' ? next() : defaultJson(req, res, next)))
 
 // In-memory storage (for demo)
 let account = null
@@ -1224,7 +1226,7 @@ app.put('/api/pgp', async (req, res) => {
 app.delete('/api/pgp', (req, res) => res.json({ success: true, state: deletePgp() }))
 
 // POST /api/send
-app.post('/api/send', async (req, res) => {
+app.post('/api/send', express.json({ limit: '35mb' }), async (req, res) => {
   try {
     const { to, cc, bcc, subject, body, bodyHtml, scheduled, attachments } = req.body
     
@@ -1418,6 +1420,12 @@ if (fs.existsSync(DIST_DIR)) {
   app.get(/^\/(?!api\/).*/, (req, res) => res.sendFile(path.join(DIST_DIR, 'index.html')))
   console.log(`Serving PWA from ${DIST_DIR}`)
 }
+
+// Body-too-large -> 413 JSON
+app.use((err, req, res, next) => {
+  if (err && err.type === 'entity.too.large') return res.status(413).json({ error: 'too_large' })
+  next(err)
+})
 
 // Expose the app for testing / embedding (server.test.js, supertest, etc.)
 export function createApp() {

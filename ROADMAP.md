@@ -139,7 +139,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
   - Tests that must pass: the two strings above produce output with no `<script`, no `onerror`; `<a href="  javascript:alert(1)">x</a>` loses its `href`; `<svg onload=alert(1)>` is removed; plain `<p>hi</p>` is unchanged.
   - Accept: `node --test server/scrub.test.js` exits 0.
 
-- [ ] **B8. Request bodies up to 50 MB for every route**
+- [x] **B8. Request bodies up to 50 MB for every route**
   - Problem: `server/index.js:31` `express.json({ limit: '50mb' })` lets any caller make the server buffer 50 MB on routes that need a few hundred bytes.
   - Steps: (1) default `express.json({ limit: '1mb' })`. (2) Mount a second parser only on the send route: `app.post('/api/send', express.json({ limit: '35mb' }), handler)` (a 25 MB attachment is about 33.4 MB as base64). (3) Return 413 JSON `{ error: 'too_large' }` through an error handler for `entity.too.large`.
   - Accept: server tests: 2 MB JSON to `/api/account` gives 413; 1 KB gives the normal status.
