@@ -1,38 +1,6 @@
 <script lang="ts">
   import { store, getState, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, deleteMessage, updateMessage, selectMessage } from '../store'
-  import DOMPurify from 'dompurify'
-
-  // Mail HTML is adversarial (arbitrary third-party senders). Strip script /
-  // event handlers / dangerous URL schemes before injecting via {@html}.
-  // Whitelist keeps the usual inline-email styling (font-family, color, width,
-  // <img>, <a href>, <table>, <ul>/<ol>/<li>, <p>, <br>, etc.).
-  function sanitizeHtml(html: string): string {
-    if (!html) return ''
-    const cfg = {
-      ALLOWED_TAGS: [
-        'a','b','blockquote','br','caption','code','div','em','h1','h2','h3','h4','h5','h6',
-        'hr','i','img','li','ol','p','pre','small','span','strong','sub','sup','table',
-        'tbody','td','tfoot','th','thead','tr','u','ul','del','ins','mark','figure','figcaption'
-      ],
-      ALLOWED_ATTR: [
-        'accept','align','alt','bgcolor','border','cellpadding','cellspacing','checked',
-        'colspan','color','disabled','dir','face','height','href','hreflang','id','lang',
-        'longdesc','mailto','name','rel','role','scope','selected','shape','size','span',
-        'src','start','style','summary','target','title','type','valign','value','width'
-      ],
-      FORBID_CONTENTS: ['style'],
-      ADD_ATTR: ['target','rel'],
-      FORBID_ATTR: ['srcset'],
-      ALLOWED_URI_REGEXP: /^(?:https?:|mailto:|tel:|cid:)\S*$/i,
-      afterSanitizeAttributes: (node: any) => {
-        if (node.tagName === 'A' && (node.getAttribute('target') || '').toLowerCase() === '_blank') {
-          node.setAttribute('rel', 'noopener noreferrer')
-        }
-      }
-    }
-    const win = DOMPurify(window)
-    return win.sanitize(html, cfg as any) || ''
-  }
+  import { sanitizeHtml } from '../lib/sanitizeHtml'
 
   let {
     onDelete: propDelete,
