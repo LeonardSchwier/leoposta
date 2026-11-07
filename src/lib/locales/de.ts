@@ -90,7 +90,38 @@ export const de = {
   'view.emptyBody': 'Diese Nachricht hat keine sichtbaren Inhalte. Sie ist vielleicht PGP-verschlüsselt oder leer.',
   'view.attachments.one': '📎 {n} Anhang',
   'view.attachments.other': '📎 {n} Anhänge',
-  'view.selectMessage': 'Wähle eine Nachricht zur Anzeige'
+  'view.selectMessage': 'Wähle eine Nachricht zur Anzeige',
+
+  // Contacts
+  'contacts.books': 'Adressbücher',
+  'contacts.booksEmpty': 'Keine Adressbücher gefunden.',
+  'contacts.new': '+ Neuer Kontakt',
+  'contacts.importVcf': '.vcf importieren',
+  'contacts.search': 'Kontakte durchsuchen',
+  'contacts.retry': 'Erneut versuchen',
+  'contacts.loading': 'Wird geladen…',
+  'contacts.empty': 'Noch keine Kontakte. Füge einen hinzu oder importiere eine .vcf-Datei.',
+  'contacts.unnamed': '(ohne Namen)',
+  'contacts.deleteTitle': 'Kontakt löschen',
+  'contacts.delete.confirm': 'Diesen Kontakt löschen?',
+  'contacts.delete.toast': 'Kontakt gelöscht',
+  'contacts.imported': 'Kontakte importiert',
+  'contacts.updated': 'Kontakt aktualisiert',
+  'contacts.created': 'Kontakt angelegt',
+  'contacts.requirement': 'Gib einen Namen, eine E-Mail oder ein Telefon ein',
+  'contacts.editor.titleNew': 'Neuer Kontakt',
+  'contacts.editor.titleEdit': 'Kontakt bearbeiten',
+  'contacts.editor.name': 'Name',
+  'contacts.editor.email': 'E-Mail',
+  'contacts.editor.phone': 'Telefon',
+  'contacts.editor.org': 'Organisation',
+  'contacts.editor.namePh': 'Max Mustermann',
+  'contacts.editor.emailPh': 'max@beispiel.de',
+  'contacts.editor.phonePh': '+49 155 0100',
+  'contacts.editor.delete': 'Löschen',
+  'contacts.editor.cancel': 'Abbrechen',
+  'contacts.editor.save': 'Änderungen speichern',
+  'contacts.editor.create': 'Anlegen'
 } as const
 
 export default de

@@ -91,7 +91,38 @@ export const en = {
   'view.emptyBody': 'This message has no visible content. It may be PGP-encrypted or empty.',
   'view.attachments.one': '📎 {n} attachment',
   'view.attachments.other': '📎 {n} attachments',
-  'view.selectMessage': 'Select a message to view'
+  'view.selectMessage': 'Select a message to view',
+
+  // Contacts
+  'contacts.books': 'Address Books',
+  'contacts.booksEmpty': 'No address books found.',
+  'contacts.new': '+ New contact',
+  'contacts.importVcf': 'Import .vcf',
+  'contacts.search': 'Search contacts',
+  'contacts.retry': 'Retry',
+  'contacts.loading': 'Loading…',
+  'contacts.empty': 'No contacts here yet. Add one or import a .vcf file.',
+  'contacts.unnamed': '(unnamed)',
+  'contacts.deleteTitle': 'Delete contact',
+  'contacts.delete.confirm': 'Delete this contact?',
+  'contacts.delete.toast': 'Contact deleted',
+  'contacts.imported': 'Contacts imported',
+  'contacts.updated': 'Contact updated',
+  'contacts.created': 'Contact created',
+  'contacts.requirement': 'Add a name, email, or phone',
+  'contacts.editor.titleNew': 'New contact',
+  'contacts.editor.titleEdit': 'Edit contact',
+  'contacts.editor.name': 'Name',
+  'contacts.editor.email': 'Email',
+  'contacts.editor.phone': 'Phone',
+  'contacts.editor.org': 'Organization',
+  'contacts.editor.namePh': 'Jane Appleseed',
+  'contacts.editor.emailPh': 'jane@example.com',
+  'contacts.editor.phonePh': '+1 555 0100',
+  'contacts.editor.delete': 'Delete',
+  'contacts.editor.cancel': 'Cancel',
+  'contacts.editor.save': 'Save changes',
+  'contacts.editor.create': 'Create'
 } as const
 
 export default en

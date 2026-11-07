@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { get } from 'svelte/store'
   import { ContactsAPI } from '../api'
   import { contactToVCF } from '../lib/vcf'
+  import { lang, t } from '../lib/i18n'
 
   let { showToast } = $props()
 
@@ -57,7 +59,7 @@
 
   async function saveContact() {
     if (!currentBook) return
-    if (!fName.trim() && !fEmail.trim() && !fPhone.trim()) { showToast('Add a name, email, or phone'); return }
+    if (!fName.trim() && !fEmail.trim() && !fPhone.trim()) { showToast(t(get(lang), 'contacts.requirement')); return }
     try {
       busy = true
       const uid = editingUid || (fEmail.trim() || fName.trim().toLowerCase().replace(/\s+/g, '_'))
@@ -65,19 +67,19 @@
       await ContactsAPI.saveContact(currentBook.uri, vcf)
       showEditor = false
       await loadContacts(q)
-      showToast(editingUid ? 'Contact updated' : 'Contact created')
+      showToast(editingUid ? t(get(lang), 'contacts.updated') : t(get(lang), 'contacts.created'))
     } catch (e: any) { showToast(e.message, 5000) } finally { busy = false }
   }
 
   async function deleteContact(uid: string) {
     if (!currentBook) return
-    if (!confirm('Delete this contact?')) return
+    if (!confirm(t(get(lang), 'contacts.delete.confirm'))) return
     try {
       busy = true
       await ContactsAPI.deleteContact(currentBook.uri, uid)
       selectedUid = null
       await loadContacts(q)
-      showToast('Contact deleted')
+      showToast(t(get(lang), 'contacts.delete.toast'))
     } catch (e: any) { showToast(e.message, 5000) } finally { busy = false }
   }
 
@@ -90,7 +92,7 @@
         busy = true
         await ContactsAPI.importVCF(currentBook.uri, vcf)
         await loadContacts(q)
-        showToast('Contacts imported')
+        showToast(t(get(lang), 'contacts.imported'))
       } catch (e: any) { showToast(e.message, 5000) } finally { busy = false }
     }
     reader.readAsText(file)
@@ -122,8 +124,8 @@
 <section class="contacts">
   <aside class="c-side">
     <div class="c-side-head">
-      <h2>Address Books</h2>
-      <button class="add-c" onclick={openCreate}>+ New contact</button>
+      <h2>{t($lang, 'contacts.books')}</h2>
+      <button class="add-c" onclick={openCreate}>{t($lang, 'contacts.new')}</button>
     </div>
     <div class="c-list">
       {#each books as book (book.uri)}
@@ -132,11 +134,11 @@
           <span class="c-name">{book.name}</span>
         </button>
       {/each}
-      {#if books.length === 0}<p class="empty">No address books found.</p>{/if}
+      {#if books.length === 0}<p class="empty">{t($lang, 'contacts.booksEmpty')}</p>{/if}
     </div>
     <div class="c-import">
       <label class="import-btn">
-        Import .vcf
+        {t($lang, 'contacts.importVcf')}
         <input type="file" accept=".vcf,text/vcard" onchange={importVcf} disabled={busy} />
       </label>
     </div>
@@ -144,21 +146,21 @@
 
   <div class="c-main">
     <header class="c-top">
-      <input class="search" type="search" placeholder="Search contacts" bind:value={q} oninput={onSearch} data-search-input />
+      <input class="search" type="search" placeholder={t($lang, 'contacts.search')} bind:value={q} oninput={onSearch} data-search-input />
     </header>
 
     {#if err}
-      <div class="c-err"><span>{err}</span><button onclick={loadContacts}>Retry</button></div>
+      <div class="c-err"><span>{err}</span><button onclick={loadContacts}>{t($lang, 'contacts.retry')}</button></div>
     {/if}
 
     <div class="c-body">
       {#if loading}
-        <p class="hint">Loading…</p>
+        <p class="hint">{t($lang, 'contacts.loading')}</p>
       {:else if contacts.length === 0}
-        <p class="hint">No contacts here yet. Add one or import a .vcf file.</p>
+        <p class="hint">{t($lang, 'contacts.empty')}</p>
       {:else}
         {#each contacts as c (c.uid)}
-          {@const name = c.name || c.displayName || (c.emails && c.emails[0]) || '(unnamed)'}
+          {@const name = c.name || c.displayName || (c.emails && c.emails[0]) || t($lang, 'contacts.unnamed')}
           <div class="row" class:sel={selectedUid === c.uid} onclick={() => openEdit(c)}>
             <span class="av" class:unknown={!(c.emails || c.email)}>{initial(name) || '?'}</span>
             <div class="meta">
@@ -166,7 +168,7 @@
               <div class="d1">{(c.emails && c.emails[0]) || c.email || ''}</div>
               <div class="d2">{(c.phones && c.phones[0]) || c.phone || ''}</div>
             </div>
-            <button class="del" onclick={(e) => { e.stopPropagation(); deleteContact(c.uid) }} title="Delete contact">🗑</button>
+            <button class="del" onclick={(e) => { e.stopPropagation(); deleteContact(c.uid) }} title={t($lang, 'contacts.deleteTitle')}>🗑</button>
           </div>
         {/each}
       {/if}
@@ -176,16 +178,16 @@
   {#if showEditor}
     <div class="modal-back" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }} role="dialog">
       <div class="modal">
-        <h4>{editingUid ? 'Edit contact' : 'New contact'}</h4>
-        <label><span>Name</span><input type="text" bind:value={fName} placeholder="Jane Appleseed" /></label>
-        <label><span>Email</span><input type="email" bind:value={fEmail} placeholder="jane@example.com" /></label>
-        <label><span>Phone</span><input type="tel" bind:value={fPhone} placeholder="+1 555 0100" /></label>
-        <label><span>Organization</span><input type="text" bind:value={fOrg} /></label>
+        <h4>{editingUid ? t($lang, 'contacts.editor.titleEdit') : t($lang, 'contacts.editor.titleNew')}</h4>
+        <label><span>{t($lang, 'contacts.editor.name')}</span><input type="text" bind:value={fName} placeholder={t($lang, 'contacts.editor.namePh')} /></label>
+        <label><span>{t($lang, 'contacts.editor.email')}</span><input type="email" bind:value={fEmail} placeholder={t($lang, 'contacts.editor.emailPh')} /></label>
+        <label><span>{t($lang, 'contacts.editor.phone')}</span><input type="tel" bind:value={fPhone} placeholder={t($lang, 'contacts.editor.phonePh')} /></label>
+        <label><span>{t($lang, 'contacts.editor.org')}</span><input type="text" bind:value={fOrg} /></label>
         <div class="actions">
-          {#if editingUid}<button class="danger" onclick={() => { showEditor = false; deleteContact(editingUid!) }}>Delete</button>{/if}
+          {#if editingUid}<button class="danger" onclick={() => { showEditor = false; deleteContact(editingUid!) }}>{t($lang, 'contacts.editor.delete')}</button>{/if}
           <span class="spacer"></span>
-          <button class="ghost" onclick={() => showEditor = false}>Cancel</button>
-          <button class="primary" onclick={saveContact} disabled={busy}>{editingUid ? 'Save changes' : 'Create'}</button>
+          <button class="ghost" onclick={() => showEditor = false}>{t($lang, 'contacts.editor.cancel')}</button>
+          <button class="primary" onclick={saveContact} disabled={busy}>{editingUid ? t($lang, 'contacts.editor.save') : t($lang, 'contacts.editor.create')}</button>
         </div>
       </div>
     </div>

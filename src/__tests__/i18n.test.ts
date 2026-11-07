@@ -331,3 +331,33 @@ describe('MessageView locale keys (task 5)', () => {
     expect(t('view.selectMessage')).toBe('Wähle eine Nachricht zur Anzeige')
   })
 })
+
+describe('Contacts locale keys (task 6)', () => {
+  it('resolves contacts.editor.* in en and de', () => {
+    setLang('en')
+    expect(t('contacts.editor.titleNew')).toBe('New contact')
+    expect(t('contacts.editor.titleEdit')).toBe('Edit contact')
+    expect(t('contacts.editor.save')).toBe('Save changes')
+    expect(t('contacts.editor.create')).toBe('Create')
+    setLang('de')
+    expect(t('contacts.editor.titleNew')).toBe('Neuer Kontakt')
+    expect(t('contacts.editor.titleEdit')).toBe('Kontakt bearbeiten')
+    expect(t('contacts.editor.save')).toBe('Änderungen speichern')
+    expect(t('contacts.editor.create')).toBe('Anlegen')
+  })
+
+  it('resolves contacts.delete.confirm (dialog)', () => {
+    setLang('en')
+    expect(t('contacts.delete.confirm')).toBe('Delete this contact?')
+    setLang('de')
+    expect(t('contacts.delete.confirm')).toBe('Diesen Kontakt löschen?')
+  })
+
+  it('resolves contacts.new and contacts.books', () => {
+    expect(t('contacts.new')).toBe('+ New contact')
+    expect(t('contacts.books')).toBe('Address Books')
+    setLang('de')
+    expect(t('contacts.new')).toBe('+ Neuer Kontakt')
+    expect(t('contacts.books')).toBe('Adressbücher')
+  })
+})
