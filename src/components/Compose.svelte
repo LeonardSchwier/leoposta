@@ -4,6 +4,7 @@
   import { onMount } from 'svelte'
   import { addQueuedMessage } from '../lib/offlineQueue'
   import { buildMessageBody, normalizeAccount, type Signature } from '../lib/signature'
+  import { fileToAttachment, type OutboundAttachment, AttachmentTooLargeError } from '../lib/attachments'
 
   let { onClose } = $props()
   
@@ -55,6 +56,14 @@
   let scheduleDate = $state('')
   let scheduleTime = $state('')
   let attachFile: HTMLInputElement | null = null
+  let attachments = $state<OutboundAttachment[]>([])
+  let attachmentError = $state<string | null>(null)
+
+  function formatSize(bytes: number): string {
+    if (bytes < 1024) return `${bytes} B`
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+    return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  }
   
   function addRecipient(input: string) {
     const emails = input.split(/[,;]/).map(e => e.trim()).filter(e => e)
@@ -120,7 +129,7 @@
     
     setIsLoading(true)
     
-    const message = {
+    const message: Record<string, unknown> = {
       to: getState().composeTo,
       cc: getState().composeCc,
       bcc: getState().composeBcc,
@@ -128,6 +137,7 @@
       body: bodyInput,
       scheduled: getState().composeScheduled
     }
+    if (attachments.length) message.attachments = attachments
     
     apiFetch('/api/send', {
       method: 'POST',
@@ -153,7 +163,7 @@
     .catch(async (err: any) => {
       if (!navigator.onLine) {
         try {
-          await addQueuedMessage({
+          const queued: Parameters<typeof addQueuedMessage>[0] = {
             to: getState().composeTo,
             cc: getState().composeCc,
             bcc: getState().composeBcc,
@@ -161,7 +171,9 @@
             body: bodyInput,
             scheduled: getState().composeScheduled,
             createdAt: new Date().toISOString()
-          })
+          }
+          if (attachments.length) queued.attachments = attachments
+          await addQueuedMessage(queued)
           clearCompose()
           setComposing(false)
           onClose()
@@ -185,12 +197,26 @@
     }
   }
   
-  function handleAttach(e: Event) {
+  async function handleAttach(e: Event) {
     const input = e.target as HTMLInputElement
-    if (input.files) {
-      // TODO: Upload attachments
-      console.log('Files to attach:', Array.from(input.files))
+    if (!input.files) return
+    let lastError: string | null = null
+    for (const f of Array.from(input.files)) {
+      try {
+        attachments.push(await fileToAttachment(f))
+      } catch (err) {
+        lastError = err instanceof AttachmentTooLargeError
+          ? err.message
+          : `Could not attach ${f.name}: ${err?.message ?? String(err)}`
+      }
     }
+    attachmentError = lastError
+    // Reset so re-selecting the same file fires change again.
+    input.value = ''
+  }
+
+  function removeAttachment(index: number) {
+    attachments.splice(index, 1)
   }
 
   onMount(() => {
@@ -312,6 +338,17 @@
         onchange={handleAttach}
         hidden
       />
+      <div class="attachment-chips" class:empty={attachments.length === 0}>
+        {#each attachments as att, i (att.filename + i)}
+          <span class="attachment-chip" title="{att.contentType}">
+            <span class="attachment-name">{att.filename}</span>
+            <button class="attachment-remove" onclick={() => removeAttachment(i)} aria-label="Remove {att.filename}">✕</button>
+          </span>
+        {/each}
+      </div>
+      {#if attachmentError}
+        <span class="attachment-error">{attachmentError}</span>
+      {/if}
       <button 
         class="icon-btn" 
         title="Schedule send"
@@ -542,6 +579,67 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    flex-wrap: wrap;
+    flex: 1;
+    min-width: 0;
+  }
+
+  .attachment-chips {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+    max-width: 40ch;
+  }
+
+  .attachment-chips.empty {
+    display: none;
+  }
+
+  .attachment-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 8px;
+    background: var(--color-selected);
+    border: 1px solid var(--color-border);
+    border-radius: 12px;
+    font-size: 12px;
+    color: var(--color-text);
+    max-width: 24ch;
+  }
+
+  .attachment-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .attachment-remove {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 16px;
+    height: 16px;
+    background: transparent;
+    border: none;
+    font-size: 10px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    padding: 0;
+  }
+
+  .attachment-remove:hover {
+    color: var(--color-danger);
+  }
+
+  .attachment-error {
+    color: var(--color-danger);
+    font-size: 12px;
+    max-width: 30ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   
   .icon-btn {

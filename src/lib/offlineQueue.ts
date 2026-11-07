@@ -26,6 +26,8 @@ export interface QueuedMessage {
   body: string
   bodyHtml?: string
   scheduled?: string | null
+  /** Outbound attachments (already base64) for offline-then-flush sends. */
+  attachments?: Array<{ filename: string; content: string; contentType: string }>
   createdAt: string
 }
 
@@ -83,7 +85,8 @@ export async function flushQueue(): Promise<{ sent: number; failed: number }> {
         subject: msg.subject,
         body: msg.body,
         bodyHtml: msg.bodyHtml,
-        scheduled: msg.scheduled
+        scheduled: msg.scheduled,
+        attachments: msg.attachments ?? undefined
       }
       const res = await apiFetch('/api/send', {
         method: 'POST',

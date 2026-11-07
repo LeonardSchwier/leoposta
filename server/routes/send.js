@@ -87,6 +87,14 @@ export async function sendScheduledMessage(msg) {
     html: scrubOutboundHtml(msg.html)
   }
 
+  if (msg.attachments && msg.attachments.length > 0) {
+    messageData.attachments = msg.attachments.map(a => ({
+      filename: a.filename,
+      content: a.content,
+      contentType: a.contentType || 'application/octet-stream'
+    }))
+  }
+
   const transporter = createSmtpTransporter()
   await transporter.sendMail(messageData)
 }

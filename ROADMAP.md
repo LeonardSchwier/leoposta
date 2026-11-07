@@ -35,10 +35,22 @@ update it as each item lands.
 
 ## Next (P1 — in-flight or near-term)
 
-- [ ] **Attachments on compose** — `Compose.svelte:190` `// TODO: Upload
-  attachments`; needs upload endpoint, MIME assembly, preview in inbox
-  (bodyStructure already walked at `server/index.js:339`), download
-  (exists at `server/index.js:1316`).
+- [x] **Attachments on compose** — done 2026-11-07.
+  - `src/lib/attachments.ts`: `encodeBase64` (chunked, browser + Node ≥ 18),
+    `fileToAttachment`, `AttachmentTooLargeError` with `MAX_ATTACHMENT_BYTES`
+    of 25 MiB (~33.3 MB base64, under the 35 MB JSON ceiling on
+    `POST /api/send`).
+  - `Compose.svelte`: file picker drives `attachments` state via
+    `fileToAttachment`, shows chips in the footer with a remove button,
+    sends `{ ..., attachments }` in the JSON body, and persists them into
+    the offline queue when sending fails while offline.
+  - `src/lib/offlineQueue.ts`: `QueuedMessage.attachments` carries the
+    base64 through IndexedDB; `flushQueue` includes it in the retry payload.
+  - `server/routes/send.js`: `sendScheduledMessage` now forwards
+    `msg.attachments` (previously dropped on flush).
+  - Accept (verified 2026-11-07): `npx vitest run` → 45 pass / 0 fail
+    (8 new: attachments); `npm run test:server` → 11 pass (new:
+    "scheduled send with attachments persists the attachments on disk").
 - [ ] **Design-system restyle** — per standing rule (from
   `PROGRESS.md` / `AGENTS.md`): when
   `LeonardSchwier/design-system` (GitHub) lands design tokens + Preact
