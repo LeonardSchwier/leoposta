@@ -54,12 +54,15 @@ update it as each item lands.
   - Accept (verified 2026-11-07): `npx vitest run` → 45 pass / 0 fail
     (8 new: attachments); `npm run test:server` → 11 pass (new:
     "scheduled send with attachments persists the attachments on disk").
-- [ ] **Design-system restyle** — per standing rule (from
-  `PROGRESS.md` / `AGENTS.md`): when
-  `LeonardSchwier/design-system` (GitHub) lands design tokens + Preact
-  components (warm editorial / Nordic themes), rebase leoposta's
-  styling on it. Track the repo's commit count / first usable token
-  release as the trigger.
+- [x] **Design-system restyle** — trigger met 2026-11-06 (see D1, this file).
+  `LeonardSchwier/design-system` is the same repo as
+  `LeonardSchwier/leoforma` (identical git refs; published as
+  `@leonardschwier/leoforma`). v0.2.0 is installed (release-asset
+  tarball, `.npmrc` allow-remote), `src/main.ts` imports `fonts.css` +
+  `tokens.css`, and `src/app.css` maps 26 CSS custom properties onto
+  `--ds-*` tokens. Preact components are NOT adopted: this is a Svelte
+  app and the standing rule below (line 262) says keep Svelte components
+  local and map new colours to `--ds-*` tokens, never to raw hex.
 - [x] **Virtualised list** — done 2026-11-07. Pure windowing helper
   in `src/lib/virtualList.ts` (`computeVirtualRange` + 8 unit tests)
   applied to `MessageList.svelte`; two spacer divs size the window

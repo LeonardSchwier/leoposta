@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import http from 'node:http'
 import * as openpgp from 'openpgp'
 
 // Isolate state: data files go to a temp dir, token is fixed. These env vars
@@ -13,6 +14,26 @@ process.env.LEOPOSTA_TOKEN = TOKEN
 process.env.LEOPOSTA_DATA_DIR = DATA_DIR
 delete process.env.LEOPOSTA_IMAP_PASS
 delete process.env.LEOPOSTA_SMTP_PASS
+
+// Fake DAV upstream: bind a real http server on 127.0.0.1:0, read its port,
+// and point server/lib/dav.js (DAV_HOST / DAV_PORT / DAV_TLS are module-load
+// constants) at it. The fake records the last path + Authorization header it
+// saw, which is what the DAV-account-resolution test asserts on.
+let davLastPath = null
+let davLastAuth = null
+const fakeDav = http.createServer((req, res) => {
+  davLastPath = req.url
+  davLastAuth = req.headers['authorization'] || ''
+  res.writeHead(200, { 'content-type': 'application/xml' })
+  res.end('<?xml version="1.0"?><multistatus xmlns="DAV:"/ >')
+})
+await new Promise((resolve, reject) => {
+  fakeDav.once('error', reject)
+  fakeDav.listen(0, '127.0.0.1', () => resolve())
+})
+process.env.DAV_HOST = '127.0.0.1'
+process.env.DAV_PORT = String(fakeDav.address().port)
+process.env.DAV_TLS = 'false'
 
 const { createApp, processPgp } = await import('./index.js')
 
@@ -29,6 +50,7 @@ before(async () => {
 
 after(async () => {
   await new Promise((resolve) => (server ? server.close(resolve) : resolve()))
+  await new Promise((resolve, reject) => fakeDav.close((e) => e ? reject(e) : resolve()))
   fs.rmSync(DATA_DIR, { recursive: true, force: true })
 })
 
@@ -185,4 +207,45 @@ test('credentials: env passwords override and are never written to account.json'
   } finally {
     delete process.env.LEOPOSTA_IMAP_PASS
   }
+})
+
+test('DAV (calendar + contacts) routes follow the x-account header, not accounts[0]', async () => {
+  // Two distinct accounts; the request names them via x-account. If the
+  // route ignores x-account and uses state.accounts[0], the DAV upstream
+  // will see user-a / a's credentials instead of user-b — that's the RED.
+  const postAcct = (email, imapUser) => fetch(`${base}/api/account`, {
+    method: 'POST',
+    headers: { ...authed, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      email, imapHost: 'localhost', imapUser, imapPass: 'p',
+      smtpHost: 'localhost', smtpUser: imapUser, smtpPass: 'p'
+    })
+  })
+  const a = await postAcct('a@example.com', 'user-a')
+  const b = await postAcct('b@example.com', 'user-b')
+  assert.equal(a.status, 200)
+  assert.equal(b.status, 200)
+  const authA = 'Basic ' + Buffer.from('user-a:p').toString('base64')
+  const authB = 'Basic ' + Buffer.from('user-b:p').toString('base64')
+
+  // Calendar: default (no x-account) → first account
+  davLastPath = null; davLastAuth = null
+  const calDefault = await fetch(`${base}/api/calendar/calendars`, { headers: authed })
+  assert.equal(calDefault.status, 200)
+  assert.match(davLastPath, /\/dav\/user-a/, `default path should be user-a, got ${davLastPath}`)
+  assert.equal(davLastAuth, authA, `default auth should be user-a, got ${davLastAuth}`)
+
+  // Calendar: x-account → second account
+  davLastPath = null; davLastAuth = null
+  const calB = await fetch(`${base}/api/calendar/calendars`, { headers: { ...authed, 'x-account': 'b@example.com' } })
+  assert.equal(calB.status, 200)
+  assert.match(davLastPath, /\/dav\/user-b/, `x-account path should be user-b, got ${davLastPath}`)
+  assert.equal(davLastAuth, authB, `x-account auth should be user-b, got ${davLastAuth}`)
+
+  // CardDAV: x-account → second account
+  davLastPath = null; davLastAuth = null
+  const contactsB = await fetch(`${base}/api/contacts/calendars`, { headers: { ...authed, 'x-account': 'b@example.com' } })
+  assert.equal(contactsB.status, 200)
+  assert.match(davLastPath, /\/dav\/user-b/, `contacts x-account path should be user-b, got ${davLastPath}`)
+  assert.equal(davLastAuth, authB, `contacts x-account auth should be user-b, got ${davLastAuth}`)
 })

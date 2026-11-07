@@ -12,7 +12,7 @@
   import Contacts from './components/Contacts.svelte'
   import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward } from './store'
   import { MailAPI } from './api'
-  import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache } from './lib/offlineQueue'
+  import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
 
   let activeView = $state('inbox')
   let appMode = $state<'mail' | 'calendar' | 'contacts'>('mail')
@@ -390,6 +390,28 @@
         break
     }
   }
+
+  // Reactive: when the user switches the active account in Settings, reset
+  // to that account's INBOX and refetch. The tracker is a plain closure
+  // variable (not $state) so writes inside this block don't re-trigger it —
+  // the block only re-runs when $store.activeAccountId itself changes.
+  // Skips the initial mount (tracker seeded from the same initial null),
+  // so the onMount load below isn't double-fired.
+  let prevAccountId = $store.activeAccountId
+  $effect(() => {
+    const current = $store.activeAccountId
+    if (current === prevAccountId) return
+    const prev = prevAccountId
+    prevAccountId = current
+    if (current == null) return
+    const leavingFolder = getState().activeFolder
+    activeView = 'inbox'
+    searchQuery = ''
+    setActiveFolder('INBOX')
+    if (prev && leavingFolder) clearMessageCache(leavingFolder).catch(() => {})
+    loadFolders()
+    loadMessages('INBOX')
+  })
 
   onMount(() => {
     loadFolders()
