@@ -43,7 +43,7 @@ update it as each item lands.
 
 ## Next (P1 — in-flight or near-term)
 
-- [ ] **Attachments on compose** — `Compose.svelte:153` `// TODO: Upload
+- [ ] **Attachments on compose** — `Compose.svelte:190` `// TODO: Upload
   attachments`; needs upload endpoint, MIME assembly, preview in inbox
   (bodyStructure already walked at `server/index.js:339`), download
   (exists at `server/index.js:1316`).
@@ -56,7 +56,7 @@ update it as each item lands.
 - [ ] **Virtualised list** — `AGENTS.md:147` demands virtualized
   inbox; `MessageList.svelte` renders flat. Use `svelte-virtual` or
   hand-rolled for 100k+ inboxes.
-- [ ] **Offline mail cache** — service worker exists (`sw.js`), but the
+- [ ] **Offline mail cache** — a service worker is generated at build time by `vite-plugin-pwa` (`dist/sw.js`; there is no hand-written `public/sw.js`), but the
   read-cache in `store/index.ts` is per-session; move to IndexedDB
   (`idb-kv` / `dexie`) so the inbox survives reload + offline.
 - [ ] **Filter / rules** — `AGENTS.md:47`; not present. Plan: rule
@@ -66,7 +66,7 @@ update it as each item lands.
 ## Later (P2)
 
 - [x] Public GitHub repo + `MIT LICENSE` + leotheca-style README —
-  in flight in the same session (tracked by `PROGRESS.md`).
+  `LICENSE` (MIT) added in review C2; README rewritten in review C3.
 - [ ] E2E tests (Playwright) — `AGENTS.md:142`.
 - [ ] Mobile / touch refinements — `AGENTS.md:27`.
 - [ ] Calendar + Contacts: already wired to CalDAV/CardDAV via
@@ -156,6 +156,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
   - Problem: there is no `.github/` directory, so nothing runs the tests on push.
   - Steps: create `.github/workflows/ci.yml` triggered on `push` and `pull_request`, one job on `ubuntu-latest`: `actions/checkout@v4`, `actions/setup-node@v4` with `node-version: 22` and `cache: npm`, then `npm ci`, `npm test`, `npm run test:server`, `npx vite build`. Do not add steps that need secrets.
   - Accept: `python3 -c "import yaml;yaml.safe_load(open('.github/workflows/ci.yml'))"` exits 0 and the first hosted run is green (record its run id in the roadmap).
+  - First hosted run: id 42361817038, success (https://github.com/LeonardSchwier/leoposta/actions/runs/42361817038).
 
 - [x] **C2. Add the missing `LICENSE` and fix the project name**
   - Problem: the item "Public GitHub repo + `MIT LICENSE`" below is ticked `[x]`, but no `LICENSE` file is tracked (`git ls-files | grep -i licen` prints nothing). `package.json` is named `evolution-mail` and has no `license` field.
@@ -172,7 +173,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
   - Steps: (1) create `playwright.config.ts` with `webServer` entries starting `node scripts/dummy/imap.js`, `node server/index.js` (with `LEOPOSTA_TOKEN=test-token`) and `npx vite preview --port 3000`, `baseURL: 'http://127.0.0.1:3000'`, `retries: 0`. (2) Create `tests/e2e/mail.spec.ts` with three tests: add the dummy account in Settings; the folder list shows INBOX; opening the first message shows its body text. (3) Add a fixture that fails a test on any `console.error` or `pageerror`. (4) Pin `@playwright/test` to an exact version (now `^1.52.0`). Reference: the sibling project `LeonardSchwier/leotheca` has a working suite in `tests/e2e` with this fixture pattern.
   - Accept: `npx playwright install chromium && npm run test:e2e` exits 0 with 3 passing tests; add `npm run test:e2e` as a CI step after C1.
 
-- [ ] **C5. Roadmap and rules claim things that are not true**
+- [x] **C5. Roadmap and rules claim things that are not true**
   - Problem and fix, one line each (change the text only after the matching item above is done):
     - "Public GitHub repo + `MIT LICENSE`" is ticked but no `LICENSE` file exists (fixed by C2).
     - "`MessageView.svelte:11` add URI-scheme forbid + `rel=noopener` hook" is ticked but the hook never runs (fixed by B3).
