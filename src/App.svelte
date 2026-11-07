@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { get } from 'svelte/store'
   import './app.css'
   import Sidebar from './components/Sidebar.svelte'
   import MessageList from './components/MessageList.svelte'
@@ -13,6 +14,7 @@
   import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward } from './store'
   import { MailAPI } from './api'
   import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
+  import { lang, t, tPl } from './lib/i18n'
 
   let activeView = $state('inbox')
   let appMode = $state<'mail' | 'calendar' | 'contacts'>('mail')
@@ -26,7 +28,8 @@
     showPalette = !showPalette
   }
 
-  // Open the palette in "search" mode (prefilled with 'go to').
+  // Open the palette in "search" mode (prefilled empty so every command
+  // is visible regardless of the active language).
   function openPaletteSearch() {
     if (showPalette) { showPalette = false; return }
     showPalette = true
@@ -35,12 +38,9 @@
       setTimeout(() => {
         const input = document.querySelector<HTMLInputElement>('.palette .palette-input')
         if (input) {
-          input.value = 'go to '
+          input.value = ''
           input.dispatchEvent(new Event('input', { bubbles: true }))
           input.focus()
-          // move caret to end
-          const len = input.value.length
-          input.setSelectionRange(len, len)
         }
       }, 0)
     })
@@ -48,33 +48,40 @@
 
   function viewLabel(view: string): string {
     const map: Record<string, string> = {
-      inbox: 'Inbox', sent: 'Sent', drafts: 'Drafts',
-      trash: 'Trash', archive: 'Archive', flagged: 'Flagged',
-      calendar: 'Calendar', contacts: 'Contacts',
+      inbox: t(get(lang), 'sidebar.inbox'),
+      sent: t(get(lang), 'sidebar.sent'),
+      drafts: t(get(lang), 'sidebar.drafts'),
+      trash: t(get(lang), 'sidebar.trash'),
+      archive: t(get(lang), 'sidebar.archive'),
+      flagged: t(get(lang), 'app.folder.flagged'),
+      calendar: t(get(lang), 'sidebar.calendar'),
+      contacts: t(get(lang), 'sidebar.contacts'),
     }
     return map[view] || view
   }
 
   let paletteCommands = $derived.by((): PaletteCommand[] => {
+    const L = $lang
     const s = getState()
+    const goTo = (name: string) => t(L, 'app.goTo', { folder: name })
     const cmds: PaletteCommand[] = [
-      { id: 'new', label: 'New Message', hint: 'n', icon: '✉', run: () => openCompose() },
-      { id: 'settings', label: 'Open Settings', icon: '⚙', run: () => { showSettings = true } },
-      { id: 'calendar', label: 'Go to Calendar', icon: '📅', run: () => handleFolderSelect('calendar') },
-      { id: 'contacts', label: 'Go to Contacts', icon: '👥', run: () => handleFolderSelect('contacts') },
+      { id: 'new', label: t(L, 'app.newMessage'), hint: 'n', icon: '✉', run: () => openCompose() },
+      { id: 'settings', label: t(L, 'app.openSettings'), icon: '⚙', run: () => { showSettings = true } },
+      { id: 'calendar', label: goTo(viewLabel('calendar')), icon: '📅', run: () => handleFolderSelect('calendar') },
+      { id: 'contacts', label: goTo(viewLabel('contacts')), icon: '👥', run: () => handleFolderSelect('contacts') },
     ]
     const views = ['inbox', 'sent', 'drafts', 'trash', 'archive', 'flagged']
     for (const v of views) {
-      cmds.push({ id: 'folder:' + v, label: 'Go to ' + viewLabel(v), icon: '📁', run: () => handleFolderSelect(v) })
+      cmds.push({ id: 'folder:' + v, label: goTo(viewLabel(v)), icon: '📁', run: () => handleFolderSelect(v) })
     }
     for (const f of s.folders) {
-      cmds.push({ id: 'folder:' + f.id, label: 'Go to ' + (f.name || f.id), icon: '📁', run: () => handleFolderSelect(f.id) })
+      cmds.push({ id: 'folder:' + f.id, label: goTo(f.name || f.id), icon: '📁', run: () => handleFolderSelect(f.id) })
     }
     const selected = s.selectedMessageId
     for (const m of s.messages.slice(0, 40)) {
       cmds.push({
         id: 'msg:' + m.id,
-        label: m.subject || m.from || '(no subject)',
+        label: m.subject || m.from || '—',
         hint: m.from || m.id,
         icon: selected === m.id ? '✓' : '✉',
         run: () => handleSelectMessage(m.id),
@@ -96,8 +103,9 @@
     if (queuedCount > 0) {
       const { sent, failed } = await flushQueue()
       refreshQueueCount()
-      if (sent > 0) showToast(`${sent} queued message${sent > 1 ? 's' : ''} sent`)
-      if (failed > 0) showToast(`${failed} queued message${failed > 1 ? 's' : ''} failed`)
+      const L = get(lang)
+      if (sent > 0) showToast(tPl(L, 'app.send.success', sent))
+      if (failed > 0) showToast(tPl(L, 'app.send.fail', failed))
     }
     // Re-sync the current folder from the server now that we're back.
     if (offlineServing) {
@@ -138,7 +146,7 @@
         setMessages(cached)
         setUnreadCount(0)
         offlineServing = true
-        setError(`Offline — showing ${cached.length} cached message${cached.length === 1 ? '' : 's'}`)
+        setError(tPl(get(lang), 'app.offline.count', cached.length))
       } else {
         setError(e.message)
         offlineServing = false
@@ -163,27 +171,27 @@
   }
 
   function handleNewFolder() {
-    const name = prompt('Folder name:')
+    const name = prompt(t(get(lang), 'app.prompt.folderName'))
     if (name?.trim()) {
       MailAPI.addFolder(name.trim()).then(() => loadFolders()).catch(e => setError(e.message))
     }
   }
 
   function handleNewSubFolder(parentId: string) {
-    const name = prompt(`New subfolder under "${parentId}":`)
+    const name = prompt(t(get(lang), 'app.prompt.subfolder', { parentId }))
     if (name?.trim()) {
       MailAPI.addFolder(name.trim(), parentId).then(() => loadFolders()).catch(e => setError(e.message))
     }
   }
 
   function handleRenameFolder(folder: any) {
-    const newPath = prompt(`Rename folder "${folder.name || folder.id}" (new full IMAP path):`, folder.id)
+    const newPath = prompt(t(get(lang), 'app.prompt.rename', { name: folder.name || folder.id }), folder.id)
     if (!newPath?.trim() || newPath.trim() === folder.id) return
     MailAPI.renameFolder(folder.id, newPath.trim()).then(() => loadFolders()).catch(e => setError(e.message))
   }
 
   function handleDeleteFolder(folder: any) {
-    if (!confirm(`Delete folder "${folder.name || folder.id}" and all its messages?`)) return
+    if (!confirm(t(get(lang), 'app.confirm.deleteFolder', { name: folder.name || folder.id }))) return
     MailAPI.deleteFolder(folder.id).then(() => loadFolders()).catch(e => setError(e.message))
   }
 
@@ -380,7 +388,7 @@
       }
       case '?':
         e.preventDefault()
-        showToast('? palette · n new · Ctrl+Enter send · r reply · a archive · d delete · s star · / search · Esc close', 6000)
+        showToast(t(get(lang), 'app.shortcuts.help'), 6000)
         break
       case 'Escape':
         e.preventDefault()
@@ -483,7 +491,7 @@
   {/if}
 
   {#if queuedCount > 0 && !navigator.onLine}
-    <div class="queue-badge">{queuedCount} queued · will send when online</div>
+    <div class="queue-badge">{tPl($lang, 'app.queue.badge', queuedCount)}</div>
   {/if}
 </div>
 

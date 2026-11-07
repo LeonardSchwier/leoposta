@@ -179,7 +179,26 @@ export const de = {
   'sidebar.trash': 'Papierkorb',
   'sidebar.menu.subfolder': 'Neuer Unterordner',
   'sidebar.menu.rename': 'Umbenennen',
-  'sidebar.menu.delete': 'Ordner löschen'
+  'sidebar.menu.delete': 'Ordner löschen',
+
+  // App root (task 11)
+  'app.newMessage': 'Neue Nachricht',
+  'app.openSettings': 'Einstellungen öffnen',
+  'app.goTo': 'Gehe zu {folder}',
+  'app.folder.flagged': 'Markiert',
+  'app.send.success.one': '{n} wartende Nachricht gesendet',
+  'app.send.success.other': '{n} wartende Nachrichten gesendet',
+  'app.send.fail.one': '{n} wartende Nachricht fehlgeschlagen',
+  'app.send.fail.other': '{n} wartende Nachrichten fehlgeschlagen',
+  'app.offline.count.one': 'Offline — zeige {n} gecachte Nachricht',
+  'app.offline.count.other': 'Offline — zeige {n} gecachte Nachrichten',
+  'app.prompt.folderName': 'Ordnername:',
+  'app.prompt.subfolder': 'Neuer Unterordner unter "{parentId}":',
+  'app.prompt.rename': 'Ordner "{name}" umbenennen (neuer vollständiger IMAP-Pfad):',
+  'app.confirm.deleteFolder': 'Ordner "{name}" und alle seine Nachrichten löschen?',
+  'app.shortcuts.help': '? Palette · n neu · Ctrl+Enter senden · r antworten · a archivieren · d löschen · s kennzeichnen · / suchen · Esc schließen',
+  'app.queue.badge.one': '{n} in Warteschlange · wird gesendet, sobald online',
+  'app.queue.badge.other': '{n} in Warteschlange · wird gesendet, sobald online'
 } as const
 
 export default de

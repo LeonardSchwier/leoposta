@@ -181,7 +181,26 @@ export const en = {
   'sidebar.trash': 'Trash',
   'sidebar.menu.subfolder': 'New Subfolder',
   'sidebar.menu.rename': 'Rename',
-  'sidebar.menu.delete': 'Delete Folder'
+  'sidebar.menu.delete': 'Delete Folder',
+
+  // App root (task 11)
+  'app.newMessage': 'New Message',
+  'app.openSettings': 'Open Settings',
+  'app.goTo': 'Go to {folder}',
+  'app.folder.flagged': 'Flagged',
+  'app.send.success.one': '{n} queued message sent',
+  'app.send.success.other': '{n} queued messages sent',
+  'app.send.fail.one': '{n} queued message failed',
+  'app.send.fail.other': '{n} queued messages failed',
+  'app.offline.count.one': 'Offline — showing {n} cached message',
+  'app.offline.count.other': 'Offline — showing {n} cached messages',
+  'app.prompt.folderName': 'Folder name:',
+  'app.prompt.subfolder': 'New subfolder under "{parentId}":',
+  'app.prompt.rename': 'Rename folder "{name}" (new full IMAP path):',
+  'app.confirm.deleteFolder': 'Delete folder "{name}" and all its messages?',
+  'app.shortcuts.help': '? palette · n new · Ctrl+Enter send · r reply · a archive · d delete · s star · / search · Esc close',
+  'app.queue.badge.one': '{n} queued · will send when online',
+  'app.queue.badge.other': '{n} queued · will send when online'
 } as const
 
 export default en
