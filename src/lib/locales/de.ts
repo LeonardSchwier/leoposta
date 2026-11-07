@@ -161,7 +161,25 @@ export const de = {
   'palette.empty': 'Keine Treffer',
   'palette.footer.nav': '↑↓ navigieren',
   'palette.footer.run': '↵ ausführen',
-  'palette.footer.close': 'esc schließen'
+  'palette.footer.close': 'esc schließen',
+
+  // Sidebar
+  'sidebar.compose': 'Schreiben',
+  'sidebar.apps': 'Apps',
+  'sidebar.mailboxes': 'Postfächer',
+  'sidebar.folders': 'Ordner',
+  'sidebar.settings': 'Einstellungen',
+  'sidebar.calendar': 'Kalender',
+  'sidebar.contacts': 'Kontakte',
+  'sidebar.inbox': 'Posteingang',
+  'sidebar.sent': 'Gesendet',
+  'sidebar.drafts': 'Entwürfe',
+  'sidebar.archive': 'Archiv',
+  'sidebar.junk': 'Spam',
+  'sidebar.trash': 'Papierkorb',
+  'sidebar.menu.subfolder': 'Neuer Unterordner',
+  'sidebar.menu.rename': 'Umbenennen',
+  'sidebar.menu.delete': 'Ordner löschen'
 } as const
 
 export default de

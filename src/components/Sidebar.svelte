@@ -1,6 +1,8 @@
 <script lang="ts">
   import { store } from '../store'
   import ContextMenu from './ContextMenu.svelte'
+  import { get } from 'svelte/store'
+  import { lang, t } from '../lib/i18n'
 
   let {
     onFolderSelect,
@@ -26,11 +28,12 @@
   function closeMenu() { menuFolder = null }
 
   function folderItems(folder: any): MenuItem[] {
+    const L = get(lang)
     return [
-      { label: 'New Subfolder', icon: '➕', action: () => onNewSubFolder?.(folder.id) },
-      { label: 'Rename', icon: '✎', action: () => onRenameFolder?.(folder) },
+      { label: t(L, 'sidebar.menu.subfolder'), icon: '➕', action: () => onNewSubFolder?.(folder.id) },
+      { label: t(L, 'sidebar.menu.rename'), icon: '✎', action: () => onRenameFolder?.(folder) },
       { divider: true, label: '', action: undefined },
-      { label: 'Delete Folder', icon: '🗑', danger: true, action: () => onDeleteFolder?.(folder) },
+      { label: t(L, 'sidebar.menu.delete'), icon: '🗑', danger: true, action: () => onDeleteFolder?.(folder) },
     ]
   }
   
@@ -40,20 +43,27 @@
   }
   const unreadCount = $derived($store.messages.filter(m => isUnread(m)).length)
   
-  // Build folder tree
-  const specialFolders = $derived([
-    { id: 'INBOX', name: 'Inbox', icon: '📥' },
-    { id: 'Sent', name: 'Sent', icon: '📤' },
-    { id: 'Drafts', name: 'Drafts', icon: '📝' },
-    { id: 'Archive', name: 'Archive', icon: '📦' },
-    { id: 'Junk', name: 'Junk', icon: '🚫' },
-    { id: 'Trash', name: 'Trash', icon: '🗑️' },
-  ])
+  // Build folder tree — $derived tracks the `get(lang)` read so the
+  // sidebar re-renders whenever the user switches language.
+  const specialFolders = $derived.by(() => {
+    const L = get(lang)
+    return [
+      { id: 'INBOX', name: t(L, 'sidebar.inbox'), icon: '📥' },
+      { id: 'Sent', name: t(L, 'sidebar.sent'), icon: '📤' },
+      { id: 'Drafts', name: t(L, 'sidebar.drafts'), icon: '📝' },
+      { id: 'Archive', name: t(L, 'sidebar.archive'), icon: '📦' },
+      { id: 'Junk', name: t(L, 'sidebar.junk'), icon: '🚫' },
+      { id: 'Trash', name: t(L, 'sidebar.trash'), icon: '🗑️' },
+    ]
+  })
 
-  const appItems = $derived([
-    { id: 'calendar', name: 'Calendar', icon: '📅' },
-    { id: 'contacts', name: 'Contacts', icon: '👥' },
-  ])
+  const appItems = $derived.by(() => {
+    const L = get(lang)
+    return [
+      { id: 'calendar', name: t(L, 'sidebar.calendar'), icon: '📅' },
+      { id: 'contacts', name: t(L, 'sidebar.contacts'), icon: '👥' },
+    ]
+  })
   const activeId = $derived((activeViewProp as string) || '')
   function isAppActive(id: string) { return activeId === id }
   
@@ -102,12 +112,12 @@
     <h1 class="logo">Leoposta</h1>
     <button class="compose-btn" onclick={onCompose}>
       <span class="compose-icon">✎</span>
-      <span>Compose</span>
+      <span>{t($lang, 'sidebar.compose')}</span>
     </button>
   </div>
   
   <nav class="folder-list">
-    <div class="section-label">Apps</div>
+    <div class="section-label">{t($lang, 'sidebar.apps')}</div>
     {#each appItems as app (app.id)}
       <button
         class="folder-item"
@@ -119,7 +129,7 @@
       </button>
     {/each}
 
-    <div class="section-label">Mailboxes</div>
+    <div class="section-label">{t($lang, 'sidebar.mailboxes')}</div>
     {#each specialFolders as folder (folder.id)}
       <button 
         class="folder-item"
@@ -135,7 +145,7 @@
     {/each}
     
     {#if topLevelFolders.length > 0}
-      <div class="section-label" oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); onNewFolder?.() }}>Folders</div>
+      <div class="section-label" oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); onNewFolder?.() }}>{t($lang, 'sidebar.folders')}</div>
       {#each topLevelFolders as folder (folder.id)}
         {@const children = getChildren(folder.id)}
         {@const hasChildren = children.length > 0}
@@ -199,7 +209,7 @@
   <div class="sidebar-footer">
     <button class="settings-btn" onclick={onSettings}>
       <span>⚙️</span>
-      <span>Settings</span>
+      <span>{t($lang, 'sidebar.settings')}</span>
     </button>
   </div>
 
