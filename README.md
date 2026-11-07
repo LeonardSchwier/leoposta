@@ -53,6 +53,20 @@ npm run build
 npm run preview
 ```
 
+## Credentials
+
+What is stored where (all files live in `server/`, are git-ignored and written with mode 0600):
+
+| File | Contents |
+|------|----------|
+| `account.json` | Account settings including the IMAP and SMTP passwords in plain text (unless supplied by environment, see below) |
+| `scheduled.json` | Queued scheduled mails: recipients, bodies, attachments |
+| `pgp_private.asc` | Your PGP private key (stays passphrase protected if it was imported that way) |
+
+The PGP passphrase is never stored; unlock the key at runtime with `POST /api/pgp/unlock` (kept in memory for 15 minutes). An old `pgp_passphrase.txt` is ignored; delete it.
+
+To keep passwords out of `account.json`, set `LEOPOSTA_IMAP_PASS` and/or `LEOPOSTA_SMTP_PASS` in the server environment. They override the file value and are never written back.
+
 ## API authentication
 
 Every `/api` route except `GET /api/health` requires the header
