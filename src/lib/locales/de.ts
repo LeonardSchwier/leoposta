@@ -125,22 +125,22 @@ export const de = {
 
   // Calendar
   'calendar.title': 'Kalender',
-  'calendar.new': '+ Neues Ereignis',
+  'calendar.new': '+ Neuer Termin',
   'calendar.empty': 'Keine Kalender gefunden.',
   'calendar.import': '.ics importieren',
   'calendar.retry': 'Erneut versuchen',
   'calendar.more': '+{n} weitere',
   'calendar.unnamed': '(ohne Titel)',
-  'calendar.updated': 'Ereignis aktualisiert',
-  'calendar.created': 'Ereignis angelegt',
-  'calendar.deletedToast': 'Ereignis gelöscht',
-  'calendar.imported': '{n} Ereignis(se) importiert',
+  'calendar.updated': 'Termin aktualisiert',
+  'calendar.created': 'Termin angelegt',
+  'calendar.deletedToast': 'Termin gelöscht',
+  'calendar.imported': '{n} Termin(e) importiert',
   'calendar.requirement': 'Gib einen Titel oder eine Beschreibung ein',
-  'calendar.delete.confirm': 'Dieses Ereignis löschen?',
-  'calendar.editor.titleNew': 'Neues Ereignis',
-  'calendar.editor.titleEdit': 'Ereignis bearbeiten',
+  'calendar.delete.confirm': 'Diesen Termin löschen?',
+  'calendar.editor.titleNew': 'Neuer Termin',
+  'calendar.editor.titleEdit': 'Termin bearbeiten',
   'calendar.editor.summary': 'Titel',
-  'calendar.editor.summaryPh': 'Titel des Ereignisses',
+  'calendar.editor.summaryPh': 'Titel des Termins',
   'calendar.editor.allDay': 'Ganztägig',
   'calendar.editor.start': 'Beginn',
   'calendar.editor.end': 'Ende',
@@ -153,7 +153,15 @@ export const de = {
   'calendar.editor.create': 'Anlegen',
   'calendar.nav.prev': 'Vorheriger Monat',
   'calendar.nav.next': 'Nächster Monat',
-  'calendar.nav.today': 'Heute'
+  'calendar.nav.today': 'Heute',
+
+  // Command palette
+  'palette.label': 'Befehlspalette',
+  'palette.placeholder': 'Befehl eingeben…',
+  'palette.empty': 'Keine Treffer',
+  'palette.footer.nav': '↑↓ navigieren',
+  'palette.footer.run': '↵ ausführen',
+  'palette.footer.close': 'esc schließen'
 } as const
 
 export default de

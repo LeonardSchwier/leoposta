@@ -155,7 +155,15 @@ export const en = {
   'calendar.editor.create': 'Create',
   'calendar.nav.prev': 'Previous month',
   'calendar.nav.next': 'Next month',
-  'calendar.nav.today': 'Today'
+  'calendar.nav.today': 'Today',
+
+  // Command palette
+  'palette.label': 'Command palette',
+  'palette.placeholder': 'Type a command…',
+  'palette.empty': 'No matches',
+  'palette.footer.nav': '↑↓ navigate',
+  'palette.footer.run': '↵ run',
+  'palette.footer.close': 'esc close'
 } as const
 
 export default en

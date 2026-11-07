@@ -370,8 +370,8 @@ describe('Calendar locale keys (task 7)', () => {
     expect(t('calendar.editor.allDay')).toBe('All-day')
     expect(t('calendar.editor.save')).toBe('Save changes')
     setLang('de')
-    expect(t('calendar.editor.titleNew')).toBe('Neues Ereignis')
-    expect(t('calendar.editor.titleEdit')).toBe('Ereignis bearbeiten')
+    expect(t('calendar.editor.titleNew')).toBe('Neuer Termin')
+    expect(t('calendar.editor.titleEdit')).toBe('Termin bearbeiten')
     expect(t('calendar.editor.allDay')).toBe('Ganztägig')
     expect(t('calendar.editor.save')).toBe('Änderungen speichern')
   })
@@ -379,14 +379,14 @@ describe('Calendar locale keys (task 7)', () => {
   it('resolves calendar.delete.confirm', () => {
     expect(t('calendar.delete.confirm')).toBe('Delete this event?')
     setLang('de')
-    expect(t('calendar.delete.confirm')).toBe('Dieses Ereignis löschen?')
+    expect(t('calendar.delete.confirm')).toBe('Diesen Termin löschen?')
   })
 
   it('substitutes {n} in calendar.imported', () => {
     setLang('en')
     expect(t('calendar.imported', { n: 3 })).toBe('Imported 3 event(s)')
     setLang('de')
-    expect(t('calendar.imported', { n: 3 })).toBe('3 Ereignis(se) importiert')
+    expect(t('calendar.imported', { n: 3 })).toBe('3 Termin(e) importiert')
   })
 
   it('substitutes {n} in calendar.more', () => {
@@ -394,5 +394,27 @@ describe('Calendar locale keys (task 7)', () => {
     expect(t('calendar.more', { n: 4 })).toBe('+4 more')
     setLang('de')
     expect(t('calendar.more', { n: 4 })).toBe('+4 weitere')
+  })
+})
+
+describe('Command palette locale keys (task 8)', () => {
+  it('resolves palette.placeholder + palette.empty', () => {
+    setLang('en')
+    expect(t('palette.placeholder')).toBe('Type a command…')
+    expect(t('palette.empty')).toBe('No matches')
+    setLang('de')
+    expect(t('palette.placeholder')).toBe('Befehl eingeben…')
+    expect(t('palette.empty')).toBe('Keine Treffer')
+  })
+
+  it('resolves palette.footer.* navigation hints', () => {
+    setLang('en')
+    expect(t('palette.footer.nav')).toBe('↑↓ navigate')
+    expect(t('palette.footer.run')).toBe('↵ run')
+    expect(t('palette.footer.close')).toBe('esc close')
+    setLang('de')
+    expect(t('palette.footer.nav')).toBe('↑↓ navigieren')
+    expect(t('palette.footer.run')).toBe('↵ ausführen')
+    expect(t('palette.footer.close')).toBe('esc schließen')
   })
 })
