@@ -463,3 +463,77 @@ describe('Sidebar locale keys (task 9)', () => {
     expect(t('sidebar.menu.delete')).toBe('Ordner löschen')
   })
 })
+
+describe('App root locale keys (task 11)', () => {
+  it('resolves the app.* palette labels in en and de', () => {
+    setLang('en')
+    expect(t('app.newMessage')).toBe('New Message')
+    expect(t('app.openSettings')).toBe('Open Settings')
+    setLang('de')
+    expect(t('app.newMessage')).toBe('Neue Nachricht')
+    expect(t('app.openSettings')).toBe('Einstellungen öffnen')
+  })
+
+  it('substitutes {folder} in app.goTo', () => {
+    setLang('en')
+    expect(t('app.goTo', { folder: 'Inbox' })).toBe('Go to Inbox')
+    setLang('de')
+    expect(t('app.goTo', { folder: 'Posteingang' })).toBe('Gehe zu Posteingang')
+  })
+
+  it('resolves app.folder.flagged for the flagged mailbox label', () => {
+    setLang('en')
+    expect(t('app.folder.flagged')).toBe('Flagged')
+    setLang('de')
+    expect(t('app.folder.flagged')).toBe('Markiert')
+  })
+
+  it('picks the sent/fail plural forms correctly', () => {
+    setLang('en')
+    expect(tPl('app.send.success', 1)).toBe('1 queued message sent')
+    expect(tPl('app.send.success', 3)).toBe('3 queued messages sent')
+    expect(tPl('app.send.fail', 2)).toBe('2 queued messages failed')
+    setLang('de')
+    expect(tPl('de', 'app.send.success', 1)).toBe('1 wartende Nachricht gesendet')
+    expect(tPl('de', 'app.send.success', 3)).toBe('3 wartende Nachrichten gesendet')
+    expect(tPl('de', 'app.send.fail', 2)).toBe('2 wartende Nachrichten fehlgeschlagen')
+  })
+
+  it('picks the offline count plural forms correctly', () => {
+    setLang('en')
+    expect(tPl('en', 'app.offline.count', 1)).toBe('Offline — showing 1 cached message')
+    expect(tPl('en', 'app.offline.count', 4)).toBe('Offline — showing 4 cached messages')
+    setLang('de')
+    expect(tPl('de', 'app.offline.count', 1)).toBe('Offline — zeige 1 gecachte Nachricht')
+    expect(tPl('de', 'app.offline.count', 4)).toBe('Offline — zeige 4 gecachte Nachrichten')
+  })
+
+  it('resolves folder prompts and the delete confirm', () => {
+    setLang('en')
+    expect(t('app.prompt.folderName')).toBe('Folder name:')
+    expect(t('app.prompt.subfolder', { parentId: 'Inbox' })).toBe('New subfolder under "Inbox":')
+    expect(t('app.prompt.rename', { name: 'INBOX' })).toBe('Rename folder "INBOX" (new full IMAP path):')
+    expect(t('app.confirm.deleteFolder', { name: 'Archive' })).toBe('Delete folder "Archive" and all its messages?')
+    setLang('de')
+    expect(t('app.prompt.folderName')).toBe('Ordnername:')
+    expect(t('app.prompt.subfolder', { parentId: 'Posteingang' })).toBe('Neuer Unterordner unter "Posteingang":')
+    expect(t('app.prompt.rename', { name: 'INBOX' })).toBe('Ordner "INBOX" umbenennen (neuer vollständiger IMAP-Pfad):')
+    expect(t('app.confirm.deleteFolder', { name: 'Archiv' })).toBe('Ordner "Archiv" und alle seine Nachrichten löschen?')
+  })
+
+  it('resolves the shortcuts-help toast hint', () => {
+    setLang('en')
+    expect(t('app.shortcuts.help')).toContain('palette')
+    setLang('de')
+    expect(t('app.shortcuts.help')).toContain('Palette')
+  })
+
+  it('picks the queue-badge plural forms correctly', () => {
+    setLang('en')
+    expect(tPl('en', 'app.queue.badge', 1)).toBe('1 queued · will send when online')
+    expect(tPl('en', 'app.queue.badge', 5)).toBe('5 queued · will send when online')
+    setLang('de')
+    expect(tPl('de', 'app.queue.badge', 1)).toBe('1 in Warteschlange · wird gesendet, sobald online')
+    expect(tPl('de', 'app.queue.badge', 5)).toBe('5 in Warteschlange · wird gesendet, sobald online')
+  })
+})
