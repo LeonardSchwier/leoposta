@@ -61,9 +61,29 @@ update it as each item lands.
   in `src/lib/virtualList.ts` (`computeVirtualRange` + 8 unit tests)
   applied to `MessageList.svelte`; two spacer divs size the window
   above/below the rendered slice.
-- [ ] **Offline mail cache** — a service worker is generated at build time by `vite-plugin-pwa` (`dist/sw.js`; there is no hand-written `public/sw.js`), but the
-  read-cache in `store/index.ts` is per-session; move to IndexedDB
-  (`idb-kv` / `dexie`) so the inbox survives reload + offline.
+- [x] **Offline mail cache** — done 2026-11-07.
+  - `src/lib/offlineQueue.ts`: new `messages` object store (keyed
+    `folder:id`) alongside the existing `outbox` store. API:
+    `putMessageCache`, `getMessageCache`, `cacheFolderList` (upsert +
+    prune stale rows for the folder), `cachedMessagesForFolder`,
+    `clearMessageCache(folder?)`, `cacheKey`.
+  - `src/App.svelte`:
+    - `loadMessages` writes the fetched list to the cache on success and
+      **falls back to `cachedMessagesForFolder`** on API failure,
+      setting an `offlineServing` flag + an "Offline — showing N cached
+      message(s)" banner.
+    - `handleSelectMessage` caches the full message on success and
+      **restores it from the cache** when the API is unreachable (only
+      for messages previously opened, which is the meaningful case).
+    - `handleOnline` re-synchronises the active folder when
+      `offlineServing` is set.
+  - New dependency: `fake-indexeddb@6.2.7` (dev, Apache-2.0) for the
+    cache unit tests.
+  - `src/__tests__/offlineCache.test.ts` (8 tests): key format,
+    full-message round-trip, list upsert, pruning of stale rows,
+    per-folder scoping, single-folder clear, full clear.
+  - Accept (verified 2026-11-07): `npx vitest run` → 61 pass / 0 fail
+    (8 new); `npx tsc --noEmit` clean; `npx vite build` clean.
 - [x] **Filter / rules** — done 2026-11-07.
   - `server/lib/rules.js` (`matchRule` + `applyRules`, 18 tests):
     pure rule engine — `when` (list of

@@ -18,20 +18,28 @@ Work through remaining open ROADMAP items independently, commit + push each, unt
   "scheduled send with attachments persists the attachments on disk" (79126f1)
 - Virtualised list: `src/lib/virtualList.ts` (pure `computeVirtualRange` +
   8 unit tests), `MessageList.svelte` renders only the visible slice between
-  two spacers; row height fixed at 64px (mobile actions moved to context menu).
+  two spacers; row height fixed at 64px (mobile actions moved to context menu)
+- Filter / rules (P1): `server/lib/rules.js` (matchRule/applyRules, 18 tests),
+  rules persisted to `rules.json`, `GET/PUT /api/rules`, applied in mail.js
+  list + search; `src/lib/rules.ts` types; `Settings.svelte` Rules tab
+  (add/remove conditions + actions) (538c0d9)
+- Offline mail cache (P1): `offlineQueue.ts` `messages` store (folder:id key),
+  cache-aside in `App.svelte` (list fallback on API failure + full-message
+  restore + resync on reconnect); `fake-indexeddb@6.2.7` dev dep;
+  `src/__tests__/offlineCache.test.ts` (8 tests)
 
 ## Active
-- (idle — all currently picked-up items complete; next: pick one from ROADMAP below)
+- Multi-account support (P0 — next)
 
 ## Blocked
 - (none)
 
 ## Remaining backlog (in order)
 1. Multi-account support (P0 — cross-cutting; needs its own session)
-2. Filter / rules (P1)
+2. ~~Filter / rules (P1)~~ — done 538c0d9
 3. ~~Virtualised list (P1)~~ — done 261ac09
 4. Design-system restyle (P1, gated on `LeonardSchwier/design-system` repo)
-5. Offline mail cache (P1)
+5. ~~Offline mail cache (P1)~~ — done (this batch)
 6. Mobile / touch refinements (P2)
 7. Calendar + Contacts polish (P2)
 8. i18n (P2)
