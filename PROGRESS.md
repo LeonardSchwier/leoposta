@@ -15,7 +15,10 @@ Work through remaining open ROADMAP items independently, commit + push each, unt
   send payload, offline queue); `offlineQueue.ts` carries `attachments` through
   IndexedDB; fixed `sendScheduledMessage()` to forward `msg.attachments` (was a
   latent bug — scheduled sends with attachments lost them). New server test
-  "scheduled send with attachments persists the attachments on disk".
+  "scheduled send with attachments persists the attachments on disk" (79126f1)
+- Virtualised list: `src/lib/virtualList.ts` (pure `computeVirtualRange` +
+  8 unit tests), `MessageList.svelte` renders only the visible slice between
+  two spacers; row height fixed at 64px (mobile actions moved to context menu).
 
 ## Active
 - (idle — all currently picked-up items complete; next: pick one from ROADMAP below)

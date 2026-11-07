@@ -57,9 +57,10 @@ update it as each item lands.
   components (warm editorial / Nordic themes), rebase leoposta's
   styling on it. Track the repo's commit count / first usable token
   release as the trigger.
-- [ ] **Virtualised list** — `AGENTS.md:147` demands virtualized
-  inbox; `MessageList.svelte` renders flat. Use `svelte-virtual` or
-  hand-rolled for 100k+ inboxes.
+- [x] **Virtualised list** — done 2026-11-07. Pure windowing helper
+  in `src/lib/virtualList.ts` (`computeVirtualRange` + 8 unit tests)
+  applied to `MessageList.svelte`; two spacer divs size the window
+  above/below the rendered slice.
 - [ ] **Offline mail cache** — a service worker is generated at build time by `vite-plugin-pwa` (`dist/sw.js`; there is no hand-written `public/sw.js`), but the
   read-cache in `store/index.ts` is per-session; move to IndexedDB
   (`idb-kv` / `dexie`) so the inbox survives reload + offline.
