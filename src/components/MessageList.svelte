@@ -1,8 +1,33 @@
 <script lang="ts">
   import { store, getState, selectMessage, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, updateMessage, setComposeCc } from '../store'
   import ContextMenu from './ContextMenu.svelte'
+  import { computeVirtualRange } from '../lib/virtualList'
 
   let { onCompose, onSelectMessage, onDelete, onArchive, onStar, onSearch, searchQuery = '', isLoading = false, error = null } = $props()
+
+  // Virtualisation: pure math lives in lib/virtualList.ts (unit-tested).
+  // The math assumes a constant row height — enforced in the .message-row
+  // CSS (height: 64px, overflow: hidden). ROW_HEIGHT is the single source
+  // of truth passed to the pure helper.
+  const ROW_HEIGHT = 64
+  let scrollEl: HTMLDivElement | undefined = $state()
+  let scrollState = $state({ scrollTop: 0, viewportHeight: 400 })
+  function measureScroll() { scrollState = { scrollTop: scrollEl?.scrollTop ?? 0, viewportHeight: scrollEl?.clientHeight ?? 400 } }
+  $effect(() => {
+    measureScroll()
+    const el = scrollEl
+    if (!el) return
+    const ro = new ResizeObserver(measureScroll)
+    ro.observe(el)
+    el.addEventListener('scroll', measureScroll, { passive: true })
+    return () => {
+      ro.disconnect()
+      el.removeEventListener('scroll', measureScroll)
+    }
+  })
+  const messages = $derived($store.messages)
+  const virtual = $derived(computeVirtualRange({ totalItems: messages.length, viewportHeight: scrollState.viewportHeight, scrollTop: scrollState.scrollTop, itemHeight: ROW_HEIGHT }))
+  const slice = $derived(messages.slice(virtual.startIndex, virtual.endIndex))
 
   type MenuItem = { label: string; icon?: string; action?: () => void; danger?: boolean; divider?: boolean }
   let menuPos = $state({ x: 0, y: 0 })
@@ -45,7 +70,7 @@
     return [
       { label: 'Reply', icon: '↩', action: () => handleReply(message) },
       { label: 'Reply All', icon: '↩↩', action: () => handleReplyAll(message) },
-      { label: 'Forward', icon: '↪', action: () => handleForward(message) },
+      { label: 'Forward', icon: '⪡', action: () => handleForward(message) },
       { label: 'Archive', icon: '⬇', action: () => onArchive?.() },
       { divider: true, label: '', action: undefined },
       { label: 'Delete', icon: '✕', danger: true, action: () => onDelete?.() },
@@ -139,8 +164,9 @@
       <h3>{searchQuery ? 'No results' : 'No messages'}</h3>
     </div>
   {:else}
-    <div class="message-list" role="listbox" aria-label="Messages" tabindex="-1">
-      {#each $store.messages as message (message.id)}
+    <div class="message-list" role="listbox" aria-label="Messages" tabindex="-1" bind:this={scrollEl}>
+      <div class="virtual-spacer" style={`height:${virtual.paddingTop}px`}></div>
+      {#each slice as message (message.id)}
         <div
           class="message-row"
           class:unread={!isRead(message)}
@@ -170,12 +196,13 @@
           </div>
           <div class="message-actions" onclick={(e) => e.stopPropagation()}>
             <button class="msg-btn" title="Reply" onclick={() => handleReply(message)}>↩</button>
-            <button class="msg-btn" title="Forward" onclick={() => handleForward(message)}>↪</button>
+            <button class="msg-btn" title="Forward" onclick={() => handleForward(message)}>⪡</button>
             <button class="msg-btn" title="Archive" onclick={() => onArchive?.()}>⬇</button>
             <button class="msg-btn danger" title="Delete" onclick={() => onDelete?.()}>✕</button>
           </div>
         </div>
       {/each}
+      <div class="virtual-spacer" style={`height:${virtual.paddingBottom}px`}></div>
     </div>
   {/if}
 
@@ -311,8 +338,14 @@
   .message-list {
     flex: 1;
     overflow-y: auto;
+    position: relative;
   }
-  
+
+  .virtual-spacer {
+    width: 100%;
+    flex-shrink: 0;
+  }
+
   .message-row {
     display: flex;
     align-items: flex-start;
@@ -322,6 +355,9 @@
     cursor: pointer;
     transition: background 0.08s;
     position: relative;
+    height: 64px;
+    overflow: hidden;
+    box-sizing: border-box;
   }
   
   .message-row:hover {
@@ -340,7 +376,7 @@
   .message-star {
     width: 22px;
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     justify-content: center;
     flex-shrink: 0;
     padding-top: 1px;
@@ -370,6 +406,7 @@
     display: flex;
     flex-direction: column;
     gap: 1px;
+    overflow: hidden;
   }
   
   .message-top {
@@ -455,18 +492,11 @@
   
   @media (max-width: 768px) {
     .message-row {
-      flex-wrap: wrap;
       padding: 6px 10px;
+      height: 64px;
     }
     .message-actions {
-      position: static;
-      display: flex;
-      width: 100%;
-      justify-content: flex-end;
-      margin-top: 3px;
-      background: none;
-      padding: 0;
-      box-shadow: none;
+      display: none;
     }
     .search-box {
       max-width: 120px;
