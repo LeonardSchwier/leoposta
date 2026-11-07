@@ -1,7 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { get } from 'svelte/store'
   import { CalendarAPI } from '../api'
   import { eventToICS, parseICSBlocks } from '../lib/vcf'
+  import { lang, t, tPl, type Lang } from '../lib/i18n'
 
   let { showToast } = $props()
 
@@ -14,8 +16,23 @@
   let loading = $state(false)
   let busy = $state(false)
   let err = $state('')
-  let monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December']
-  let weekdayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+
+  // Locale-aware date labels. We map the i18n Lang to a full BCP-47 tag
+  // and let the browser pick the right month/weekday glyphs — far fewer
+  // translation strings to maintain, and it respects regional variants.
+  function localeTag(L: Lang): string { return L === 'de' ? 'de-DE' : 'en-US' }
+  function monthYearLabel(L: Lang, d: Date): string {
+    return d.toLocaleDateString(localeTag(L), { month: 'long', year: 'numeric' })
+  }
+  // Monday-first short weekday names (Jan 2024 starts on a Monday)
+  function weekdayShorts(L: Lang): string[] {
+    const tag = localeTag(L)
+    const out: string[] = []
+    for (let i = 1; i <= 7; i++) {
+      out.push(new Date(2024, 0, i).toLocaleDateString(tag, { weekday: 'short' }))
+    }
+    return out
+  }
 
   // Editor form fields
   let showEditor = $state(false)
@@ -116,7 +133,7 @@
 
   async function saveEvent() {
     if (!currentCal) return
-    if (!fSummary.trim() && !fDescription.trim()) { showToast('Add a title or description'); return }
+    if (!fSummary.trim() && !fDescription.trim()) { showToast(t(get(lang), 'calendar.requirement')); return }
     try {
       busy = true
       const uid = editingUid || ('leoposta_' + Date.now())
@@ -132,19 +149,19 @@
       await CalendarAPI.saveEvent(currentCal.uri, ics, editingUid || undefined)
       showEditor = false
       await loadEvents()
-      showToast(editingUid ? 'Event updated' : 'Event created')
+      showToast(editingUid ? t(get(lang), 'calendar.updated') : t(get(lang), 'calendar.created'))
     } catch (e: any) { showToast(e.message, 5000) } finally { busy = false }
   }
 
   async function deleteEvent(uid: string) {
     if (!currentCal) return
-    if (!confirm('Delete this event?')) return
+    if (!confirm(t(get(lang), 'calendar.delete.confirm'))) return
     try {
       busy = true
       await CalendarAPI.deleteEvent(currentCal.uri, uid)
       selectedUid = null
       await loadEvents()
-      showToast('Event deleted')
+      showToast(t(get(lang), 'calendar.deletedToast'))
     } catch (e: any) { showToast(e.message, 5000) } finally { busy = false }
   }
 
@@ -158,7 +175,7 @@
         busy = true
         await CalendarAPI.importICS(currentCal.uri, ics)
         await loadEvents()
-        showToast(`Imported ${Math.max(blocks.length, 1)} event(s)`);
+        showToast(t(get(lang), 'calendar.imported', { n: Math.max(blocks.length, 1) }));
       } catch (e: any) { showToast(e.message, 5000) } finally { busy = false }
     }
     reader.readAsText(file)
@@ -192,8 +209,8 @@
 <section class="calendar">
   <aside class="cal-side">
     <div class="cal-side-head">
-      <h2>Calendars</h2>
-      <button class="add-evt" onclick={() => openCreate()}>+ New event</button>
+      <h2>{t($lang, 'calendar.title')}</h2>
+      <button class="add-evt" onclick={() => openCreate()}>{t($lang, 'calendar.new')}</button>
     </div>
     <div class="cal-list">
       {#each calendars as cal (cal.uri)}
@@ -202,11 +219,11 @@
           <span class="cal-name">{cal.name}</span>
         </button>
       {/each}
-      {#if calendars.length === 0}<p class="empty">No calendars found.</p>{/if}
+      {#if calendars.length === 0}<p class="empty">{t($lang, 'calendar.empty')}</p>{/if}
     </div>
     <div class="cal-import">
       <label class="import-btn">
-        Import .ics
+        {t($lang, 'calendar.import')}
         <input type="file" accept=".ics,text/calendar" onchange={importIcsInput} disabled={busy} />
       </label>
     </div>
@@ -215,22 +232,22 @@
   <div class="cal-main">
     <header class="cal-top">
       <div class="cal-nav">
-        <button onclick={() => shiftMonth(-1)}>‹</button>
-        <button onclick={goToday}>Today</button>
-        <button onclick={() => shiftMonth(1)}>›</button>
-        <h3>{monthNames[viewDate.getMonth()]} {viewDate.getFullYear()}</h3>
+        <button title={t($lang, 'calendar.nav.prev')} onclick={() => shiftMonth(-1)}>‹</button>
+        <button onclick={goToday}>{t($lang, 'calendar.nav.today')}</button>
+        <button title={t($lang, 'calendar.nav.next')} onclick={() => shiftMonth(1)}>›</button>
+        <h3>{monthYearLabel($lang, viewDate)}</h3>
       </div>
     </header>
 
     {#if err}
       <div class="cal-err">
         <span>{err}</span>
-        <button onclick={loadEvents}>Retry</button>
+        <button onclick={loadEvents}>{t($lang, 'calendar.retry')}</button>
       </div>
     {/if}
 
     <div class="weekdays">
-      {#each weekdayNames as wd, i}<div class="wd">{wd}</div>{/each}
+      {#each weekdayShorts($lang) as wd, i}<div class="wd">{wd}</div>{/each}
     </div>
 
     <div class="grid" role="grid">
@@ -254,10 +271,10 @@
                   onclick={(e) => { e.stopPropagation(); selectedUid = ev.uid; if (!showEditor) openEdit(ev) }}
                   oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); deleteEvent(ev.uid) }}
                 >
-                  {ev.summary || '(untitled)'}
+                  {ev.summary || t($lang, 'calendar.unnamed')}
                 </button>
               {/each}
-              {#if dayEvents.length > 3}<span class="more">+{dayEvents.length - 3} more</span>{/if}
+              {#if dayEvents.length > 3}<span class="more">{t($lang, 'calendar.more', { n: dayEvents.length - 3 })}</span>{/if}
             </div>
           {/if}
         </div>
@@ -268,29 +285,29 @@
   {#if showEditor}
     <div class="modal-back" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }} role="dialog">
       <div class="modal">
-        <h4>{editingUid ? 'Edit event' : 'New event'}</h4>
+        <h4>{editingUid ? t($lang, 'calendar.editor.titleEdit') : t($lang, 'calendar.editor.titleNew')}</h4>
         <label>
-          <span>Title</span>
-          <input type="text" bind:value={fSummary} placeholder="Event title" />
+          <span>{t($lang, 'calendar.editor.summary')}</span>
+          <input type="text" bind:value={fSummary} placeholder={t($lang, 'calendar.editor.summaryPh')} />
         </label>
         <label class="chk">
-          <input type="checkbox" bind:checked={fAllDay} /> <span>All-day</span>
+          <input type="checkbox" bind:checked={fAllDay} /> <span>{t($lang, 'calendar.editor.allDay')}</span>
         </label>
         <div class="row">
-          <label><span>Start</span><input type="date" bind:value={fStart} /></label>
-          {#if !fAllDay}<label><span>Time</span><input type="time" bind:value={fTime} /></label>{/if}
+          <label><span>{t($lang, 'calendar.editor.start')}</span><input type="date" bind:value={fStart} /></label>
+          {#if !fAllDay}<label><span>{t($lang, 'calendar.editor.time')}</span><input type="time" bind:value={fTime} /></label>{/if}
         </div>
         <div class="row">
-          <label><span>End</span><input type="date" bind:value={fEnd} /></label>
-          {#if !fAllDay}<label><span>Time</span><input type="time" bind:value={fEndTime} placeholder={fTime || '10:00'} /></label>{/if}
+          <label><span>{t($lang, 'calendar.editor.end')}</span><input type="date" bind:value={fEnd} /></label>
+          {#if !fAllDay}<label><span>{t($lang, 'calendar.editor.time')}</span><input type="time" bind:value={fEndTime} placeholder={fTime || '10:00'} /></label>{/if}
         </div>
-        <label><span>Location</span><input type="text" bind:value={fLocation} /></label>
-        <label><span>Description</span><textarea bind:value={fDescription} rows="3"></textarea></label>
+        <label><span>{t($lang, 'calendar.editor.location')}</span><input type="text" bind:value={fLocation} /></label>
+        <label><span>{t($lang, 'calendar.editor.description')}</span><textarea bind:value={fDescription} rows="3"></textarea></label>
         <div class="actions">
-          {#if editingUid}<button class="danger" onclick={() => { showEditor = false; deleteEvent(editingUid!) }}>Delete</button>{/if}
+          {#if editingUid}<button class="danger" onclick={() => { showEditor = false; deleteEvent(editingUid!) }}>{t($lang, 'calendar.editor.delete')}</button>{/if}
           <span class="spacer"></span>
-          <button class="ghost" onclick={() => showEditor = false}>Cancel</button>
-          <button class="primary" onclick={saveEvent} disabled={busy}>{editingUid ? 'Save changes' : 'Create'}</button>
+          <button class="ghost" onclick={() => showEditor = false}>{t($lang, 'calendar.editor.cancel')}</button>
+          <button class="primary" onclick={saveEvent} disabled={busy}>{editingUid ? t($lang, 'calendar.editor.save') : t($lang, 'calendar.editor.create')}</button>
         </div>
       </div>
     </div>

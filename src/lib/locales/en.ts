@@ -122,7 +122,40 @@ export const en = {
   'contacts.editor.delete': 'Delete',
   'contacts.editor.cancel': 'Cancel',
   'contacts.editor.save': 'Save changes',
-  'contacts.editor.create': 'Create'
+  'contacts.editor.create': 'Create',
+
+  // Calendar
+  'calendar.title': 'Calendars',
+  'calendar.new': '+ New event',
+  'calendar.empty': 'No calendars found.',
+  'calendar.import': 'Import .ics',
+  'calendar.retry': 'Retry',
+  'calendar.more': '+{n} more',
+  'calendar.unnamed': '(untitled)',
+  'calendar.updated': 'Event updated',
+  'calendar.created': 'Event created',
+  'calendar.deleted': 'Event deleted',
+  'calendar.deletedToast': 'Event deleted',
+  'calendar.imported': 'Imported {n} event(s)',
+  'calendar.requirement': 'Add a title or description',
+  'calendar.delete.confirm': 'Delete this event?',
+  'calendar.editor.titleNew': 'New event',
+  'calendar.editor.titleEdit': 'Edit event',
+  'calendar.editor.summary': 'Title',
+  'calendar.editor.summaryPh': 'Event title',
+  'calendar.editor.allDay': 'All-day',
+  'calendar.editor.start': 'Start',
+  'calendar.editor.end': 'End',
+  'calendar.editor.time': 'Time',
+  'calendar.editor.location': 'Location',
+  'calendar.editor.description': 'Description',
+  'calendar.editor.delete': 'Delete',
+  'calendar.editor.cancel': 'Cancel',
+  'calendar.editor.save': 'Save changes',
+  'calendar.editor.create': 'Create',
+  'calendar.nav.prev': 'Previous month',
+  'calendar.nav.next': 'Next month',
+  'calendar.nav.today': 'Today'
 } as const
 
 export default en
