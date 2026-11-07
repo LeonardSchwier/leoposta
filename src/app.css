@@ -1,55 +1,41 @@
 @import "tailwindcss";
 
 :root {
-  --font-sans: "Inter", "Sofia Sans", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --color-bg: #faf9f6;
-  --color-bg-secondary: #f1efe9;
-  --color-text: #232323;
-  --color-text-secondary: #71706a;
-  --color-accent: #3f5f56;
-  --color-accent-hover: #334f48;
-  --color-accent-soft: rgba(63, 95, 86, 0.1);
-  --color-border: #e2dfd6;
-  --color-sidebar: #f1efe9;
-  --color-selected: #e7ece8;
-  --color-hover: rgba(35, 35, 35, 0.04);
-  --color-unread: #232323;
-  --color-read: #71706a;
-  --color-star: #b6883a;
-  --color-danger: #a1433a;
-  --danger-bg: rgba(161, 67, 58, 0.1);
-  --color-success: #4e7c5b;
+  --font-sans: var(--ds-font-sans);
+  --color-bg: var(--ds-color-canvas);
+  --color-bg-secondary: var(--ds-color-panel);
+  --color-text: var(--ds-color-text);
+  --color-text-secondary: var(--ds-color-text-secondary);
+  --color-accent: var(--ds-color-accent);
+  --color-accent-hover: var(--ds-color-accent-hover);
+  --color-accent-soft: var(--ds-color-accent-soft);
+  --accent-soft: var(--ds-color-accent-soft);
+  --color-surface: var(--ds-color-raised);
+  --color-border: var(--ds-color-border);
+  --color-sidebar: var(--ds-color-panel);
+  --color-selected: var(--ds-color-selected);
+  --color-hover: var(--ds-color-hover);
+  --color-unread: var(--ds-color-text);
+  --color-read: var(--ds-color-text-secondary);
+  --color-star: var(--ds-color-ornament);
+  --color-danger: var(--ds-color-danger);
+  --danger-bg: color-mix(in srgb, var(--ds-color-danger) 12%, transparent);
+  --color-success: var(--ds-color-success);
   --code-bg: #1c1b18;
   --code-fg: #d9d5cb;
-  --shadow-sm: 0 1px 2px rgba(35, 35, 35, 0.04);
-  --shadow-md: 0 2px 8px rgba(35, 35, 35, 0.06);
-  --shadow-lg: 0 8px 28px rgba(35, 35, 35, 0.08);
-  --radius-sm: 6px;
+  --shadow-sm: var(--ds-shadow-low);
+  --shadow-md: var(--ds-shadow-low);
+  --shadow-lg: var(--ds-shadow-high);
+  --radius-sm: var(--ds-radius-md);
   --radius-md: 8px;
-  --radius-lg: 10px;
-  --transition: 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  --radius-lg: var(--ds-radius-lg);
+  --transition: var(--ds-motion-popover) var(--ds-easing-standard);
 }
-
-.dark {
-  --color-bg: #191917;
-  --color-bg-secondary: #201f1c;
-  --color-text: #e7e5e0;
-  --color-text-secondary: #9b988f;
-  --color-accent: #6f9186;
-  --color-accent-hover: #7ea096;
-  --color-accent-soft: rgba(111, 145, 134, 0.14);
-  --color-border: #302f2a;
-  --color-sidebar: #191917;
-  --color-selected: #2b2a25;
-  --color-hover: rgba(247, 245, 240, 0.05);
-  --color-unread: #e7e5e0;
-  --color-read: #9b988f;
-  --color-star: #c99a4c;
-  --color-danger: #b9645a;
-  --danger-bg: rgba(185, 100, 90, 0.14);
-  --color-success: #6f9178;
-  --code-bg: #0c0c0b;
-  --code-fg: #b7b4aa;
+@media (prefers-color-scheme: dark) {
+  :root {
+    --code-bg: #0c0c0b;
+    --code-fg: #b7b4aa;
+  }
 }
 
 * {

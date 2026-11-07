@@ -188,7 +188,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
 
 ### Review D. Design system
 
-- [ ] **D1. Adopt the Leoforma tokens (the "deferred" condition is met)**
+- [x] **D1. Adopt the Leoforma tokens (the "deferred" condition is met)**
   - Problem: the Standing rules below defer design-system work until a token set is published. `github.com/LeonardSchwier/leoforma` has published tag `v0.1.1` with `tokens.css`, `fonts.css` and `tokens.json`. Its components are Preact, so they do NOT run in this Svelte app: use tokens and fonts only; keep the Svelte components local.
   - Steps: (1) copy the install form from `LeonardSchwier/leotheca` `package.json` (a codeload tarball URL for `refs/tags/v0.1.1` with the integrity hash in `package-lock.json`); do not use a `github:` dependency, its `prepare` step builds on install and breaks offline builds. (2) In `src/main.ts` add `import '@leonardschwier/leoforma/fonts.css'` and `import '@leonardschwier/leoforma/tokens.css'`. (3) In `src/app.css` map each existing CSS custom property to the matching `--ds-*` token (list them with `grep -o "\-\-ds-[a-z0-9-]*" node_modules/@leonardschwier/leoforma/dist/tokens.css | sort -u`). (4) Keep dark mode working. (5) Update the Standing rule to say tokens are adopted and components are not.
   - Accept: `npx vite build` passes; `npm test` passes; a screenshot comparison in light and dark shows the same layout.
@@ -206,5 +206,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
 - Never commit secrets; credentials live in untracked
   `server/account.json` + `server/scheduled.json` (already in
   `.gitignore` — keep there).
-- Design-system work is **deferred** until the upstream repo publishes
-  its first usable token set; do not re-style leoposta on speculation.
+- Design tokens and fonts come from the public package `@leonardschwier/leoforma`
+  (release 0.2.0, installed from its release asset, `.npmrc` allows that one
+  remote dependency). Its Preact components are NOT used here; keep the Svelte
+  components local and map new colours to `--ds-*` tokens, never to raw hex.
