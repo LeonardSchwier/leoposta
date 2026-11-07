@@ -132,6 +132,40 @@ test('PGP: passphrase never persisted; locked until unlocked; wrong passphrase 4
   assert.equal(fs.existsSync(path.join(DATA_DIR, 'pgp_passphrase.txt')), false)
 })
 
+test('scheduled send with attachments persists the attachments on disk', async () => {
+  await fetch(`${base}/api/account`, {
+    method: 'POST',
+    headers: { ...authed, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      email: 'a@example.com', imapHost: 'localhost', imapUser: 'a', imapPass: 'p',
+      smtpHost: 'localhost', smtpUser: 'a', smtpPass: 'p'
+    })
+  })
+  const b64 = Buffer.from('payload-bytes').toString('base64')
+  const res = await fetch(`${base}/api/send`, {
+    method: 'POST',
+    headers: { ...authed, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      to: ['r@example.com'],
+      subject: 's',
+      body: 'b',
+      scheduled: new Date(Date.now() + 3600 * 1000).toISOString(),
+      attachments: [{ filename: 'note.txt', content: b64, contentType: 'text/plain' }]
+    })
+  })
+  const data = await res.json()
+  assert.equal(data.success, true)
+  assert.equal(data.scheduled, true)
+  const raw = fs.readFileSync(path.join(DATA_DIR, 'scheduled.json'), 'utf-8')
+  const parsed = JSON.parse(raw)
+  const last = parsed[parsed.length - 1]
+  assert.ok(Array.isArray(last.attachments), 'attachments persisted to scheduled.json')
+  assert.equal(last.attachments.length, 1)
+  assert.equal(last.attachments[0].filename, 'note.txt')
+  assert.equal(last.attachments[0].content, b64)
+  assert.equal(last.attachments[0].contentType, 'text/plain')
+})
+
 test('credentials: env passwords override and are never written to account.json', async () => {
   process.env.LEOPOSTA_IMAP_PASS = 'envsecret-imap'
   try {
