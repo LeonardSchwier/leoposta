@@ -66,7 +66,31 @@ export const de = {
   'list.actions.forward': 'Weiterleiten',
   'list.actions.archive': 'Archivieren',
   'list.actions.delete': 'Löschen',
-  'list.date.yesterday': 'Gestern'
+  'list.date.yesterday': 'Gestern',
+
+  // MessageView
+  'view.noSubject': '(kein Betreff)',
+  'view.from': 'Von',
+  'view.to': 'An',
+  'view.star': 'Markieren',
+  'view.reply': 'Antworten',
+  'view.forward': 'Weiterleiten',
+  'view.archive': 'Archivieren',
+  'view.delete': 'Löschen',
+  'view.pgp.decrypted': 'Verschlüsselte Nachricht — <b>entziffert</b> unten',
+  'view.pgp.locked': 'Verschlüsselte Nachricht — <b>entziffern nicht möglich</b>',
+  'view.pgp.signature.verified': '✓ Signatur gültig',
+  'view.pgp.signature.invalid': '✕ Signatur ungültig',
+  'view.pgp.signature.unverified': 'signiert (nicht verifiziert)',
+  'view.pgp.defaultErr': 'Kein OpenPGP-Privatschlüssel hinterlegt.',
+  'view.pgp.settingsHint': 'Hinterlege deinen Privatschlüssel in <b>Einstellungen → PGP</b> und öffne die Nachricht erneut.',
+  'view.pgp.armored': 'Rohes gerüstetes Nachrichtenformat',
+  'view.remoteBlocked': 'Entfernte Bilder blockiert',
+  'view.loadImages': 'Bilder laden',
+  'view.emptyBody': 'Diese Nachricht hat keine sichtbaren Inhalte. Sie ist vielleicht PGP-verschlüsselt oder leer.',
+  'view.attachments.one': '📎 {n} Anhang',
+  'view.attachments.other': '📎 {n} Anhänge',
+  'view.selectMessage': 'Wähle eine Nachricht zur Anzeige'
 } as const
 
 export default de

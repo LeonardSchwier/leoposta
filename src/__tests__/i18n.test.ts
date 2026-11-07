@@ -294,3 +294,40 @@ describe('MessageList locale keys (task 4)', () => {
     expect(t('list.empty.search')).toBe('Keine Ergebnisse')
   })
 })
+
+describe('MessageView locale keys (task 5)', () => {
+  it('resolves view.reply / view.forward / view.delete in en and de', () => {
+    setLang('en')
+    expect(t('view.reply')).toBe('Reply')
+    expect(t('view.forward')).toBe('Forward')
+    expect(t('view.delete')).toBe('Delete')
+    setLang('de')
+    expect(t('view.reply')).toBe('Antworten')
+    expect(t('view.forward')).toBe('Weiterleiten')
+    expect(t('view.delete')).toBe('Löschen')
+  })
+
+  it('renders view.attachments plural forms correctly', () => {
+    setLang('en')
+    expect(tPl('view.attachments', 1)).toBe('📎 1 attachment')
+    expect(tPl('view.attachments', 3)).toBe('📎 3 attachments')
+    setLang('de')
+    expect(tPl('view.attachments', 1)).toBe('📎 1 Anhang')
+    expect(tPl('view.attachments', 3)).toBe('📎 3 Anhänge')
+  })
+
+  it('resolves view.remoteBlocked and view.loadImages', () => {
+    setLang('en')
+    expect(t('view.remoteBlocked')).toBe('Remote images blocked')
+    expect(t('view.loadImages')).toBe('Load images')
+    setLang('de')
+    expect(t('view.remoteBlocked')).toBe('Entfernte Bilder blockiert')
+    expect(t('view.loadImages')).toBe('Bilder laden')
+  })
+
+  it('resolves view.selectMessage (empty state)', () => {
+    expect(t('view.selectMessage')).toBe('Select a message to view')
+    setLang('de')
+    expect(t('view.selectMessage')).toBe('Wähle eine Nachricht zur Anzeige')
+  })
+})

@@ -67,7 +67,31 @@ export const en = {
   'list.actions.forward': 'Forward',
   'list.actions.archive': 'Archive',
   'list.actions.delete': 'Delete',
-  'list.date.yesterday': 'Yesterday'
+  'list.date.yesterday': 'Yesterday',
+
+  // MessageView
+  'view.noSubject': '(no subject)',
+  'view.from': 'From',
+  'view.to': 'To',
+  'view.star': 'Star',
+  'view.reply': 'Reply',
+  'view.forward': 'Forward',
+  'view.archive': 'Archive',
+  'view.delete': 'Delete',
+  'view.pgp.decrypted': 'Encrypted message — <b>decrypted</b> below',
+  'view.pgp.locked': 'Encrypted message — <b>cannot decrypt</b>',
+  'view.pgp.signature.verified': '✓ signature verified',
+  'view.pgp.signature.invalid': '✕ signature invalid',
+  'view.pgp.signature.unverified': 'signed (not verified)',
+  'view.pgp.defaultErr': 'OpenPGP private key not configured.',
+  'view.pgp.settingsHint': 'Add your private key in <b>Settings → PGP</b> and reopen this message.',
+  'view.pgp.armored': 'Raw armored message',
+  'view.remoteBlocked': 'Remote images blocked',
+  'view.loadImages': 'Load images',
+  'view.emptyBody': 'This message has no visible content. It may be PGP-encrypted or empty.',
+  'view.attachments.one': '📎 {n} attachment',
+  'view.attachments.other': '📎 {n} attachments',
+  'view.selectMessage': 'Select a message to view'
 } as const
 
 export default en
