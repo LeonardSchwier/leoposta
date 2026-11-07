@@ -69,3 +69,28 @@ test('?token= works only for idle and attachment GETs', async () => {
   const att = await fetch(`${base}/api/message/1/attachment/2?token=${TOKEN}`)
   assert.notEqual(att.status, 401)
 })
+
+test('body limits: 2 MB JSON to /api/account gives 413, 1 KB does not', async () => {
+  const big = await fetch(`${base}/api/account`, {
+    method: 'POST',
+    headers: { ...authed, 'content-type': 'application/json' },
+    body: JSON.stringify({ pad: 'x'.repeat(2 * 1024 * 1024) })
+  })
+  assert.equal(big.status, 413)
+  assert.deepEqual(await big.json(), { error: 'too_large' })
+  const small = await fetch(`${base}/api/account`, {
+    method: 'POST',
+    headers: { ...authed, 'content-type': 'application/json' },
+    body: JSON.stringify({ pad: 'x'.repeat(1024) })
+  })
+  assert.notEqual(small.status, 413)
+})
+
+test('/api/send accepts bodies larger than the 1 MB default', async () => {
+  const res = await fetch(`${base}/api/send`, {
+    method: 'POST',
+    headers: { ...authed, 'content-type': 'application/json' },
+    body: JSON.stringify({ pad: 'x'.repeat(2 * 1024 * 1024) })
+  })
+  assert.notEqual(res.status, 413)
+})
