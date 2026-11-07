@@ -42,6 +42,9 @@ pgp_passphrase.txt
 # stray bundle-backend run artifacts
 scripts/src-tauri/
 
+# Superpowers scratch workspace (ledgers, briefs) — per-plan
+.superpowers/
+
 # Git worktrees
 .worktrees/
 .e2e-data/

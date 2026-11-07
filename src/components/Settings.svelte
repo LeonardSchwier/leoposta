@@ -6,6 +6,7 @@
   import type { MailAccount } from '../store'
   import { RULE_FIELDS, RULE_OPERATORS, RULE_ACTIONS } from '../lib/rules'
   import type { Rule } from '../lib/rules'
+  import { lang, setLang, t } from '../lib/i18n'
 
   let { onClose } = $props()
   const accounts = $derived($store.accounts)
@@ -56,7 +57,7 @@
   let pgpMsg = $state('')
   let pgpErr = $state('')
 
-  let activeTab = $state<'account' | 'rules'>('account')
+  let activeTab = $state<'account' | 'rules' | 'language'>('account')
 
   // ---- Rules ----
   let rules: Rule[] = $state([])
@@ -210,13 +211,14 @@
 <div class="settings-overlay" onclick={onClose}>
   <div class="settings-modal" onclick={(e) => e.stopPropagation()}>
     <div class="modal-header">
-      <h2>Settings</h2>
-      <button class="close-btn" onclick={onClose}>✕</button>
+      <h2>{t($lang, 'settings.title')}</h2>
+      <button class="close-btn" aria-label={t($lang, 'settings.close')} onclick={onClose}>✕</button>
     </div>
 
-    <div class="settings-tabs">
-      <button class={activeTab === 'account' ? 'tab active' : 'tab'} onclick={() => activeTab = 'account'}>Account</button>
-      <button class={activeTab === 'rules' ? 'tab active' : 'tab'} onclick={() => activeTab = 'rules'}>Rules</button>
+    <div class="settings-tabs" role="tablist">
+      <button role="tab" aria-selected={activeTab === 'account'} class={activeTab === 'account' ? 'tab active' : 'tab'} onclick={() => activeTab = 'account'}>Account</button>
+      <button role="tab" aria-selected={activeTab === 'rules'} class={activeTab === 'rules' ? 'tab active' : 'tab'} onclick={() => activeTab = 'rules'}>Rules</button>
+      <button role="tab" aria-selected={activeTab === 'language'} class={activeTab === 'language' ? 'tab active' : 'tab'} onclick={() => activeTab = 'language'}>{t($lang, 'settings.tab.language')}</button>
     </div>
     
     <div class="modal-body">
@@ -413,6 +415,27 @@
         <button class="btn-secondary" onclick={handlePgpDelete}>Remove</button>
       </div>
       {/if}
+
+      {#if activeTab === 'language'}
+        <h3>{t($lang, 'settings.language.heading')}</h3>
+        <div class="lang-group">
+          <label class="lang-opt">
+            <input type="radio" name="leoposta-lang"
+                   checked={$lang === 'en'}
+                   onchange={() => setLang('en')} />
+            {t($lang, 'settings.language.option.en')}
+          </label>
+          <label class="lang-opt">
+            <input type="radio" name="leoposta-lang"
+                   checked={$lang === 'de'}
+                   onchange={() => setLang('de')} />
+            {t($lang, 'settings.language.option.de')}
+          </label>
+        </div>
+        <p class="hint">
+          {t($lang, 'settings.language.hint')}
+        </p>
+      {/if}
     </div>
 
     <div class="modal-footer">
@@ -425,7 +448,7 @@
         </div>
       {:else}
         <div class="footer-right">
-          <button class="btn-secondary" onclick={onClose}>Close</button>
+          <button class="btn-secondary" onclick={onClose}>{t($lang, 'settings.close')}</button>
         </div>
       {/if}
     </div>
@@ -874,5 +897,37 @@
   .acct-actions-row {
     display: flex;
     justify-content: flex-start;
+  }
+
+  .lang-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 12px 0 16px;
+  }
+
+  .lang-opt {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    color: var(--color-text);
+    cursor: pointer;
+    transition: border-color var(--transition), background var(--transition);
+  }
+
+  .lang-opt:hover {
+    border-color: var(--color-accent);
+    background: rgba(52, 120, 246, 0.04);
+  }
+
+  .lang-opt input[type="radio"] {
+    width: 16px;
+    height: 16px;
+    accent-color: var(--color-accent);
+    margin: 0;
   }
 </style>
