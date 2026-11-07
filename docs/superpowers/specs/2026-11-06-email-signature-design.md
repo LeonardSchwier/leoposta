@@ -7,7 +7,7 @@
 ## Intent / why
 
 Leoposta is a mail client; real users expect a signature under their
-outgoing mail, Apple-Mail style, editable from Settings, applied both to
+ outgoing mail, in the usual native-mail style, editable from Settings, applied both to
 new compose and to replies. It is currently listed as P0 in ROADMAP.md.
 Storing it **per account** (not as a global localStorage key) is a firm
 user decision: multi-account is the next P0 item, and this shape drops in
@@ -20,7 +20,7 @@ without a migration.
   user types above).
 - On **reply** / **forward**, placed per the user's `position` setting:
   - `standard` — user's reply, signature, blank line, `--` separator,
-    quoted original. (Apple Mail default.)
+     quoted original. (Default in most mail clients.)
   - `after_quote` — user's reply, blank line, `--` separator, quoted
     original, blank line, signature at the very bottom.
 - Optional. Empty text or `enabled: false` ⇒ no signature inserted, not
@@ -75,7 +75,7 @@ without a migration.
 
 | Value | Layout | Use case |
 |-------|--------|----------|
-| `standard` (default) | your reply text, then the signature, a blank line, the `--` separator, the quoted original. Apple Mail / Outlook / Gmail default. | 95 % of users |
+ | `standard` (default) | your reply text, then the signature, a blank line, the `--` separator, the quoted original. Outlook / Gmail and most native clients default to this. | 95 % of users |
 | `after_quote` | your reply text, a blank line, the `--` separator, the quoted original, a blank line, then the signature. | users who want the sign-off at the very bottom of the message, after the quote |
 
 Unambiguous ASCII view:

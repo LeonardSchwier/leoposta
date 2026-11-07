@@ -261,7 +261,7 @@
 
   function handleKeydown(e: KeyboardEvent) {
     const key = e.key.toLowerCase()
-    // Command palette: Ctrl/Cmd+K. Works even while typing (like Apple's).
+    // Command palette: Ctrl/Cmd+K. Works even while typing.
     if ((e.ctrlKey || e.metaKey) && key === 'k') {
       e.preventDefault()
       togglePalette()

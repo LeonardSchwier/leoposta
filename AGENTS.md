@@ -1,7 +1,8 @@
-# Leoposta — Apple-Mail-inspired web/desktop mail client
+# Leoposta — web/desktop mail client with a clean, native-mail UX
 
 ## Mission
-Build a complete, standalone web-based mail client with Apple Mail UX.
+Build a complete, standalone web-based mail client with a clean, familiar
+native-mail UX.
 It must work offline (PWA), support IMAP/SMTP, and include all mail features.
 
 ## Roadmap (source of truth for open work)
@@ -68,7 +69,7 @@ Currently open (P0):
 
 ## Tech Stack
 - **Frontend:** Svelte 5 + TypeScript (or React 18 + TypeScript — your choice)
-- **Styling:** Tailwind CSS v4 (Apple-inspired: clean, minimal, SF Pro-like font stack)
+- **Styling:** Tailwind CSS v4 (clean, minimal, system-sans font stack)
 - **State:** Zustand (or Redux Toolkit)
 - **IMAP:** imapflow (Node.js IMAP client) running as a backend service
 - **SMTP:** nodemailer for sending
@@ -78,16 +79,16 @@ Currently open (P0):
 - **Build:** Vite 6
 - **Testing:** Vitest + Playwright (E2E)
 
-## Apple Mail UX Requirements
+## Native-mail UX Requirements
 - **Sidebar:** Clean folder list with icons, collapsible, subtle hover states
 - **Message List:** Two-column (list + preview), smooth animations, swipe actions
 - **Compose:** Clean modal/sheet, rich text editor (contenteditable or ProseMirror)
 - **Search:** Command palette (Cmd+K) for searching mail, folders, contacts
-- **Dark Mode:** System-aware, Apple-style dark palette
+- **Dark Mode:** System-aware dark palette
 - **Typography:** -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif
 - **Animations:** 200ms ease-in-out transitions, no jarring jumps
 - **Touch:** Swipe to archive/delete, long-press for context menu
-- **Keyboard:** Full keyboard navigation, shortcuts in Apple Mail style
+- **Keyboard:** Full keyboard navigation, standard mail-client shortcuts
 
 ## Feature Checklist (COMPLETE — build ALL)
 ### Core
@@ -111,7 +112,7 @@ Currently open (P0):
 - [ ] Contact extraction from mail, address book
 - [ ] Autocomplete for To/CC/BCC from contacts
 - [ ] Signature support
-- [ ] Keyboard shortcuts (Apple Mail style)
+- [ ] Keyboard shortcuts (standard mail-client style)
 
 ### Offline (PWA)
 - [ ] Service Worker with precaching
@@ -226,11 +227,12 @@ npm run lint         # ESLint + Prettier
 ## Important
 - This is a STANDALONE app — no external dependencies except npm
 - Offline-first: app must be fully usable without network (for reading cached mail)
-- Apple Mail UX: clean, minimal, fast, intuitive
+- Native-mail UX: clean, minimal, fast, intuitive
 - Security: no plaintext passwords, TLS everywhere, sanitized HTML
 - Performance: virtualized list for large inboxes, lazy loading
 - Accessibility: ARIA labels, screen reader support, keyboard nav
 
 ## REA (Reverse Engineering) Integration
-Use REA to analyze GNOME Evolution's architecture and Apple Mail's UX patterns.
+Use REA to analyze GNOME Evolution's architecture and the UX patterns of
+native desktop mail clients.
 REA is configured as an MCP server in OpenCode's config.

@@ -1,11 +1,11 @@
 # Evolution Mail
 
-A modern, web-based mail client with Apple Mail-inspired UX.
+A modern, web-based mail client with a clean, familiar native-mail UX.
 
 ## Features
 
 - 📧 **IMAP/SMTP** - Connect to any mail provider
-- 🎨 **Apple Mail UX** - Clean, familiar interface
+- 🎨 **Polished UX** - Clean, familiar interface
 - 📱 **PWA** - Installable on mobile and desktop
 - 🕐 **Scheduled Send** - Queue emails for later delivery
 - 📎 **Attachments** - Full attachment support
