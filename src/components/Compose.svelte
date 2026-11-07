@@ -245,7 +245,7 @@
       <label class="field-label">To</label>
       <div class="recipient-input" class:focused={toInput}>
         {#each $store.composeTo as email (email)}
-          <span class="chip">{email} <button onclick={() => removeRecipient(email)}>✕</button></span>
+          <span class="chip">{email} <button aria-label={`Remove ${email}`} onclick={() => removeRecipient(email)}>✕</button></span>
         {/each}
         <input 
           type="text"
@@ -328,7 +328,7 @@
   
   <div class="compose-footer">
     <div class="footer-left">
-      <button class="icon-btn" title="Attach file" onclick={() => attachFile?.click()}>
+      <button class="icon-btn" title="Attach file" aria-label="Attach file" onclick={() => attachFile?.click()}>
         <span>📎</span>
       </button>
       <input 
@@ -360,7 +360,7 @@
       {#if $store.composeScheduled}
         <span class="schedule-badge">
           Scheduled: {new Date($store.composeScheduled).toLocaleString()}
-          <button onclick={() => setComposeScheduled(null)}>✕</button>
+          <button aria-label="Clear scheduled time" onclick={() => setComposeScheduled(null)}>✕</button>
         </span>
       {/if}
     </div>
@@ -403,8 +403,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
     background: transparent;
     border: none;
     border-radius: var(--radius-sm);
@@ -412,6 +413,7 @@
     color: var(--color-text-secondary);
     cursor: pointer;
     transition: background var(--transition);
+    box-sizing: border-box;
   }
   
   .close-btn:hover {
@@ -473,6 +475,7 @@
   }
   
   .chip button {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -483,6 +486,12 @@
     font-size: 10px;
     color: var(--color-text-secondary);
     cursor: pointer;
+  }
+
+  .chip button::before {
+    content: '';
+    position: absolute;
+    inset: -14px;
   }
   
   .chip button:hover {
@@ -646,14 +655,16 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
+    min-width: 44px;
+    min-height: 44px;
+    padding: 0;
     background: transparent;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
     font-size: 16px;
     cursor: pointer;
     transition: all var(--transition);
+    box-sizing: border-box;
   }
   
   .icon-btn:hover {

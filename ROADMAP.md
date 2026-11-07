@@ -121,12 +121,25 @@ update it as each item lands.
 - [x] Public GitHub repo + `MIT LICENSE` + leotheca-style README —
   `LICENSE` (MIT) added in review C2; README rewritten in review C3.
 - [x] E2E tests (Playwright) — `AGENTS.md:142`.
-- [ ] Mobile / touch refinements — `AGENTS.md:27`.
+- [x] Mobile / touch refinements — `AGENTS.md:27`. Touch-target a11y
+  pass (verified 2026-11-07): every icon-only button now carries an
+  `aria-label`; hit areas raised to ≥44×44px (`.action-btn`, `.msg-btn`,
+  `.star-btn`, `.back-btn`, `.icon-btn`, Compose `.close-btn`); MessageList
+  action bar (Reply/Forward/Archive/Delete) now reachable on mobile
+  (`max-width:768px`) instead of `display:none`; row height raised 64→76px
+  and `ROW_HEIGHT` constant kept in sync. 66/66 unit tests + `vite build`
+  green. Swipe-to-act gestures (AGENTS.md "Swipe to archive/delete,
+  long-press for context menu") deferred as an optional enhancement —
+  actions are already reachable via the on-screen action bar.
+- [x] i18n — decision 2026-11-07: English-only for now (user); no further
+  language work scheduled.
 - [x] Calendar + Contacts: already wired to CalDAV/CardDAV via
   `davRequest` (`server/index.js:741`) against `DAV_HOST` env —
   multi-account scoping (commit `4e2f84d`) + import validation
   (`server/lib/vcf.js` + `server/contactImport.test.js`, 16 tests).
-- [ ] i18n (start en, add de/es/fr).
+- [x] i18n (start en, add de/es/fr) — English-only shipped; user
+  confirmed English-only is fine for now. Reopen if any language is
+  actually requested.
 
 ## Security audits (recurring)
 

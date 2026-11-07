@@ -215,9 +215,9 @@
   <div class="cal-main">
     <header class="cal-top">
       <div class="cal-nav">
-        <button onclick={() => shiftMonth(-1)}>‹</button>
+        <button aria-label="Previous month" onclick={() => shiftMonth(-1)}>‹</button>
         <button onclick={goToday}>Today</button>
-        <button onclick={() => shiftMonth(1)}>›</button>
+        <button aria-label="Next month" onclick={() => shiftMonth(1)}>›</button>
         <h3>{monthNames[viewDate.getMonth()]} {viewDate.getFullYear()}</h3>
       </div>
     </header>

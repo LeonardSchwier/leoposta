@@ -211,7 +211,7 @@
   <div class="settings-modal" onclick={(e) => e.stopPropagation()}>
     <div class="modal-header">
       <h2>Settings</h2>
-      <button class="close-btn" onclick={onClose}>✕</button>
+      <button class="close-btn" aria-label="Close settings" onclick={onClose}>✕</button>
     </div>
 
     <div class="settings-tabs">
@@ -247,7 +247,7 @@
                   {#each RULE_OPERATORS as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
                 </select>
                 <input type="text" bind:value={cond.value} placeholder="value" />
-                <button class="btn-tiny" onclick={() => rule.conditions = rule.conditions.filter((_, j) => j !== ci)} title="Remove condition">✕</button>
+                <button class="btn-tiny" onclick={() => rule.conditions = rule.conditions.filter((_, j) => j !== ci)} title="Remove condition" aria-label="Remove condition">✕</button>
               </div>
             {/each}
             <button class="btn-secondary btn-tiny" onclick={() => rule.conditions = [...rule.conditions, { field: 'subject', operator: 'contains', value: '' }]}>+ Add condition</button>
