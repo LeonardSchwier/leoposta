@@ -193,12 +193,6 @@
             <div class="message-subject">{message.subject || '(no subject)'}</div>
             <div class="message-preview">{getPreview(message)}</div>
           </div>
-          <div class="message-actions" class:hidden={!$store.showRowActions} onclick={(e) => e.stopPropagation()}>
-            <button class="msg-btn" title="Reply" aria-label="Reply" onclick={() => handleReply(message)}>↩</button>
-            <button class="msg-btn" title="Forward" aria-label="Forward" onclick={() => handleForward(message)}>⪡</button>
-            <button class="msg-btn" title="Archive" aria-label="Archive" onclick={() => onArchive?.()}>📦</button>
-            <button class="msg-btn danger" title="Delete" aria-label="Delete" onclick={() => onDelete?.()}>✕</button>
-          </div>
         </div>
       {/each}
       <div class="virtual-spacer" style={`height:${virtual.paddingBottom}px`}></div>
@@ -454,73 +448,14 @@
     white-space: nowrap;
   }
   
-  .message-actions {
-    display: none;
-    gap: 3px;
-    position: absolute;
-    right: 12px;
-    top: 50%;
-    transform: translateY(-50%);
-    background: var(--color-surface);
-    padding: 2px;
-    border-radius: 6px;
-    box-shadow: 0 1px 3px rgba(0,0,0,0.1);
-  }
-  
-  .message-row:hover .message-actions {
-    display: flex;
-  }
-  
-   .msg-btn {
-    background: none;
-    border: 1px solid var(--color-border);
-    border-radius: 5px;
-    min-width: 44px;
-    min-height: 44px;
-    padding: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 15px;
-    cursor: pointer;
-    color: var(--color-text-secondary);
-    transition: all 0.1s;
-    box-sizing: border-box;
-  }
-  
-  .msg-btn:hover {
-    background: var(--color-hover);
-    color: var(--color-text);
-  }
-  
-   .msg-btn.danger:hover {
-    background: var(--danger-bg);
-    color: var(--color-danger);
-    border-color: var(--color-border);
-   }
-  
   @keyframes spin {
     to { transform: rotate(360deg); }
   }
   
-   @media (max-width: 768px) {
+    @media (max-width: 768px) {
     .message-row {
       padding: 6px 10px;
       height: 76px;
-    }
-    .message-actions {
-      display: flex;
-      gap: 2px;
-      top: auto;
-      bottom: 4px;
-      right: 8px;
-      padding: 2px;
-      border-radius: 6px;
-    }
-    .msg-btn {
-      min-width: 36px;
-      min-height: 36px;
-      font-size: 14px;
     }
     .message-star {
       width: 44px;
