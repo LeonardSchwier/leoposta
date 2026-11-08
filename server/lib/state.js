@@ -130,7 +130,7 @@ export function saveScheduled() {
 }
 
 // ── Payload builder ──────────────────────────────────────────────────────────
-function accountPayloadFrom(body) {
+export function accountPayloadFrom(body) {
   return {
     email: body.email,
     name: body.name || body.email,
@@ -144,7 +144,10 @@ function accountPayloadFrom(body) {
     smtpTls: body.smtpTls !== false,
     smtpUser: body.smtpUser,
     smtpPass: body.smtpPass,
-    signature: body.signature || { enabled: false, text: '', position: 'standard' }
+    signature: body.signature || { enabled: false, text: '', position: 'standard' },
+    davUrl: body.davUrl || undefined,
+    davUser: body.davUser || undefined,
+    davPass: body.davPass || undefined
   }
 }
 
@@ -174,7 +177,10 @@ export function updateAccount(email, body) {
     email: cur.email,
     id: cur.id,
     imapPass: body.imapPass !== undefined ? body.imapPass : (cur.imapPass !== undefined ? cur.imapPass : undefined),
-    smtpPass: body.smtpPass !== undefined ? body.smtpPass : (cur.smtpPass !== undefined ? cur.smtpPass : undefined)
+    smtpPass: body.smtpPass !== undefined ? body.smtpPass : (cur.smtpPass !== undefined ? cur.smtpPass : undefined),
+    davUrl: body.davUrl !== undefined ? body.davUrl : (cur.davUrl !== undefined ? cur.davUrl : undefined),
+    davUser: body.davUser !== undefined ? body.davUser : (cur.davUser !== undefined ? cur.davUser : undefined),
+    davPass: body.davPass !== undefined ? body.davPass : (cur.davPass !== undefined ? cur.davPass : undefined)
   }
   delete merged.email
   merged.email = cur.email
