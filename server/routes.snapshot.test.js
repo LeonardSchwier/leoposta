@@ -13,6 +13,9 @@ function collect(stack, base = '') {
   const out = new Set()
   for (const layer of stack || []) {
     if (layer.route) {
+      // The SPA catch-all is a RegExp mounted only when dist/ exists, so it
+      // depends on whether the frontend was built; it is not part of the API.
+      if (layer.route.path instanceof RegExp) continue
       const p = layer.route.path || ''
       for (const method of Object.keys(layer.route.methods)) {
         out.add(`${method.toUpperCase()} ${base}${p}`)

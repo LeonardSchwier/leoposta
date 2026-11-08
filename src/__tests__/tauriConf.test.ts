@@ -8,7 +8,7 @@ const CONF_PATH = path.resolve(__dirname, '../../src-tauri/tauri.conf.json')
 const config = JSON.parse(fs.readFileSync(CONF_PATH, 'utf-8')) as {
   app: { security: { csp: string | null } }
 }
-const csp: string = config.app.security.csp
+const csp = config.app.security.csp as string
 
 describe('tauri.conf.json CSP', () => {
   it('is a non-null string', () => {

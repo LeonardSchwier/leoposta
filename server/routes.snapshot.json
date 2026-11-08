@@ -7,7 +7,6 @@
   "DELETE /message/:id",
   "DELETE /pgp",
   "DELETE /scheduled/:id",
-  "GET /^\\/(?!api\\/).*/",
   "GET /account",
   "GET /accounts",
   "GET /api/health",

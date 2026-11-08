@@ -35,10 +35,10 @@ test('adds the dummy account in Settings', async ({ page }) => {
   await page.locator('input[type="number"]').first().fill('1243')
   await page.getByRole('checkbox').first().uncheck()
   await page.getByPlaceholder('••••••••').fill('dummy')
-  const saved = page.waitForResponse((r) => r.url().endsWith('/api/account') && r.request().method() === 'POST')
-  await page.getByRole('button', { name: 'Save', exact: true }).click()
+  const saved = page.waitForResponse((r) => r.url().endsWith('/api/accounts') && r.request().method() === 'POST')
+  await page.getByRole('button', { name: 'Add Account', exact: true }).click()
   expect((await saved).status()).toBe(200)
-  await expect(page.getByText('Account Settings')).toBeHidden()
+  await expect(page.getByRole('heading', { name: 'Settings' })).toBeHidden()
 })
 
 test('folder list shows INBOX', async ({ page, request }) => {
@@ -51,6 +51,7 @@ test('folder list shows INBOX', async ({ page, request }) => {
 test('opening the first message shows its body', async ({ page, request }) => {
   await seedAccount(request)
   await page.goto('/')
-  await page.getByText('Welcome to Leoposta').first().click()
+  // Click the row's left edge: the hover action bar overlays the subject text.
+  await page.getByText('Welcome to Leoposta').first().click({ position: { x: 2, y: 2 } })
   await expect(page.getByText('Hello from the e2e fixture mailbox.')).toBeVisible()
 })

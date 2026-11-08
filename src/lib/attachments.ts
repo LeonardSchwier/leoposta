@@ -52,7 +52,7 @@ export async function fileToAttachment(
 }
 
 export class AttachmentTooLargeError extends Error {
-  constructor(readonly file: File) {
+  constructor(readonly file: Blob & { name?: string }) {
     super(`${file.name || 'file'} is ${(file.size / 1024 / 1024).toFixed(1)} MB; the limit is ${MAX_ATTACHMENT_BYTES / 1024 / 1024} MB`)
     this.name = 'AttachmentTooLargeError'
   }
