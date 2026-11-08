@@ -1,6 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { resolveDavTarget } from './dav.js'
+import { accountPayloadFrom } from './state.js'
 
 test('resolveDavTarget: davUrl with explicit port and path', () => {
   const acct = {
@@ -45,4 +46,29 @@ test('resolveDavTarget: no davUrl falls back to DAV_HOST env (default port 443)'
   assert.equal(t.basePath, '/dav/j')
   assert.equal(t.user, 'j')
   assert.equal(t.pass, 'p')
+})
+
+// ---- accountPayloadFrom threads davUrl/davUser/davPass through ----
+
+test('accountPayloadFrom: passes through davUrl, davUser, davPass when present', () => {
+  const p = accountPayloadFrom({
+    email: 'j@x.com', imapHost: 'imap.x.com', imapPort: 993, imapTls: true,
+    imapUser: 'j', imapPass: 'p', smtpHost: 'smtp.x.com', smtpPort: 465, smtpTls: true,
+    smtpUser: 'j', smtpPass: 'p',
+    davUrl: 'https://dav.x.com/dav/j', davUser: 'j', davPass: 'dav-secret'
+  })
+  assert.equal(p.davUrl, 'https://dav.x.com/dav/j')
+  assert.equal(p.davUser, 'j')
+  assert.equal(p.davPass, 'dav-secret')
+})
+
+test('accountPayloadFrom: omits dav fields when not in body', () => {
+  const p = accountPayloadFrom({
+    email: 'j@x.com', imapHost: 'imap.x.com', imapPort: 993, imapTls: true,
+    imapUser: 'j', imapPass: 'p', smtpHost: 'smtp.x.com', smtpPort: 465, smtpTls: true,
+    smtpUser: 'j', smtpPass: 'p'
+  })
+  assert.equal(p.davUrl, undefined)
+  assert.equal(p.davUser, undefined)
+  assert.equal(p.davPass, undefined)
 })

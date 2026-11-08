@@ -8,7 +8,7 @@ import { dropPool } from '../lib/imap.js'
 const router = Router()
 
 function sanitize(acct) {
-  const { imapPass, smtpPass, ...safe } = acct
+  const { imapPass, smtpPass, davPass, ...safe } = acct
   if (!safe.signature) safe.signature = { enabled: false, text: '', position: 'standard' }
   return safe
 }
