@@ -3,6 +3,7 @@ import { simpleParser } from 'mailparser'
 import { state, resolveAccount } from '../lib/state.js'
 import { getPoolFor } from '../lib/imap.js'
 import { normalizeFlags, parseFromAddr, toISO, messageDate } from '../lib/address.js'
+import { messageRange } from '../lib/mailRange.js'
 import { processPgp } from '../lib/pgp.js'
 import { applyRules } from '../lib/rules.js'
 
@@ -29,8 +30,13 @@ router.get('/messages', async (req, res) => {
         const unreadCount = (mailbox.unseen != null) ? mailbox.unseen
                         : (mailbox.exists && mailbox.seen != null) ? Math.max(0, mailbox.exists - mailbox.seen)
                         : (mailbox.recent || 0)
-        const end = exists
-        const start = Math.max(1, end - (limitN + offsetN))
+        const range = messageRange(exists, limitN, offsetN)
+        if (range.empty) {
+          res.json({ messages: applyRules([], state.rules), unreadCount })
+          return
+        }
+        const end = range.end
+        const start = range.start
 
         const messages = []
         const result = client.fetch(
