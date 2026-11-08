@@ -53,6 +53,9 @@ export interface MailAccount {
   smtpUser: string
   smtpPass: string
   signature: Signature
+  davUrl?: string
+  davUser?: string
+  davPass?: string
 }
 
 export interface Folder {
@@ -85,6 +88,7 @@ export interface State {
   isLoading: boolean
   error: string | null
   threadGrouping: boolean
+  showRowActions: boolean
 }
 
 const initialState: State = {
@@ -110,6 +114,7 @@ const initialState: State = {
   isLoading: false,
   error: null,
   threadGrouping: true,
+  showRowActions: false,
 }
 
 export const store = writable<State>(initialState)
@@ -244,6 +249,9 @@ export function clearCompose() {
 }
 export function setThreadGrouping(enabled: boolean) {
   store.update(s => ({ ...s, threadGrouping: enabled }))
+}
+export function setShowRowActions(show: boolean) {
+  store.update(s => ({ ...s, showRowActions: show }))
 }
 
 // Non-reactive getter for use in event handlers

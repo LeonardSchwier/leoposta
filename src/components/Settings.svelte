@@ -18,6 +18,9 @@
   let smtpHost = $state('smtp.example.com')
   let smtpPort = $state('465')
   let smtpTls = $state(true)
+  let davUrl = $state('')
+  let davUser = $state('')
+  let davPass = $state('')
   let password = $state('')
   let isLoading = $state(false)
   let error = $state('')
@@ -28,6 +31,7 @@
     email = ''; accountName = ''
     imapHost = 'imap.example.com'; imapPort = '993'; imapTls = true
     smtpHost = 'smtp.example.com'; smtpPort = '465'; smtpTls = true
+    davUrl = ''; davUser = ''; davPass = ''
     password = ''; editingId = null; error = ''
   }
 
@@ -37,6 +41,7 @@
     accountName = a.name
     imapHost = a.imapHost; imapPort = String(a.imapPort); imapTls = a.imapTls
     smtpHost = a.smtpHost; smtpPort = String(a.smtpPort); smtpTls = a.smtpTls
+    davUrl = a.davUrl || ''; davUser = a.davUser || ''; davPass = ''
     password = ''
     const s = a.signature
     if (s) { sigEnabled = s.enabled; sigText = s.text || ''; sigPosition = s.position === 'after_quote' ? 'after_quote' : 'standard' }
@@ -163,6 +168,9 @@
       smtpHost,
       smtpPort: parseInt(smtpPort) || 465,
       smtpTls,
+      davUrl: davUrl.trim() || undefined,
+      davUser: davUser.trim() || undefined,
+      davPass: davPass || undefined,
       imapUser: email,
       smtpUser: email,
       signature: { enabled: sigEnabled, text: sigText, position: sigPosition }
@@ -342,21 +350,47 @@
           </div>
         </div>
         <div class="form-row">
-          <div class="form-group checkbox">
-            <label>
-              <input type="checkbox" bind:checked={smtpTls} />
-              <span>Use SSL/TLS</span>
-            </label>
-          </div>
-        </div>
-      </div>
-      
-      <div class="form-section">
-        <h3>Preferences</h3>
+           <div class="form-group checkbox">
+             <label>
+               <input type="checkbox" bind:checked={smtpTls} />
+               <span>Use SSL/TLS</span>
+             </label>
+           </div>
+         </div>
+       </div>
+
+       <div class="mt-3 pt-3 border-t border-neutral-200 dark:border-neutral-700">
+         <p class="text-xs text-neutral-500 mb-1.5 uppercase tracking-wide font-medium">CardDAV / CalDAV</p>
+         <p class="text-xs text-neutral-400 mb-2">Optional — leave blank to use global DAV_HOST env config.</p>
+         <label class="block text-xs font-medium text-neutral-600 dark:text-neutral-300 mb-1">Base URL</label>
+         <input type="url" placeholder="https://dav.example.com/dav/you" bind:value={davUrl}
+                class="w-full px-3 py-2 text-sm rounded-lg border border-neutral-300 dark:border-neutral-600 bg-transparent focus:outline-none focus:ring-2 focus:ring-blue-500" />
+         <div class="grid grid-cols-2 gap-2 mt-2">
+           <div>
+             <label class="block text-xs font-medium text-neutral-600 dark:text-neutral-300 mb-1">User</label>
+             <input type="text" placeholder="leave blank for IMAP user" bind:value={davUser}
+                    class="w-full px-3 py-2 text-sm rounded-lg border border-neutral-300 dark:border-neutral-600 bg-transparent focus:outline-none focus:ring-2 focus:ring-blue-500" />
+           </div>
+           <div>
+             <label class="block text-xs font-medium text-neutral-600 dark:text-neutral-300 mb-1">Password</label>
+             <input type="password" placeholder="leave blank for IMAP pass" bind:value={davPass}
+                    class="w-full px-3 py-2 text-sm rounded-lg border border-neutral-300 dark:border-neutral-600 bg-transparent focus:outline-none focus:ring-2 focus:ring-blue-500" />
+           </div>
+         </div>
+       </div>
+
+       <div class="form-section">
+         <h3>Preferences</h3>
         <div class="form-group checkbox">
           <label>
             <input type="checkbox" bind:checked={$store.threadGrouping} />
             <span>Group messages by thread</span>
+          </label>
+        </div>
+        <div class="form-group checkbox">
+          <label>
+            <input type="checkbox" bind:checked={$store.showRowActions} />
+            <span>Show quick actions on each message</span>
           </label>
         </div>
       </div>
