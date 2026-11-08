@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { resolveAccount } from '../lib/state.js'
-import { davRequest, resolveDavBase, extractResponseSet, joinDavPath } from '../lib/dav.js'
+import { davRequest, resolveDavBase, extractResponseSet, extractDataBlocks, joinDavPath, toDavTime } from '../lib/dav.js'
 
 const router = Router()
 
@@ -35,37 +35,41 @@ router.get('/calendar/events', async (req, res) => {
   try {
     const acct = resolveAccount(req)
     if (!acct) return res.status(400).json({ error: 'No account configured' })
-    const { calendar, start, end } = req.query
+    const { calendar } = req.query
     if (!calendar) return res.status(400).json({ error: 'calendar param required' })
     const basePath = (await resolveDavBase(acct, 'calendar')).basePath
+    const startDav = toDavTime(req.query.start)
+    const endDav = toDavTime(req.query.end, true)
+    const timeRange = (startDav || endDav)
+      ? `<c:time-range${startDav ? ` start="${startDav}"` : ''}${endDav ? ` end="${endDav}"` : ''}/>`
+      : ''
     const report = `<?xml version="1.0" encoding="utf-8"?>
 <c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
   <d:prop>
     <d:getetag/>
-    <d:getcontenttype/>
+    <c:calendar-data/>
   </d:prop>
   <c:filter>
-    <c:time-range start="${start || ''}" end="${end || ''}"/>
+    <c:comp-filter name="VCALENDAR">
+      <c:comp-filter name="VEVENT">
+        ${timeRange}
+      </c:comp-filter>
+    </c:comp-filter>
   </c:filter>
 </c:calendar-query>`
     const urlPath = joinDavPath(basePath, calendar)
-    const r = await davRequest('REPORT', urlPath, report, null, acct)
-    const resources = extractResponseSet(r.body).filter(e => /ics/i.test(e.href))
-    const events = []
-    for (const ev of resources) {
-      const evPath = ev.href.startsWith('/') ? ev.href : `/${ev.href}`
-      try {
-        const evRes = await davRequest('GET', evPath, null, null, acct)
-        const ics = evRes.body
-        const uid = (ics.match(/UID:(.+)/) || [])[1] || evPath
-        const summary = (ics.match(/SUMMARY:(.+)/) || [])[1] || '(no subject)'
-        const dtstart = (ics.match(/DTSTART[;TZID=[^;]*;?[^:]*:(.+)/) || [])[1] || ''
-        const dtend = (ics.match(/DTEND[;TZID=[^;]*;?[^:]*:(.+)/) || [])[1] || ''
-        const location = (ics.match(/LOCATION:(.+)/) || [])[1] || ''
-        const description = (ics.match(/DESCRIPTION:(.+)/) || [])[1] || ''
-        events.push({ uid: uid.trim(), summary: summary.trim(), start: dtstart.trim(), end: dtend.trim(), location: location.trim(), description: description.trim(), etag: evRes.headers.etag || '', href: ev.href, ics })
-      } catch {}
-    }
+    const r = await davRequest('REPORT', urlPath, report, null, acct, 1)
+    const blocks = extractDataBlocks(r.body, 'calendar-data')
+    const events = blocks.map(b => {
+      const ics = b.body
+      const uid = (ics.match(/UID:(.+)/) || [])[1] || b.href
+      const summary = (ics.match(/SUMMARY:(.+)/) || [])[1] || '(no subject)'
+      const dtstart = (ics.match(/DTSTART[^:]*:(.+)/) || [])[1] || ''
+      const dtend = (ics.match(/DTEND[^:]*:(.+)/) || [])[1] || ''
+      const location = (ics.match(/LOCATION:(.+)/) || [])[1] || ''
+      const description = (ics.match(/DESCRIPTION:(.+)/) || [])[1] || ''
+      return { uid: uid.trim(), summary: summary.trim(), start: dtstart.trim(), end: dtend.trim(), location: location.trim(), description: description.trim(), etag: b.etag || '', href: b.href, ics }
+    })
     res.json({ events })
   } catch (err) {
     console.error('CalDAV events error:', err.message)

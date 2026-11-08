@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { resolveAccount } from '../lib/state.js'
-import { davRequest, resolveDavBase, extractResponseSet, joinDavPath } from '../lib/dav.js'
+import { davRequest, resolveDavBase, extractResponseSet, extractAddressData, joinDavPath } from '../lib/dav.js'
 import { parseVcf } from '../lib/vcf.js'
 
 const router = Router()
@@ -49,20 +49,33 @@ router.get('/contacts', async (req, res) => {
     const urlPath = joinDavPath(basePath, book)
     const r = await davRequest('PROPFIND', urlPath, profind, null, acct)
     const entries = extractResponseSet(r.body).filter(e => /\.vcf/i.test(e.href))
-    const contacts = []
-    for (const c of entries) {
-      try {
-        const vcfPath = c.href.startsWith('/') ? c.href : `/${c.href}`
-        const vres = await davRequest('GET', vcfPath, null, null, acct)
-        const vcf = vres.body
-        const fn = (vcf.match(/FN:(.+)/) || [])[1] || c.displayname || '(unknown)'
-        const email = (vcf.match(/EMAIL[^:]*:(.+)/) || [])[1] || ''
-        const phone = (vcf.match(/TEL[^:]*:(.+)/) || [])[1] || ''
-        const uid = (vcf.match(/UID:(.+)/) || [])[1] || c.href.split('/').pop()
-        const org = (vcf.match(/ORG:(.+)/) || [])[1] || ''
-        contacts.push({ uid: uid.trim(), name: fn.trim(), email: email.trim(), phone: phone.trim(), org: org.trim().split(';')[0], vcf, href: c.href, etag: vres.headers.etag || '' })
-      } catch {}
-    }
+    if (!entries.length) return res.json({ contacts: [], total: 0 })
+
+    // RFC 6352 §10.2: addressbook-multiget — one REPORT returns every card
+    // body in a single round-trip (replaces the N+1 sequential GETs that
+    // triggered rate-limiting on OX-backed servers like mailbox.org).
+    const hrefs = entries.map(e => `<d:href>${e.href}</d:href>`).join('')
+    const report = `<?xml version="1.0" encoding="utf-8"?>
+<c:addressbook-multiget xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+  <d:prop>
+    <d:displayname/>
+    <d:getetag/>
+    <c:address-data content-type="text/vcard"/>
+  </d:prop>
+    ${hrefs}
+</c:addressbook-multiget>`
+    const r2 = await davRequest('REPORT', urlPath, report, null, acct, 0)
+    const cards = extractAddressData(r2.body)
+
+    const contacts = extractAddressData(r2.body).map(c => {
+      const vcf = c.vcf
+      const fn = (vcf.match(/FN:(.+)/) || [])[1] || c.href.split('/').pop()?.replace(/\.vcf$/i, '') || '(unknown)'
+      const email = (vcf.match(/EMAIL[^:]*:(.+)/) || [])[1] || ''
+      const phone = (vcf.match(/TEL[^:]*:(.+)/) || [])[1] || ''
+      const uid = (vcf.match(/UID:(.+)/) || [])[1] || c.href.split('/').pop()?.replace(/\.vcf$/i, '')
+      const org = (vcf.match(/ORG:(.+)/) || [])[1] || ''
+      return { uid: uid.trim(), name: fn.trim(), email: email.trim(), phone: phone.trim(), org: org.trim().split(';')[0], vcf, href: c.href, etag: c.etag || '' }
+    })
     let filtered = contacts
     if (q) {
       const lq = q.toLowerCase()
