@@ -7,15 +7,38 @@ export const DAV_PORT = parseInt(process.env.DAV_PORT || '443', 10)
 export const DAV_TLS = (process.env.DAV_TLS || (process.env.DAV_HOST ? 'true' : 'false')) === 'true'
 export const DAV_PATH_PREFIX = (user) => (process.env.DAV_PREFIX || '/dav/' + user)
 
+export function resolveDavTarget(acct) {
+  const a = acct || {}
+  const user = a.davUser || a.imapUser || ''
+  const pass = a.davPass || a.imapPass || ''
+  if (a.davUrl) {
+    try {
+      const u = new URL(a.davUrl)
+      const tls = u.protocol === 'https:'
+      const port = u.port
+        ? parseInt(u.port, 10)
+        : (tls ? 443 : 80)
+      return { hostname: u.hostname, port, tls, basePath: u.pathname || '/', user, pass }
+    } catch {}
+  }
+  return {
+    hostname: DAV_HOST,
+    port: DAV_PORT,
+    tls: DAV_TLS,
+    basePath: DAV_PATH_PREFIX(a.imapUser || ''),
+    user,
+    pass
+  }
+}
+
 export function davRequest(method, urlPath, body, contentType, acct) {
   return new Promise((resolve, reject) => {
     const account = acct || state.accounts[0] || {}
-    const user = account.imapUser || ''
-    const pass = account.imapPass || ''
-    const token = Buffer.from(`${user}:${pass}`).toString('base64')
+    const t = resolveDavTarget(account)
+    const token = Buffer.from(`${t.user}:${t.pass}`).toString('base64')
     const opts = {
-      hostname: DAV_HOST,
-      port: DAV_PORT,
+      hostname: t.hostname,
+      port: t.port,
       path: urlPath,
       method,
       headers: {
@@ -25,7 +48,7 @@ export function davRequest(method, urlPath, body, contentType, acct) {
       }
     }
     if (contentType === 'text/xml') opts.headers['Content-Type'] = contentType
-    const lib = DAV_TLS ? https : http
+    const lib = t.tls ? https : http
     const req = lib.request(opts, (res) => {
       const chunks = []
       res.on('data', c => chunks.push(c))
