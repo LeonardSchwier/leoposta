@@ -57,7 +57,7 @@ router.get('/calendar/events', async (req, res) => {
     </c:comp-filter>
   </c:filter>
 </c:calendar-query>`
-    const urlPath = joinDavPath(basePath, calendar)
+    const urlPath = joinDavPath(basePath, calendar) + '/'
     const r = await davRequest('REPORT', urlPath, report, null, acct, 1)
     const blocks = extractDataBlocks(r.body, 'calendar-data')
     const events = blocks.map(b => {

@@ -62,6 +62,9 @@ export function davRequest(method, urlPath, body, contentType, acct, depth) {
       })
     })
     req.on('error', reject)
+    req.setTimeout(30000, () => {
+      req.destroy(new Error(`DAV ${method} times out after 30s`))
+    })
     if (body) req.write(body)
     req.end()
   })
@@ -145,11 +148,15 @@ export async function resolveDavBase(account, kind) {
 export function clearDavBaseCache() { homeSetCache.clear() }
 
 // Join a DAV base path with a relative (or already-absolute) sub-path.
-// If `sub` starts with '/', it is returned as-is (it is a full href from the server).
-// Otherwise it is joined onto basePath, avoiding double slashes.
+// Returns a path WITHOUT a trailing slash. Sites that target a DAV collection
+// (REPORT / PROPFIND on the collection itself) must append '/' themselves,
+// since OX 400s on a bare (non-collection) href there; file-PUT/DELETE sites
+// rely on this no-slash form so `+ '/uid.ics'` does not double-slash.
 export function joinDavPath(basePath, sub) {
   if (sub && sub.startsWith('/')) return sub.replace(/\/+$/, '')
-  return (basePath || '').replace(/\/+$/, '') + '/' + (sub || '').replace(/^\/+|\/+$/g, '')
+  const base = (basePath || '').replace(/\/+$/, '')
+  const s = (sub || '').replace(/^\/+|\/+$/g, '')
+  return s ? base + '/' + s : base
 }
 
 // Extract <carddav:address-data> (or any ns-prefixed address-data) blocks
