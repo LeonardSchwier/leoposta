@@ -53,5 +53,6 @@ test('opening the first message shows its body', async ({ page, request }) => {
   await page.goto('/')
   // Click the row's left edge: the hover action bar overlays the subject text.
   await page.getByText('Welcome to Leoposta').first().click({ position: { x: 2, y: 2 } })
-  await expect(page.getByText('Hello from the e2e fixture mailbox.')).toBeVisible()
+  // The text appears in the list preview and in the reading pane.
+  await expect(page.getByText('Hello from the e2e fixture mailbox.').last()).toBeVisible()
 })
