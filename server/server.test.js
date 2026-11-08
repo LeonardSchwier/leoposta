@@ -154,6 +154,55 @@ test('PGP: passphrase never persisted; locked until unlocked; wrong passphrase 4
   assert.equal(fs.existsSync(path.join(DATA_DIR, 'pgp_passphrase.txt')), false)
 })
 
+test('PGP: saving a passphrase-protected key makes it decryptable without a separate unlock', async () => {
+  const pass = 'red horse saved'
+  const { privateKey, publicKey } = await openpgp.generateKey({
+    type: 'ecc', curve: 'curve25519Legacy', userIDs: [{ name: 't', email: 't2@example.com' }], passphrase: pass, format: 'armored'
+  })
+  const armored = await openpgp.encrypt({
+    message: await openpgp.createMessage({ text: 'Content-Type: text/plain\r\n\r\nsave-then-decrypt body' }),
+    encryptionKeys: await openpgp.readKey({ armoredKey: publicKey })
+  })
+  const json = { ...authed, 'content-type': 'application/json' }
+
+  // Fresh lock state so the prior test's unlock doesn't hide the bug.
+  await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: authed })
+
+  const put = await fetch(`${base}/api/pgp`, {
+    method: 'PUT', headers: json,
+    body: JSON.stringify({ privateAsc: privateKey, publicAsc: publicKey, passphrase: pass })
+  })
+  assert.equal(put.status, 200)
+
+  // No /api/pgp/unlock call in between: decryption must already work.
+  let r = await processPgp(armored)
+  assert.equal(r.decrypted, true, `expected decrypted=true, got ${r.error}`)
+  assert.match(r.text, /save-then-decrypt body/)
+
+  // A wrong passphrase must NOT replace the working unlock: lock + try bad first.
+  await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: authed })
+  const bad = await fetch(`${base}/api/pgp`, {
+    method: 'PUT', headers: json,
+    body: JSON.stringify({ privateAsc: privateKey, passphrase: 'definitely wrong' })
+  })
+  assert.equal(bad.status, 400)
+  r = await processPgp(armored)
+  assert.equal(r.decrypted, false)
+})
+
+test('PGP: unlock rejects a wrong passphrase with 401', async () => {
+  // Uses the key saved by the previous test (passphrase 'red horse saved').
+  await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: authed })
+  const bad = await fetch(`${base}/api/pgp/unlock`, {
+    method: 'POST',
+    headers: { ...authed, 'content-type': 'application/json' },
+    body: JSON.stringify({ passphrase: 'definitely wrong' })
+  })
+  assert.equal(bad.status, 401)
+  const st = await (await fetch(`${base}/api/pgp/status`, { headers: authed })).json()
+  assert.equal(st.unlocked, false)
+})
+
 test('scheduled send with attachments persists the attachments on disk', async () => {
   await fetch(`${base}/api/account`, {
     method: 'POST',
