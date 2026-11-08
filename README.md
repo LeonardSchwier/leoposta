@@ -2,16 +2,34 @@
 
 A modern, web-based mail client with a clean, familiar native-mail UX.
 
+![Leoposta inbox in light mode](assets/screenshots/inbox-light.png)
+![Leoposta inbox in dark mode](assets/screenshots/inbox-dark.png)
+
+Screenshots show the real UI against a fictional fixture mailbox and are
+regenerated with `npm run screenshots`.
+
 ## Features
 
-- 📧 **IMAP/SMTP** - Connect to any mail provider
-- 🎨 **Polished UX** - Clean, familiar interface
-- 📱 **PWA** - Installable on mobile and desktop
-- 🕐 **Scheduled Send** - Queue emails for later delivery
-- 📎 **Attachments** - Full attachment support
-- 🌙 **Dark Mode** - System-aware theming
-- ⚡ **Fast** - Built with Svelte 5 and Vite
-- 🔒 **Local-First** - Your mail stays on your device
+- IMAP/SMTP with multiple accounts
+- Attachments on compose, signature, scheduled send
+- Offline cache and send queue (service worker + IndexedDB)
+- Filter rules, virtualised message list, light and dark theme
+- Sanitised HTML mail, remote images blocked by default
+- Installable PWA; a Tauri desktop wrapper is configured (see Status)
+
+## Status
+
+Verified on the current default branch by running the commands in the last column.
+
+| Area | State | Verified by |
+|------|-------|-------------|
+| Unit tests (Vitest) | 66 passing | `npm test` |
+| Server tests (node:test) | 54 passing | `npm run test:server` |
+| End-to-end (Playwright, Chromium) | 3 passing | `npm run test:e2e` |
+| Typecheck, production build | clean | `npm run typecheck`, `npm run build` |
+| Dependency audit | runtime clean; build-time findings documented | [SECURITY.md](SECURITY.md) |
+| Desktop (Tauri) builds | release workflow exists, not verified here | [release.yml](.github/workflows/release.yml) |
+| Published releases | none yet | [CHANGELOG.md](CHANGELOG.md) |
 
 ## Tech Stack
 
@@ -99,12 +117,27 @@ npm run test:e2e
 ### Code Quality
 
 ```bash
-# Lint
-npm run lint
-
 # Type check
-npx tsc --noEmit
+npm run typecheck
 ```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the workflow and [SECURITY.md](SECURITY.md) to report a vulnerability.
+
+## Why this repository is best practice
+
+- **Tests prove behaviour, at three levels.** Unit, server and browser journeys run on every push: [ci.yml](.github/workflows/ci.yml), [tests/e2e](tests/e2e/mail.spec.ts).
+- **A browser test fails on any console error.** Silent runtime errors cannot ship: [fixtures.ts](tests/e2e/fixtures.ts).
+- **The test mailbox is local and fictional.** No real account or network is needed: [imap.cjs](scripts/dummy/imap.cjs), [seed.json](tests/e2e/seed.json).
+- **Types are checked in CI.** Type errors fail the build: [package.json](package.json).
+- **Untrusted mail HTML is sanitised and tracking is blocked.** [sanitizeHtml.ts](src/lib/sanitizeHtml.ts), tested in [sanitizeHtml.test.ts](src/__tests__/sanitizeHtml.test.ts).
+- **The local API requires a token, compared in constant time.** [auth.js](server/lib/auth.js).
+- **The desktop shell has a strict content security policy.** [tauri.conf.json](src-tauri/tauri.conf.json), asserted in [tauriConf.test.ts](src/__tests__/tauriConf.test.ts).
+- **Secrets stay out of git and files are mode 0600.** What is stored where is documented: [Credentials](#credentials), [.gitignore](.gitignore).
+- **Workflow actions are pinned to commit SHAs with least-privilege permissions.** [ci.yml](.github/workflows/ci.yml), [release.yml](.github/workflows/release.yml).
+- **Dependencies are updated monthly and audited.** [dependabot.yml](.github/dependabot.yml), [SECURITY.md](SECURITY.md).
+- **The API surface is snapshot-tested.** An accidental route change fails a test: [routes.snapshot.test.js](server/routes.snapshot.test.js).
+- **Design tokens come from one shared package, not copies.** [@leonardschwier/leoforma](package.json) tokens are mapped in [app.css](src/app.css); components stay local because they are Svelte.
+- **Process is documented and honest.** [ROADMAP.md](ROADMAP.md), [CONTRIBUTING.md](CONTRIBUTING.md), [CHANGELOG.md](CHANGELOG.md), [PR template](.github/pull_request_template.md).
 
 ## License
 

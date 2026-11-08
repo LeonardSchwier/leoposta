@@ -212,7 +212,7 @@ npm run dev          # Dev server (frontend + backend)
 npm run build        # Production build
 npm run test         # Unit tests
 npm run test:e2e     # E2E tests
-npm run lint         # ESLint + Prettier
+npm run typecheck    # tsc, app and node configs
 ```
 
 ## Testing
