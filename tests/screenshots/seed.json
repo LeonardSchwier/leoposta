@@ -1,0 +1,140 @@
+{
+  "folders": [
+    {
+      "path": "INBOX",
+      "name": "INBOX",
+      "specialUse": null
+    },
+    {
+      "path": "Sent",
+      "name": "Sent",
+      "specialUse": "\\Sent"
+    },
+    {
+      "path": "Drafts",
+      "name": "Drafts",
+      "specialUse": "\\Drafts"
+    },
+    {
+      "path": "Trash",
+      "name": "Trash",
+      "specialUse": "\\Trash"
+    }
+  ],
+  "messages": [
+    {
+      "folder": "INBOX",
+      "uid": 1,
+      "seen": false,
+      "date": "2026-11-06T09:10:00Z",
+      "subject": "Welcome to Leoposta",
+      "from": {
+        "name": "Ada Tester",
+        "address": "ada@example.test"
+      },
+      "to": [
+        {
+          "name": "Me",
+          "address": "me@example.test"
+        }
+      ],
+      "text": "Hello and welcome. This mailbox is fictional fixture data.\n\nBest,\nAda",
+      "html": ""
+    },
+    {
+      "folder": "INBOX",
+      "uid": 2,
+      "seen": false,
+      "date": "2026-11-05T09:11:00Z",
+      "subject": "Quarterly planning notes",
+      "from": {
+        "name": "Grace Sample",
+        "address": "grace@example.test"
+      },
+      "to": [
+        {
+          "name": "Me",
+          "address": "me@example.test"
+        }
+      ],
+      "text": "Here are the draft notes for the planning session. Please add comments before Friday.\n\nBest,\nGrace",
+      "html": ""
+    },
+    {
+      "folder": "INBOX",
+      "uid": 3,
+      "seen": false,
+      "date": "2026-11-04T09:12:00Z",
+      "subject": "Lunch on Thursday?",
+      "from": {
+        "name": "Linus Demo",
+        "address": "linus@example.test"
+      },
+      "to": [
+        {
+          "name": "Me",
+          "address": "me@example.test"
+        }
+      ],
+      "text": "Are you free for lunch on Thursday? There is a new place near the station.\n\nBest,\nLinus",
+      "html": ""
+    },
+    {
+      "folder": "INBOX",
+      "uid": 4,
+      "seen": true,
+      "date": "2026-11-03T09:13:00Z",
+      "subject": "Release checklist",
+      "from": {
+        "name": "Margaret Fixture",
+        "address": "margaret@example.test"
+      },
+      "to": [
+        {
+          "name": "Me",
+          "address": "me@example.test"
+        }
+      ],
+      "text": "All items are ticked except the changelog. Can you review it today?\n\nBest,\nMargaret",
+      "html": ""
+    },
+    {
+      "folder": "INBOX",
+      "uid": 5,
+      "seen": true,
+      "date": "2026-11-02T09:14:00Z",
+      "subject": "Photos from the hike",
+      "from": {
+        "name": "Alan Mock",
+        "address": "alan@example.test"
+      },
+      "to": [
+        {
+          "name": "Me",
+          "address": "me@example.test"
+        }
+      ],
+      "text": "The weather held up nicely. I attached the best shots to the shared folder.\n\nBest,\nAlan",
+      "html": ""
+    },
+    {
+      "folder": "INBOX",
+      "uid": 6,
+      "seen": true,
+      "date": "2026-11-01T09:15:00Z",
+      "subject": "Invoice 2026-114",
+      "from": {
+        "name": "Ada Tester",
+        "address": "ada@example.test"
+      },
+      "to": [
+        {
+          "name": "Me",
+          "address": "me@example.test"
+        }
+      ],
+      "text": "Your invoice for October is ready. No action is needed, it is already paid.\n\nBest,\nAda",
+      "html": ""
+    }
+  ]
+}

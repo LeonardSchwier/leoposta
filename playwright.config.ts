@@ -6,8 +6,10 @@ const IMAP_PORT = 1243
 const API_PORT = 3101
 const WEB_PORT = 3100
 
+const SHOTS = process.env.SCREENSHOTS === '1'
+
 export default defineConfig({
-  testDir: './tests/e2e',
+  testDir: SHOTS ? './tests/screenshots' : './tests/e2e',
   testMatch: '**/*.spec.ts',
   fullyParallel: false,
   workers: 1,
@@ -18,7 +20,7 @@ export default defineConfig({
   webServer: [
     {
       command: 'node scripts/dummy/imap.cjs',
-      env: { LEO_IMAP_SEED: 'tests/e2e/seed.json', IMAP_PORT: String(IMAP_PORT) },
+      env: { LEO_IMAP_SEED: SHOTS ? 'tests/screenshots/seed.json' : 'tests/e2e/seed.json', IMAP_PORT: String(IMAP_PORT) },
       port: IMAP_PORT,
       reuseExistingServer: false
     },
