@@ -71,7 +71,7 @@
       { label: 'Reply', icon: '↩', action: () => handleReply(message) },
       { label: 'Reply All', icon: '↩↩', action: () => handleReplyAll(message) },
       { label: 'Forward', icon: '⪡', action: () => handleForward(message) },
-      { label: 'Archive', icon: '⬇', action: () => onArchive?.() },
+      { label: 'Archive', icon: '📦', action: () => onArchive?.() },
       { divider: true, label: '', action: undefined },
       { label: 'Delete', icon: '✕', danger: true, action: () => onDelete?.() },
     ]
@@ -142,9 +142,6 @@
         data-search-input
       />
     </div>
-    <div class="actions">
-      <button class="action-btn icon" title="New message" aria-label="New message" onclick={onCompose}>✉</button>
-    </div>
   </div>
   
   {#if error}
@@ -196,10 +193,10 @@
             <div class="message-subject">{message.subject || '(no subject)'}</div>
             <div class="message-preview">{getPreview(message)}</div>
           </div>
-          <div class="message-actions" onclick={(e) => e.stopPropagation()}>
+          <div class="message-actions" class:hidden={!$store.showRowActions} onclick={(e) => e.stopPropagation()}>
             <button class="msg-btn" title="Reply" aria-label="Reply" onclick={() => handleReply(message)}>↩</button>
             <button class="msg-btn" title="Forward" aria-label="Forward" onclick={() => handleForward(message)}>⪡</button>
-            <button class="msg-btn" title="Archive" aria-label="Archive" onclick={() => onArchive?.()}>⬇</button>
+            <button class="msg-btn" title="Archive" aria-label="Archive" onclick={() => onArchive?.()}>📦</button>
             <button class="msg-btn danger" title="Delete" aria-label="Delete" onclick={() => onDelete?.()}>✕</button>
           </div>
         </div>

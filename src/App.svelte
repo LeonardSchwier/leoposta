@@ -363,6 +363,7 @@
         handleArchive()
         break
       case 'd':
+      case 'delete':
         e.preventDefault()
         handleDelete()
         break

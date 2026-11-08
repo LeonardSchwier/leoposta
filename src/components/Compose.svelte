@@ -25,7 +25,11 @@
     return m.body || m.bodyHtml || null
   }
   function applySignature(sig: Signature, original: string | null): boolean {
-    if (!sig || !sig.enabled || !sig.text.trim()) return false
+    if (!sig || !sig.enabled || !sig.text.trim()) {
+      // No active signature — still seed the quoted original for reply/forward.
+      if (original) { const q = '\n--\n' + original; bodyInput = q; setComposeBody(q) }
+      return false
+    }
     const body = buildMessageBody(sig, '', original)
     if (body) { bodyInput = body; setComposeBody(body) }
     return true
