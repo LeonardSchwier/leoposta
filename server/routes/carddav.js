@@ -46,16 +46,21 @@ router.get('/contacts', async (req, res) => {
     <d:getcontenttype/>
   </d:prop>
 </d:propfind>`
-    const urlPath = joinDavPath(basePath, book)
+    const urlPath = joinDavPath(basePath, book) + '/'
     const r = await davRequest('PROPFIND', urlPath, profind, null, acct)
     const entries = extractResponseSet(r.body).filter(e => /\.vcf/i.test(e.href))
     if (!entries.length) return res.json({ contacts: [], total: 0 })
 
-    // RFC 6352 §10.2: addressbook-multiget — one REPORT returns every card
-    // body in a single round-trip (replaces the N+1 sequential GETs that
-    // triggered rate-limiting on OX-backed servers like mailbox.org).
-    const hrefs = entries.map(e => `<d:href>${e.href}</d:href>`).join('')
-    const report = `<?xml version="1.0" encoding="utf-8"?>
+    // RFC 6352 §10.2: addressbook-multiget returns card bodies in round-trips
+    // (collapses the N+1 sequential GETs that triggered rate-limiting on OX).
+    // A single REPORT with thousands of cards makes OX (mailbox.org) hang
+    // (verified: 150/300/500 → clean 207; ~2700 → no response). 500/batch stays
+    // under the hang threshold and under the 30s davRequest timeout.
+    const MULTIGET_BATCH = 500
+    const allCards = []
+    for (let i = 0; i < entries.length; i += MULTIGET_BATCH) {
+      const hrefs = entries.slice(i, i + MULTIGET_BATCH).map(e => `<d:href>${e.href}</d:href>`).join('')
+      const report = `<?xml version="1.0" encoding="utf-8"?>
 <c:addressbook-multiget xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
   <d:prop>
     <d:displayname/>
@@ -64,10 +69,12 @@ router.get('/contacts', async (req, res) => {
   </d:prop>
     ${hrefs}
 </c:addressbook-multiget>`
-    const r2 = await davRequest('REPORT', urlPath, report, null, acct, 0)
-    const cards = extractAddressData(r2.body)
+      const r2 = await davRequest('REPORT', urlPath, report, null, acct, 0)
+      allCards.push(...extractAddressData(r2.body))
+    }
+    const cards = allCards
 
-    const contacts = extractAddressData(r2.body).map(c => {
+    const contacts = cards.map(c => {
       const vcf = c.vcf
       const fn = (vcf.match(/FN:(.+)/) || [])[1] || c.href.split('/').pop()?.replace(/\.vcf$/i, '') || '(unknown)'
       const email = (vcf.match(/EMAIL[^:]*:(.+)/) || [])[1] || ''
