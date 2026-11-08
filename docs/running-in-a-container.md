@@ -72,5 +72,16 @@ scripts/container-smoke.sh leoposta
 
 ## What was verified
 
-See the "Verification" section below; it is updated with each change to the image.
+Run by [scripts/container-smoke.sh](../scripts/container-smoke.sh) against the built image:
+`/api/health` returns `{"ok":true}`, `/` serves the app, `/api` rejects a request without
+a token (401), the runtime token replaces the placeholder in the served JavaScript, the
+process is not root (uid 1000), and the engine reports the healthcheck as healthy.
+
+| Where | Engine | Result |
+|-------|--------|--------|
+| GitHub Actions, linux/amd64 and linux/arm64 | Docker | all checks passed for commit `164967b`, see [image.yml runs](https://github.com/LeonardSchwier/leoposta/actions/workflows/image.yml) |
+| Developer machine (Manjaro, Docker 29.7) | Docker | all checks passed, using a locally assembled stand-in for the Node base image because the local Docker daemon could not pull from Docker Hub |
+
+Not verified: `podman` itself (no Fedora machine was available). The image is a standard
+OCI/Docker image and `podman load` reads `docker save` archives, but run it once and report problems.
 
