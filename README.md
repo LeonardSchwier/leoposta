@@ -8,6 +8,8 @@ A modern, web-based mail client with a clean, familiar native-mail UX.
 Screenshots show the real UI against a fictional fixture mailbox and are
 regenerated with `npm run screenshots`.
 
+Documentation: [ARCHITECTURE.md](ARCHITECTURE.md), [docs index](docs/README.md), [decision records](docs/adr), [glossary](docs/glossary.md).
+
 ## Features
 
 - IMAP/SMTP with multiple accounts
@@ -31,6 +33,22 @@ Verified on the current default branch by running the commands in the last colum
 | Desktop (Tauri) builds | release workflow exists, not verified here | [release.yml](.github/workflows/release.yml) |
 | Published releases | none yet | [CHANGELOG.md](CHANGELOG.md) |
 
+## Run it on Fedora and Debian
+
+A container image is built by [CI](.github/workflows/image.yml) for amd64 and arm64
+and attached to the `latest-image` release, so no registry login is needed.
+
+```bash
+curl -LO https://github.com/LeonardSchwier/leoposta/releases/download/latest-image/leoposta-image-linux-amd64.tar.gz
+podman load -i leoposta-image-linux-amd64.tar.gz      # Fedora; on Debian: docker load -i ...
+podman run -d --name leoposta -p 127.0.0.1:3001:3001 -v leoposta-data:/data \
+  ghcr.io/leonardschwier/leoposta:latest               # on Debian: docker run ...
+```
+
+Then open <http://localhost:3001>. Ports, volume, environment variables, the arm64
+download and the verification record are in
+[docs/running-in-a-container.md](docs/running-in-a-container.md).
+
 ## Tech Stack
 
 - **Frontend**: Svelte 5, TypeScript, Tailwind CSS
@@ -41,7 +59,7 @@ Verified on the current default branch by running the commands in the last colum
 
 ### Prerequisites
 
-- Node.js 18+
+- Node.js 18+ (CI and the container use 22)
 - npm 9+
 
 ### Installation

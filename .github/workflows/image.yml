@@ -1,0 +1,91 @@
+name: Container image
+
+# Builds the image for amd64 and arm64, smoke-tests it, pushes it to ghcr.io and
+# attaches gzip'd `docker save` tarballs to a GitHub release (no login needed to download).
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: image-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/leonardschwier/leoposta
+
+jobs:
+  build:
+    name: Build and test (${{ matrix.arch }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Build image
+        run: docker build -t "$IMAGE:latest" -t "$IMAGE:build-${{ matrix.arch }}" .
+
+      - name: Smoke test
+        run: scripts/container-smoke.sh "$IMAGE:latest"
+
+      - name: Save tarball
+        run: docker save "$IMAGE:latest" | gzip -9 > leoposta-image-linux-${{ matrix.arch }}.tar.gz
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: image-${{ matrix.arch }}
+          path: leoposta-image-linux-${{ matrix.arch }}.tar.gz
+          if-no-files-found: error
+
+      - name: Push per-architecture image to ghcr.io
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          docker tag "$IMAGE:latest" "$IMAGE:sha-${GITHUB_SHA::12}-${{ matrix.arch }}"
+          docker push "$IMAGE:sha-${GITHUB_SHA::12}-${{ matrix.arch }}"
+
+  publish:
+    name: Publish tags and release assets
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      packages: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: image-*
+          merge-multiple: true
+
+      - name: Create multi-arch tags on ghcr.io
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          sha="sha-${GITHUB_SHA::12}"
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then tag="${GITHUB_REF_NAME#v}"; else tag=latest; fi
+          docker buildx imagetools create -t "$IMAGE:$tag" -t "$IMAGE:$sha" \
+            "$IMAGE:$sha-amd64" "$IMAGE:$sha-arm64"
+          docker buildx imagetools inspect "$IMAGE:$tag"
+
+      - name: Attach tarballs to a GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then rel="$GITHUB_REF_NAME"; else rel=latest-image; fi
+          notes="Container image built from commit ${GITHUB_SHA}. Load with: docker load -i leoposta-image-linux-amd64.tar.gz (or podman load -i). See the README section 'Run it on Fedora and Debian'."
+          if gh release view "$rel" >/dev/null 2>&1; then
+            [ "$rel" = latest-image ] && gh release edit "$rel" --notes "$notes"
+          else
+            gh release create "$rel" --target "$GITHUB_SHA" --title "$rel" --notes "$notes"
+          fi
+          gh release upload "$rel" --clobber leoposta-image-linux-*.tar.gz
