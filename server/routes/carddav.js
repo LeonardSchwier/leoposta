@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { resolveAccount } from '../lib/state.js'
-import { davRequest, resolveDavTarget, extractResponseSet } from '../lib/dav.js'
+import { davRequest, resolveDavBase, extractResponseSet, joinDavPath } from '../lib/dav.js'
 import { parseVcf } from '../lib/vcf.js'
 
 const router = Router()
@@ -10,7 +10,7 @@ router.get('/contacts/calendars', async (req, res) => {
   try {
     const acct = resolveAccount(req)
     if (!acct) return res.status(400).json({ error: 'No account configured' })
-    const basePath = resolveDavTarget(acct).basePath
+    const basePath = (await resolveDavBase(acct, 'cards')).basePath
     const profindXml = `<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:" xmlns:crd="urn:ietf:params:xml:ns:carddav">
   <d:prop>
@@ -20,7 +20,9 @@ router.get('/contacts/calendars', async (req, res) => {
 </d:propfind>`
     const r = await davRequest('PROPFIND', basePath, profindXml, null, acct)
     const entries = extractResponseSet(r.body)
-    const books = entries.filter(e => /addressbooks/i.test(e.href) && e.displayname)
+    // Keep entries with a displayname, excluding the home-set root itself.
+    // basePath always ends in '/' (e.g. '/carddav/'); hrefs do too.
+    const books = entries.filter(e => e.displayname && e.href !== basePath)
     res.json({ addressBooks: books })
   } catch (err) {
     console.error('CardDAV calendars error:', err.message)
@@ -35,7 +37,7 @@ router.get('/contacts', async (req, res) => {
     if (!acct) return res.status(400).json({ error: 'No account configured' })
     const { book, q } = req.query
     if (!book) return res.status(400).json({ error: 'book param required' })
-    const basePath = resolveDavTarget(acct).basePath
+    const basePath = (await resolveDavBase(acct, 'cards')).basePath
     const profind = `<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:">
   <d:prop>
@@ -44,7 +46,7 @@ router.get('/contacts', async (req, res) => {
     <d:getcontenttype/>
   </d:prop>
 </d:propfind>`
-    const urlPath = `${basePath}/${book.replace(/^\/+|\/+$/g, '')}`
+    const urlPath = joinDavPath(basePath, book)
     const r = await davRequest('PROPFIND', urlPath, profind, null, acct)
     const entries = extractResponseSet(r.body).filter(e => /\.vcf/i.test(e.href))
     const contacts = []
@@ -84,10 +86,10 @@ router.put('/contact', async (req, res) => {
     const { cards, errors } = parseVcf(vcf)
     if (errors.length) return res.status(400).json({ error: errors[0], errors })
     if (cards.length !== 1) return res.status(400).json({ error: 'PUT /contact accepts exactly one card' })
-    const basePath = resolveDavTarget(acct).basePath
+    const basePath = (await resolveDavBase(acct, 'cards')).basePath
     const card = cards[0]
-    const urlPath = `${basePath}/${book.replace(/^\/+|\/+$/g, '')}/${card.uid}.vcf`
-    const r = await davRequest('PUT', urlPath, card.raw, 'text/vcard; charset=utf-8')
+    const urlPath = joinDavPath(basePath, book) + `/${card.uid}.vcf`
+    const r = await davRequest('PUT', urlPath, card.raw, 'text/vcard; charset=utf-8', acct)
     res.json({ success: true, uid: card.uid, etag: r.headers.etag || '' })
   } catch (err) {
     console.error('CardDAV contact PUT error:', err.message)
@@ -102,9 +104,9 @@ router.delete('/contact', async (req, res) => {
     if (!acct) return res.status(400).json({ error: 'No account configured' })
     const { book, uid } = req.query
     if (!book || !uid) return res.status(400).json({ error: 'book and uid required' })
-    const basePath = resolveDavTarget(acct).basePath
-    const urlPath = `${basePath}/${book.replace(/^\/+|\/+$/g, '')}/${uid}.vcf`
-    await davRequest('DELETE', urlPath, null, null)
+    const basePath = (await resolveDavBase(acct, 'cards')).basePath
+    const urlPath = joinDavPath(basePath, book) + `/${uid}.vcf`
+    await davRequest('DELETE', urlPath, null, null, acct)
     res.json({ success: true })
   } catch (err) {
     console.error('CardDAV contact DELETE error:', err.message)
@@ -121,10 +123,10 @@ router.post('/contacts/import', async (req, res) => {
     if (!book || !vcf) return res.status(400).json({ error: 'book and vcf required' })
     const { cards, errors } = parseVcf(vcf)
     if (errors.length) return res.status(400).json({ error: errors[0], errors })
-    const basePath = resolveDavTarget(acct).basePath
+    const basePath = (await resolveDavBase(acct, 'cards')).basePath
     let imported = 0
     for (const card of cards) {
-      const urlPath = `${basePath}/${book.replace(/^\/+|\/+$/g, '')}/${card.uid}.vcf`
+      const urlPath = joinDavPath(basePath, book) + `/${card.uid}.vcf`
       try {
         await davRequest('PUT', urlPath, card.raw, 'text/vcard; charset=utf-8', acct)
         imported++
