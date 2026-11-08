@@ -2,7 +2,7 @@ import { Router } from 'express'
 import { simpleParser } from 'mailparser'
 import { state, resolveAccount } from '../lib/state.js'
 import { getPoolFor } from '../lib/imap.js'
-import { normalizeFlags, parseFromAddr, toISO } from '../lib/address.js'
+import { normalizeFlags, parseFromAddr, toISO, messageDate } from '../lib/address.js'
 import { processPgp } from '../lib/pgp.js'
 import { applyRules } from '../lib/rules.js'
 
@@ -36,7 +36,7 @@ router.get('/messages', async (req, res) => {
         const result = client.fetch(
           `${start}:${end}`,
           {
-            uid: true, date: true, from: true, to: true, cc: true,
+            uid: true, internalDate: true, from: true, to: true, cc: true,
             subject: true, flags: true, envelope: true,
             bodyStructure: true, 'in-reply-to': true, 'references': true
           },
@@ -78,7 +78,7 @@ router.get('/messages', async (req, res) => {
             to, cc, bcc,
             subject: msg.subject || msg.envelope?.subject || '(No Subject)',
             body: '', bodyHtml: '', snippet: '',
-            date: toISO(msg.date),
+            date: messageDate(msg),
             flags: normalizeFlags(msg.flags),
             hasAttachment: attachments.length > 0,
             attachmentCount: attachments.length,
@@ -124,7 +124,7 @@ router.get('/message/:id', async (req, res) => {
           if (!seqNum) throw new Error('Message UID not found in mailbox')
 
           return client.fetchOne(seqNum.toString(), {
-            uid: true, date: true, from: true, to: true, cc: true,
+            uid: true, internalDate: true, from: true, to: true, cc: true,
             bcc: true, subject: true, flags: true, envelope: true,
             bodyStructure: true, source: true
           })
@@ -187,7 +187,7 @@ router.get('/message/:id', async (req, res) => {
           subject: msg.subject || msg.envelope?.subject || '(No Subject)',
           body: finalBody, bodyHtml: finalHtml,
           pgp: pgp || null,
-          date: toISO(msg.date),
+          date: messageDate(msg),
           flags: normalizeFlags(msg.flags),
           attachments: finalAttachments,
           folder, headers: {}
@@ -253,7 +253,7 @@ router.get('/search', async (req, res) => {
 
         const resultUids = searchUids.slice(0, limit)
         const result = client.fetch(resultUids, {
-          uid: true, date: true, from: true, to: true,
+          uid: true, internalDate: true, from: true, to: true,
           subject: true, flags: true, envelope: true
         }, { op: 'FETCH', uid: true })
 
@@ -269,7 +269,7 @@ router.get('/search', async (req, res) => {
             bcc: [],
             subject: msg.subject || msg.envelope?.subject || '(No Subject)',
             body: '', bodyHtml: '', snippet: '',
-            date: toISO(msg.date),
+            date: messageDate(msg),
             flags: normalizeFlags(msg.flags),
             hasAttachment: false, attachmentCount: 0, attachments: [],
             folder, headers: {}

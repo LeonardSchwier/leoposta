@@ -29,6 +29,11 @@ export function parseFromAddr(fromField) {
   return { name: '', address: '' }
 }
 
+/** imapflow has no `date` field: the sent date is envelope.date, the arrival date internalDate. */
+export function messageDate(msg) {
+  return toISO(msg?.envelope?.date || msg?.internalDate || msg?.date)
+}
+
 export function toISO(d) {
   if (!d) return new Date().toISOString()
   if (d instanceof Date && !isNaN(d.getTime())) return d.toISOString()
