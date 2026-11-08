@@ -61,6 +61,14 @@ for (const f of Object.values(FOLDERS)) {
   f.unseen = f.recent
 }
 
+// IMAP INTERNALDATE format: "01-Nov-2026 09:00:00 +0000"
+function internalDate (d) {
+  const x = new Date(d)
+  const mon = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][x.getUTCMonth()]
+  const p = n => String(n).padStart(2, '0')
+  return `${p(x.getUTCDate())}-${mon}-${x.getUTCFullYear()} ${p(x.getUTCHours())}:${p(x.getUTCMinutes())}:${p(x.getUTCSeconds())} +0000`
+}
+
 function buildRFC822 (m) {
   const head = [
     `From: ${m.from.name} <${m.from.address}>`,
@@ -91,13 +99,13 @@ function buildRFC822 (m) {
       b += `Content-Transfer-Encoding: base64\r\n\r\n${at.body}\r\n`
     }
     b += `--${boundary}--\r\n`
-    return `${head}\r\n\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary="${boundary}"\r\n\r\n${b}`
+    return `${head}\r\nMIME-Version: 1.0\r\nContent-Type: multipart/alternative; boundary="${boundary}"\r\n\r\n${b}`
   }
 
   // Single-part message
   const ctype = m.html ? 'text/html' : 'text/plain'
   return (
-    `${head}\r\n\r\nContent-Type: ${ctype}; charset="utf-8"\r\n\r\n` +
+    `${head}\r\nContent-Type: ${ctype}; charset="utf-8"\r\n\r\n` +
     (m.html || m.text)
   )
 }
@@ -406,7 +414,7 @@ function onConn (socket) {
           ')'.trimEnd()
         )
       if (attrs.has('INTERNALDATE') || attrs.has('UID') && !attrs.has('INTERNALDATE')) {
-        seg.push(`INTERNALDATE "${mail.date}"`)
+        seg.push(`INTERNALDATE "${internalDate(mail.date)}"`)
       }
       if (attrs.has('ENVELOPE')) {
         seg.push(`ENVELOPE (${q(mail.date)} ${q(mail.subject)} ${addrList([mail.from])} NIL ${addrList([mail.from])} ${addrList(mail.to)} ${addrList(mail.cc || [])} NIL ${q(mail.inReplyTo)} ${q(mail.messageId)})`)
@@ -445,7 +453,7 @@ function onConn (socket) {
     const parts = list
       .map(a => `(${q(a.name || '')} NIL ${q(a.address.split('@')[0] || '')} ${q(a.address.split('@')[1] || '')})`)
       .join(' ')
-    return `${parts}`
+    return `(${parts})`
   }
   function bodyStructure (mail) {
     const isMultipart = !!(mail.html && mail.text) || (mail.attachments || []).some(a => a.filename)
