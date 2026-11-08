@@ -31,7 +31,7 @@ export function resolveDavTarget(acct) {
   }
 }
 
-export function davRequest(method, urlPath, body, contentType, acct) {
+export function davRequest(method, urlPath, body, contentType, acct, depth) {
   return new Promise((resolve, reject) => {
     const account = acct || state.accounts[0] || {}
     const t = resolveDavTarget(account)
@@ -44,7 +44,7 @@ export function davRequest(method, urlPath, body, contentType, acct) {
       headers: {
         'Authorization': `Basic ${token}`,
         'Content-Type': contentType || 'application/xml; charset="utf-8"',
-        'Depth': '1'
+        'Depth': depth == null ? '1' : String(depth)
       }
     }
     if (contentType === 'text/xml') opts.headers['Content-Type'] = contentType
@@ -150,6 +150,51 @@ export function clearDavBaseCache() { homeSetCache.clear() }
 export function joinDavPath(basePath, sub) {
   if (sub && sub.startsWith('/')) return sub.replace(/\/+$/, '')
   return (basePath || '').replace(/\/+$/, '') + '/' + (sub || '').replace(/^\/+|\/+$/g, '')
+}
+
+// Extract <carddav:address-data> (or any ns-prefixed address-data) blocks
+// from a multiget response. Returns array of { href, vcf } objects.
+// Extract { href, body, etag } pairs from a multiget-ish REPORT response.
+// `dataTag` is 'address-data' (CardDAV, RFC 6352 §10.2) or
+// 'calendar-data' (CalDAV, RFC 4791 §7.10). Handles both bare and
+// namespace-prefixed (e.g. `<crd:address-data>`) forms.
+export function extractDataBlocks(xml, dataTag) {
+  const results = []
+  const respRe = /<(\w+:)?response[^>]*>([\s\S]*?)<\/\1response>/gi
+  const dataRe = new RegExp(`<((?:\\w+:)?${dataTag})[^>]*>([\\s\\S]*?)<\\/\\1>`, 'i')
+  const etagRe = /<(\w+:)?etag[^>]*>([\s\S]*?)<\/\1etag>/i
+  const hrefRe = /<(\w+:)?href[^>]*>([\s\S]*?)<\/\1href>/i
+  let m
+  while ((m = respRe.exec(xml)) !== null) {
+    const inner = m[2]
+    const hrefM = inner.match(hrefRe)
+    const dataM = inner.match(dataRe)
+    const etagM = inner.match(etagRe)
+    const href = hrefM ? hrefM[2].trim() : ''
+    const body = dataM ? dataM[2].trim() : ''
+    if (href && body) results.push({ href, body, etag: (etagM ? etagM[2].trim().replace(/"/g, '') : '') })
+  }
+  return results
+}
+
+// Convenience wrapper for CardDAV — returns { href, vcf, etag }.
+export function extractAddressData(xml) {
+  return extractDataBlocks(xml, 'address-data').map(({ href, body, etag }) => ({ href, vcf: body, etag }))
+}
+
+// Convert a date string like '2025-01-01' or '20250101T000000Z' to CalDAV
+// time-range format 'yyyyMMddTHHmmssZ' (UTC).
+export function toDavTime(s, endOfDay = false) {
+  if (!s) return ''
+  // Already in DAV format
+  if (/^\d{8}T\d{6}Z$/.test(s)) return s
+  // Full ISO 'YYYY-MM-DDTHH:mm:ssZ' (check before date-only)
+  const m2 = s.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})/)
+  if (m2) return `${m2[1]}${m2[2]}${m2[3]}T${m2[4]}${m2[5]}${m2[6]}Z`
+  // ISO date 'YYYY-MM-DD'
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
+  if (m) return `${m[1]}${m[2]}${m[3]}T${endOfDay ? '235959' : '000000'}Z`
+  return s
 }
 
 export function extractResponseSet(xml) {

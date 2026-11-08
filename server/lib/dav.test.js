@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { resolveDavTarget, resolveDavBase, extractResponseSet, clearDavBaseCache } from './dav.js'
+import { resolveDavTarget, resolveDavBase, extractResponseSet, clearDavBaseCache, extractAddressData, extractDataBlocks, toDavTime } from './dav.js'
 import { accountPayloadFrom } from './state.js'
 
 test('resolveDavTarget: davUrl with explicit port and path', () => {
@@ -259,4 +259,94 @@ test('extractResponseSet: handles lowercase d: namespace (Radical / davserver)',
   assert.equal(r.length, 1)
   assert.equal(r[0].href, '/dav/j/')
   assert.equal(r[0].displayname, 'j')
+})
+
+// ---- toDavTime: CalDAV time-range conversion (RFC 4791 §5.9.1) ----
+
+test('toDavTime: ISO date (YYYY-MM-DD) → UTC start of day', () => {
+  assert.equal(toDavTime('2025-01-15'), '20250115T000000Z')
+})
+
+test('toDavTime: ISO date with endOfDay → UTC end of day', () => {
+  assert.equal(toDavTime('2025-01-15', true), '20250115T235959Z')
+})
+
+test('toDavTime: full ISO datetime → UTC', () => {
+  assert.equal(toDavTime('2025-01-15T14:30:00Z'), '20250115T143000Z')
+})
+
+test('toDavTime: already-DAV format passes through', () => {
+  assert.equal(toDavTime('20250115T143000Z'), '20250115T143000Z')
+})
+
+test('toDavTime: empty/null returns empty string', () => {
+  assert.equal(toDavTime(''), '')
+  assert.equal(toDavTime(null), '')
+  assert.equal(toDavTime(undefined), '')
+})
+
+// ---- extractAddressData / extractDataBlocks ----
+
+function multigetXml(dataTag, ns) {
+  const p = ns || ''
+  return `<?xml version="1.0"?><${p}multistatus xmlns:${p.slice(0,1)}="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+<${p}response><${p}href>/carddav/a/1.vcf</${p}href><${p}propstat><${p}prop>
+<${p}etag>"abc"</${p}etag><c:address-data content-type="text/vcard">BEGIN:VCARD
+VERSION:3.0
+FN:Test One
+END:VCARD</c:address-data></${p}prop></${p}propstat></${p}response>
+<${p}response><${p}href>/carddav/a/2.vcf</${p}href><${p}propstat><${p}prop>
+<c:address-data content-type="text/vcard">BEGIN:VCARD
+VERSION:3.0
+FN:Test Two
+END:VCARD</c:address-data></${p}prop></${p}propstat></${p}response>
+</${p}multistatus>`
+}
+
+test('extractAddressData: parses bare <response>/<address-data> tags', () => {
+  const r = extractAddressData(multigetXml('address-data', ''))
+  assert.equal(r.length, 2)
+  assert.equal(r[0].href, '/carddav/a/1.vcf')
+  assert.ok(r[0].vcf.includes('FN:Test One'))
+  assert.ok(r[0].vcf.includes('BEGIN:VCARD'))
+  assert.equal(r[1].href, '/carddav/a/2.vcf')
+  assert.ok(r[1].vcf.includes('FN:Test Two'))
+})
+
+test('extractAddressData: parses D:-prefixed (OX) response', () => {
+  const xml = `<?xml version="1.0"?><D:multistatus xmlns:D="DAV:" xmlns:crd="urn:ietf:params:xml:ns:carddav">
+<D:response><D:href>/carddav/32/x.vcf</D:href><D:propstat><D:prop>
+<D:etag>"xyz"</D:etag><crd:address-data content-type="text/vcard">BEGIN:VCARD
+FN:Ox One
+END:VCARD</crd:address-data></D:prop></D:propstat></D:response>
+</D:multistatus>`
+  const r = extractAddressData(xml)
+  assert.equal(r.length, 1)
+  assert.equal(r[0].href, '/carddav/32/x.vcf')
+  assert.ok(r[0].vcf.includes('FN:Ox One'))
+  assert.equal(r[0].etag, 'xyz')
+})
+
+test('extractDataBlocks: works for calendar-data (CalDAV)', () => {
+  const xml = `<?xml version="1.0"?><d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
+<d:response><d:href>/caldav/9/abc.ics</d:href><d:propstat><d:prop>
+<d:etag>"e1"</d:etag>
+<c:calendar-data>
+BEGIN:VCALENDAR
+BEGIN:VEVENT
+UID:abc
+SUMMARY:Test Event
+DTSTART:20250115T120000Z
+DTEND:20250115T130000Z
+END:VEVENT
+END:VCALENDAR
+</c:calendar-data>
+</d:prop></d:propstat></d:response>
+</d:multistatus>`
+  const r = extractDataBlocks(xml, 'calendar-data')
+  assert.equal(r.length, 1)
+  assert.equal(r[0].href, '/caldav/9/abc.ics')
+  assert.ok(r[0].body.includes('SUMMARY:Test Event'))
+  assert.ok(r[0].body.includes('BEGIN:VCALENDAR'))
+  assert.equal(r[0].etag, 'e1')
 })
