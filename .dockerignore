@@ -1,0 +1,11 @@
+.git
+node_modules
+dist
+test-results
+playwright-report
+.e2e-data
+src-tauri
+server/account*.json
+server/accounts.json
+server/scheduled.json
+server/*.asc

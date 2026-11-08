@@ -3,9 +3,13 @@
 ## Setup
 
 ```bash
-npm ci
-npx playwright install chromium   # only for end-to-end tests
+npm run setup     # npm ci + Playwright Chromium for the end-to-end tests
+npm run check     # typecheck, unit, server tests and build (same as CI, without e2e)
 ```
+
+Layout and data flow: [ARCHITECTURE.md](ARCHITECTURE.md). Terms: [glossary](docs/glossary.md).
+Larger design choices get a short record in [docs/adr](docs/adr) (context, decision,
+consequences), numbered in order.
 
 ## Checks (all must pass, CI runs the same)
 
@@ -27,3 +31,5 @@ npm run test:e2e
 - Use fictional data (`example.test` addresses) in tests, fixtures and screenshots.
 - Regenerate README screenshots with `npm run screenshots`; keep each under 300 KB.
 - Never commit secrets or real mail.
+- Editor settings come from [.editorconfig](.editorconfig).
+- Image changes: build with `docker build -t leoposta .` and run `scripts/container-smoke.sh leoposta`.
