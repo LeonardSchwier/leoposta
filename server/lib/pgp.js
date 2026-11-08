@@ -46,9 +46,18 @@ export async function pgpState() {
 
 export async function savePgp({ privateAsc, publicAsc, passphrase }) {
   if (privateAsc) {
-    await openpgp.readPrivateKey({ armoredKey: privateAsc })
+    const key = await openpgp.readPrivateKey({ armoredKey: privateAsc })
     fs.writeFileSync(PGP_PRIVATE_FILE, privateAsc.trim() + '\n', { mode: 0o600 })
-    unlocked = null
+    // Auto-unlock when the caller supplied a usable passphrase so UI save works
+    // without a separate /api/pgp/unlock step. Wrong passphrase → rethrow.
+    if (typeof passphrase === 'string' && passphrase.length && !key.isDecrypted()) {
+      const unlockedKey = await openpgp.decryptKey({ privateKey: key, passphrase })
+      unlocked = { key: unlockedKey, expiresAt: Date.now() + KEY_TTL_MS }
+    } else if (key.isDecrypted()) {
+      unlocked = { key, expiresAt: Date.now() + KEY_TTL_MS }
+    } else {
+      unlocked = null
+    }
   }
   if (publicAsc) {
     await openpgp.readKey({ armoredKey: publicAsc })
