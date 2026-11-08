@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { resolveAccount } from '../lib/state.js'
-import { davRequest, DAV_PATH_PREFIX, extractResponseSet } from '../lib/dav.js'
+import { davRequest, resolveDavTarget, extractResponseSet } from '../lib/dav.js'
 
 const router = Router()
 
@@ -9,7 +9,7 @@ router.get('/calendar/calendars', async (req, res) => {
   try {
     const acct = resolveAccount(req)
     if (!acct) return res.status(400).json({ error: 'No account configured' })
-    const basePath = DAV_PATH_PREFIX(acct.imapUser)
+    const basePath = resolveDavTarget(acct).basePath
     const profindXml = `<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
   <d:prop>
@@ -35,7 +35,7 @@ router.get('/calendar/events', async (req, res) => {
     if (!acct) return res.status(400).json({ error: 'No account configured' })
     const { calendar, start, end } = req.query
     if (!calendar) return res.status(400).json({ error: 'calendar param required' })
-    const basePath = DAV_PATH_PREFIX(acct.imapUser)
+    const basePath = resolveDavTarget(acct).basePath
     const report = `<?xml version="1.0" encoding="utf-8"?>
 <c:calendar-query xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav">
   <d:prop>
@@ -78,7 +78,7 @@ router.put('/calendar/event', async (req, res) => {
     if (!acct) return res.status(400).json({ error: 'No account configured' })
     const { calendar, ics, uid } = req.body || {}
     if (!calendar || !ics) return res.status(400).json({ error: 'calendar and ics required' })
-    const basePath = DAV_PATH_PREFIX(acct.imapUser)
+    const basePath = resolveDavTarget(acct).basePath
     const urlPath = `${basePath}/${calendar.replace(/^\/+|\/+$/g, '')}/${uid || Date.now()}.ics`
     const r = await davRequest('PUT', urlPath, ics, 'text/calendar; charset=utf-8', acct)
     res.json({ success: true, uid: uid || urlPath.split('/').pop().replace('.ics', ''), etag: r.headers.etag || '' })
@@ -95,7 +95,7 @@ router.delete('/calendar/event', async (req, res) => {
     if (!acct) return res.status(400).json({ error: 'No account configured' })
     const { calendar, uid } = req.query
     if (!calendar || !uid) return res.status(400).json({ error: 'calendar and uid required' })
-    const basePath = DAV_PATH_PREFIX(acct.imapUser)
+    const basePath = resolveDavTarget(acct).basePath
     const urlPath = `${basePath}/${calendar.replace(/^\/+|\/+$/g, '')}/${uid}.ics`
     await davRequest('DELETE', urlPath, null, null, acct)
     res.json({ success: true })
@@ -121,7 +121,7 @@ router.post('/calendar/import', async (req, res) => {
       else if (current) current.lines.push(line)
     }
     if (!events.length) return res.status(400).json({ error: 'No VEVENT found in ICS' })
-    const basePath = DAV_PATH_PREFIX(acct.imapUser)
+    const basePath = resolveDavTarget(acct).basePath
     let imported = 0
     for (const ev of events) {
       const uidMatch = ev.match(/UID:(.+)/)
