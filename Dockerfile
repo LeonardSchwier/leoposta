@@ -11,8 +11,7 @@ RUN npm ci --no-audit --no-fund
 COPY . .
 # The frontend needs the API token at build time. A fixed placeholder is baked in
 # and replaced at container start (container/entrypoint.sh), so no secret is in the image.
-ENV VITE_LEOPOSTA_TOKEN=__LEOPOSTA_TOKEN__
-RUN npm run build
+RUN VITE_LEOPOSTA_TOKEN=__LEOPOSTA_TOKEN__ npm run build
 
 # ---- deps: production dependencies only --------------------------------------
 FROM ${NODE_IMAGE} AS deps
