@@ -22,7 +22,7 @@ describe('normalizeSignature', () => {
   })
 
   it('preserves all fields when given', () => {
-    const sig = { enabled: true, text: '— Leo', position: 'after_quote' }
+    const sig = { enabled: true, text: '— Leo', position: 'after_quote' as const }
     expect(normalizeSignature(sig)).toEqual(sig)
   })
 })
@@ -66,7 +66,7 @@ describe('buildMessageBody — reply, position=standard', () => {
 })
 
 describe('buildMessageBody — reply, position=after_quote', () => {
-  const sig: Signature = { enabled: true, text: '— Leo', position: 'after_quote' }
+  const sig: Signature = { enabled: true, text: '— Leo', position: 'after_quote' as const }
 
   it('returns: replyText, blank line, --, original, blank line, signature', () => {
     const result = buildMessageBody(sig, 'Thanks!', 'Original body')

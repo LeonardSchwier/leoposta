@@ -8,12 +8,12 @@ export function setActiveAccountEmail(email: string | null) {
   activeAccountEmail = email
 }
 
-function authHeaders(extra: Record<string, string> = {}): Record<string, string> {
+function authHeaders(extra: HeadersInit = {}): Record<string, string> {
   return {
     'Content-Type': 'application/json',
     'x-leoposta-token': API_TOKEN,
     ...(activeAccountEmail ? { 'x-account': activeAccountEmail } : {}),
-    ...extra
+    ...Object.fromEntries(new Headers(extra))
   }
 }
 
