@@ -2,6 +2,16 @@ import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import { resolveDevToken } from './scripts/dev-token.js'
+
+// Make the frontend agree with the backend's dev token out of the box so the
+// user can run `npm run dev` and `npm run server` in two terminals without
+// touching env vars. If VITE_LEOPOSTA_TOKEN is already set (shell or a prior
+// .env load wins later), this is a no-op.
+if (!process.env.VITE_LEOPOSTA_TOKEN) {
+  const t = resolveDevToken({ persist: true })
+  if (t) process.env.VITE_LEOPOSTA_TOKEN = t
+}
 
 // https://vite.dev/config/
 export default defineConfig({
