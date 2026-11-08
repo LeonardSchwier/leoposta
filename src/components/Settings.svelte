@@ -387,12 +387,6 @@
             <span>Group messages by thread</span>
           </label>
         </div>
-        <div class="form-group checkbox">
-          <label>
-            <input type="checkbox" bind:checked={$store.showRowActions} />
-            <span>Show quick actions on each message</span>
-          </label>
-        </div>
       </div>
       
       <div class="form-group">
