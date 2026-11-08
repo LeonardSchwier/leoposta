@@ -73,8 +73,13 @@ export const MailAPI = {
   idle: () => withToken(`${API_BASE}/api/idle`),
 }
 
+/** Map a DAV server entry ({href, displayname, etag}) to the UI shape ({uri, name}). */
+function toCal(e: any) { return { uri: e.href ?? e.uri, name: e.displayname ?? e.name ?? '' } }
+
 export const CalendarAPI = {
-  calendars: () => api('/calendar/calendars'),
+  calendars: () => api('/calendar/calendars').then((r: any) => ({
+    calendars: (r.calendars || []).map(toCal)
+  })),
   events: (calendar: string, start: string, end: string) =>
     api(`/calendar/events?calendar=${encodeURIComponent(calendar)}&start=${start}&end=${end}`),
   saveEvent: (calendar: string, ics: string, uid?: string) =>
@@ -86,7 +91,9 @@ export const CalendarAPI = {
 }
 
 export const ContactsAPI = {
-  addressBooks: () => api('/contacts/calendars'),
+  addressBooks: () => api('/contacts/calendars').then((r: any) => ({
+    addressBooks: (r.addressBooks || r.calendars || []).map(toCal)
+  })),
   contacts: (book: string, q?: string) =>
     api(`/contacts?book=${encodeURIComponent(book)}${q ? `&q=${encodeURIComponent(q)}` : ''}`),
   saveContact: (book: string, vcf: string) =>
