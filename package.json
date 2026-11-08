@@ -5,10 +5,10 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "dev": "vite",
-    "build": "vite build",
+    "dev": "node scripts/dev-token.js && vite",
+    "build": "node scripts/dev-token.js && vite build",
     "preview": "vite preview",
-    "server": "node server/index.js",
+    "server": "node scripts/dev-token.js && node server/index.js",
     "start": "npm run server & npm run dev",
     "bundle:backend": "bash scripts/bundle-backend.sh",
     "tauri": "tauri",

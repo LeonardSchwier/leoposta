@@ -11,9 +11,36 @@ export const ACCOUNTS_FILE = path.join(DATA_DIR, 'accounts.json')
 export const LEGACY_ACCOUNT_FILE = path.join(DATA_DIR, 'account.json')
 export const SCHEDULED_FILE = path.join(DATA_DIR, 'scheduled.json')
 export const RULES_FILE = path.join(DATA_DIR, 'rules.json')
+export const DEV_TOKEN_FILE = path.join(SERVER_DIR, '.dev-token')
 
+// Read the shared local dev token (server/.dev-token) if present. Created once
+// per machine (see scripts/dev-token.js) and shared with the Vite build so the
+// backend and frontend agree on the token without extra env wiring.
+function readDevTokenFile() {
+  try {
+    const v = fs.readFileSync(DEV_TOKEN_FILE, 'utf-8').trim()
+    return v.length ? v : ''
+  } catch { return '' }
+}
+function writeDevTokenFile(token) {
+  try {
+    fs.writeFileSync(DEV_TOKEN_FILE, token, { mode: 0o600, flag: 'wx' })
+    return token
+  } catch (e) {
+    if (e && e.code === 'EEXIST') {
+      const existing = readDevTokenFile()
+      if (existing.length) return existing
+    }
+    return token
+  }
+}
+
+// Token priority: LEOPOSTA_TOKEN env → server/.dev-token file → generate and
+// persist a new one (shared with the Vite build so frontend + backend agree).
+const fileToken = readDevTokenFile()
 export const API_TOKEN = process.env.LEOPOSTA_TOKEN
-  || crypto.randomBytes(32).toString('hex')
+  || fileToken
+  || writeDevTokenFile(crypto.randomBytes(32).toString('hex'))
 export const TOKEN_FROM_ENV = !!process.env.LEOPOSTA_TOKEN
 export const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS
   || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001')
