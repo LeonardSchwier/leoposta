@@ -1,6 +1,6 @@
 import express, { Router } from 'express'
 import { state, saveScheduled, resolveAccount, getActiveAccount } from '../lib/state.js'
-import { createSmtpTransporter } from '../lib/imap.js'
+import { createSmtpTransporter, saveToSentFolder } from '../lib/imap.js'
 import { scrubOutboundHtml } from '../lib/sanitize.js'
 
 const router = Router()
@@ -39,19 +39,27 @@ router.post('/send', express.json({ limit: '35mb' }), async (req, res) => {
     }
 
     if (scheduled) {
+      const when = new Date(scheduled).toISOString()
       const msg = {
         id: Date.now().toString(),
         ...messageData,
-        scheduled: new Date(scheduled).toISOString(),
+        scheduled: when,
         status: 'pending'
       }
       state.scheduledMessages.push(msg)
       saveScheduled()
+      console.log(`[send] SCHEDULED for ${when} (${when <= new Date().toISOString() ? 'PAST — will fire on next 30s tick' : 'future'})`)
       res.json({ success: true, scheduled: true })
     } else {
       const transporter = createSmtpTransporter(acct)
       const info = await transporter.sendMail(messageData)
-      res.json({ success: true, messageId: info.messageId })
+      const messageId = info.messageId
+      console.log(`[send] IMMEDIATE send to ${messageData.to} (id=${messageId})`)
+      // Async fire-and-forget; never blocks the response or fails the send.
+      saveToSentFolder(acct, messageData, { messageId }).catch(err => {
+        console.error('[send] saveToSentFolder failed (immediate):', err && err.message)
+      })
+      res.json({ success: true, messageId })
     }
   } catch (err) {
     console.error('Error sending message:', err)
@@ -101,7 +109,13 @@ export async function sendScheduledMessage(msg) {
   }
 
   const transporter = createSmtpTransporter(acct)
-  await transporter.sendMail(messageData)
+  const info = await transporter.sendMail(messageData)
+  const messageId = info.messageId
+  // Async fire-and-forget; never blocks the scheduler or fails the send.
+  saveToSentFolder(acct, messageData, { messageId }).catch(err => {
+    console.error('[send] saveToSentFolder failed (scheduled):', err && err.message)
+  })
+  return messageId
 }
 
 export function processScheduledMessages() {

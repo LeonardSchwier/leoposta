@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { resolveAccount, state, invalidateAccountDavCache } from '../lib/state.js'
-import { davRequest, resolveDavBase, extractResponseSet, extractDataBlocks, joinDavPath, toDavTime } from '../lib/dav.js'
+import { davRequest, resolveDavBase, extractResponseSet, extractDataBlocks, isCalendarResource, joinDavPath, toDavTime } from '../lib/dav.js'
 import { TTL_LONG } from '../lib/davcache.js'
 
 const router = Router()
@@ -21,9 +21,14 @@ router.get('/calendar/calendars', async (req, res) => {
 </d:propfind>`
     const r = await davRequest('PROPFIND', basePath, profindXml, null, acct)
     const entries = extractResponseSet(r.body)
-    // Drop the home-set root itself (href === basePath). Everything else has a
-    // displayname and is a usable calendar.
-    const calendars = entries.filter(e => e.displayname && e.href !== basePath)
+    // Drop the home-set root itself (href === basePath) AND any sibling
+    // collection that is not a real user-calendar (RFC 6746
+    // schedule-inbox / schedule-outbox) — REPORT on those 403s.
+    const calendars = entries.filter(e =>
+      e.displayname &&
+      e.href !== basePath &&
+      isCalendarResource(e)
+    )
     res.json({ calendars })
   } catch (err) {
     console.error('CalDAV calendars error:', err.message)
@@ -72,7 +77,14 @@ router.get('/calendar/events', async (req, res) => {
       const dtend = (ics.match(/DTEND[^:]*:(.+)/) || [])[1] || ''
       const location = (ics.match(/LOCATION:(.+)/) || [])[1] || ''
       const description = (ics.match(/DESCRIPTION:(.+)/) || [])[1] || ''
-      return { uid: uid.trim(), summary: summary.trim(), start: dtstart.trim(), end: dtend.trim(), location: location.trim(), description: description.trim(), etag: b.etag || '', href: b.href, ics }
+      const attendees = []
+      const reAtt = /ATTENDEE[^:]*mailto:([^;\s\r\n]+)/g
+      let m
+      while ((m = reAtt.exec(ics)) !== null) {
+        const addr = m[1].trim()
+        if (addr) attendees.push(addr)
+      }
+      return { uid: uid.trim(), summary: summary.trim(), start: dtstart.trim(), end: dtend.trim(), location: location.trim(), description: description.trim(), attendees, etag: b.etag || '', href: b.href, ics }
     })
     const payload = { events }
     state.davCache.set(cacheKey, payload, TTL_LONG)

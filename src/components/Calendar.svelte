@@ -30,6 +30,8 @@
   let fLocation = $state('')
   let fDescription = $state('')
   let fAllDay = $state(false)
+  let fAttendees = $state('') // comma/space separated emails
+  let fTargetCal = $state<string>('') // explicit target calendar uri (overrides firstSel)
 
   function fmtISODate(d: Date): string {
     return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
@@ -126,6 +128,8 @@
     fLocation = ''
     fDescription = ''
     fAllDay = false
+    fAttendees = ''
+    fTargetCal = firstSel?.uri || (calendars[0] && calendars[0].uri) || ''
     showEditor = true
   }
 
@@ -140,6 +144,8 @@
     fEndTime = fTime || ''
     fLocation = ev.location || ''
     fDescription = ev.description || ''
+    fAttendees = (ev.attendees as string[] | undefined)?.join(', ') || ''
+    fTargetCal = firstSel?.uri || ''
     showEditor = true
   }
 
@@ -154,12 +160,21 @@
     return fEnd.replace(/-/g, '') + 'T' + (t.length >= 4 ? t.slice(0, 4) : '1000') + '00'
   }
 
+  function targetCalUri(): string | null {
+    return fTargetCal || firstSel?.uri || (calendars[0] && calendars[0].uri) || null
+  }
+
   async function saveEvent() {
-    if (!firstSel) return
+    const targetUri = targetCalUri()
+    if (!targetUri) return
     if (!fSummary.trim() && !fDescription.trim()) { showToast('Add a title or description'); return }
     try {
       busy = true
       const uid = editingUid || ('leoposta_' + Date.now())
+      const attendees = fAttendees
+        .split(/[,\s;]+/)
+        .map(s => s.trim())
+        .filter(s => s && s.includes('@'))
       const ev = {
         summary: fSummary,
         start: combinedStart(),
@@ -167,9 +182,10 @@
         location: fLocation,
         description: fDescription,
         allDay: fAllDay,
+        attendees: attendees.length ? attendees : undefined,
       }
       const ics = eventToICS(ev, uid)
-      await CalendarAPI.saveEvent(firstSel.uri, ics, editingUid || undefined)
+      await CalendarAPI.saveEvent(targetUri, ics, editingUid || undefined)
       showEditor = false
       await loadEvents()
       showToast(editingUid ? 'Event updated' : 'Event created')
@@ -177,11 +193,12 @@
   }
 
   async function deleteEvent(uid: string) {
-    if (!firstSel) return
+    const targetUri = targetCalUri()
+    if (!targetUri) return
     if (!confirm('Delete this event?')) return
     try {
       busy = true
-      await CalendarAPI.deleteEvent(firstSel.uri, uid)
+      await CalendarAPI.deleteEvent(targetUri, uid)
       selectedUid = null
       await loadEvents()
       showToast('Event deleted')
@@ -322,7 +339,16 @@
     <div class="modal-back" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }} role="dialog">
       <div class="modal">
         <h4>{editingUid ? 'Edit event' : 'New event'}</h4>
-        {#if firstSel}<p class="cal-target">Target calendar: {firstSel.name}</p>{/if}
+        {#if calendars.length}
+          <label>
+            <span>Target calendar</span>
+            <select bind:value={fTargetCal}>
+              {#each calendars as c (c.uri)}
+                <option value={c.uri}>{c.name}</option>
+              {/each}
+            </select>
+          </label>
+        {/if}
         <label>
           <span>Title</span>
           <input type="text" bind:value={fSummary} placeholder="Event title" />
@@ -339,6 +365,7 @@
           {#if !fAllDay}<label><span>Time</span><input type="time" bind:value={fEndTime} placeholder={fTime || '10:00'} /></label>{/if}
         </div>
         <label><span>Location</span><input type="text" bind:value={fLocation} /></label>
+        <label><span>Attendees</span><input type="text" bind:value={fAttendees} placeholder="alice@example.com, bob@example.com" /></label>
         <label><span>Description</span><textarea bind:value={fDescription} rows="3"></textarea></label>
         <div class="actions">
           {#if editingUid}<button class="danger" onclick={() => { showEditor = false; deleteEvent(editingUid!) }}>Delete</button>{/if}

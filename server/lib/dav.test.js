@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { resolveDavTarget, resolveDavBase, extractResponseSet, clearDavBaseCache, extractAddressData, extractDataBlocks, toDavTime, timeoutForMethod, multigetWithRetry, DAV_READ_TIMEOUT_MS, DAV_WRITE_TIMEOUT_MS } from './dav.js'
+import { resolveDavTarget, resolveDavBase, extractResponseSet, clearDavBaseCache, extractAddressData, extractDataBlocks, toDavTime, timeoutForMethod, multigetWithRetry, DAV_READ_TIMEOUT_MS, DAV_WRITE_TIMEOUT_MS, isCalendarResource } from './dav.js'
 import { accountPayloadFrom } from './state.js'
 
 test('resolveDavTarget: davUrl with explicit port and path', () => {
@@ -234,8 +234,29 @@ test('extractResponseSet: handles bare (unqualified) DAV tags', () => {
 <response><href>/calendars/b</href><propstat><prop><displayname>B</displayname></prop></propstat></response>`
   const r = extractResponseSet(xml)
   assert.equal(r.length, 2)
-  assert.deepEqual(r[0], { href: '/calendars/a', displayname: 'A', etag: 'abc' })
-  assert.deepEqual(r[1], { href: '/calendars/b', displayname: 'B', etag: '' })
+  assert.deepEqual(r[0], { href: '/calendars/a', displayname: 'A', etag: 'abc', resourcetype: [] })
+  assert.deepEqual(r[1], { href: '/calendars/b', displayname: 'B', etag: '', resourcetype: [] })
+})
+
+test('extractResponseSet: captures resourcetype local names (bare + c: prefixed)', () => {
+  const xml = `<?xml version="1.0"?>
+<response><href>/caldav/primary/</href><propstat><prop>
+  <resourcetype><collection/><calendar/></resourcetype>
+  <displayname>Personal</displayname>
+</prop></propstat></response>
+<response><href>/caldav/primary/si/</href><propstat><prop>
+  <resourcetype><collection/><c:schedule-inbox/></resourcetype>
+  <displayname>Schedule Inbox</displayname>
+</prop></propstat></response>
+<response><href>/caldav/primary/so/</href><propstat><prop>
+  <resourcetype><collection/><c:schedule-outbox/></resourcetype>
+  <displayname>Schedule Outbox</displayname>
+</prop></propstat></response>`
+  const r = extractResponseSet(xml)
+  assert.equal(r.length, 3)
+  assert.deepEqual(r[0].resourcetype, ['collection', 'calendar'])
+  assert.deepEqual(r[1].resourcetype, ['collection', 'schedule-inbox'])
+  assert.deepEqual(r[2].resourcetype, ['collection', 'schedule-outbox'])
 })
 
 test('extractResponseSet: handles D: namespace-prefixed DAV tags (Open-Xchange)', () => {
@@ -246,8 +267,8 @@ test('extractResponseSet: handles D: namespace-prefixed DAV tags (Open-Xchange)'
 </D:multistatus>`
   const r = extractResponseSet(xml)
   assert.equal(r.length, 2)
-  assert.deepEqual(r[0], { href: '/caldav/', displayname: 'Calendars', etag: '' })
-  assert.deepEqual(r[1], { href: '/caldav/42/', displayname: 'Birthdays', etag: 'wxyz' })
+  assert.deepEqual(r[0], { href: '/caldav/', displayname: 'Calendars', etag: '', resourcetype: [] })
+  assert.deepEqual(r[1], { href: '/caldav/42/', displayname: 'Birthdays', etag: 'wxyz', resourcetype: [] })
 })
 
 test('extractResponseSet: handles lowercase d: namespace (Radical / davserver)', () => {
@@ -259,6 +280,28 @@ test('extractResponseSet: handles lowercase d: namespace (Radical / davserver)',
   assert.equal(r.length, 1)
   assert.equal(r[0].href, '/dav/j/')
   assert.equal(r[0].displayname, 'j')
+})
+
+// ---- isCalendarResource ----
+
+test('isCalendarResource: allows entry with no resourcetype (legacy servers)', () => {
+  assert.equal(isCalendarResource({ href: '/x', displayname: 'X', etag: '', resourcetype: [] }), true)
+})
+
+test('isCalendarResource: allows c:calendar', () => {
+  assert.equal(isCalendarResource({ href: '/x', displayname: 'X', etag: '', resourcetype: ['collection', 'calendar'] }), true)
+})
+
+test('isCalendarResource: rejects schedule-inbox', () => {
+  assert.equal(isCalendarResource({ href: '/x', displayname: 'SIn', etag: '', resourcetype: ['collection', 'schedule-inbox'] }), false)
+})
+
+test('isCalendarResource: rejects schedule-outbox', () => {
+  assert.equal(isCalendarResource({ href: '/x', displayname: 'SOut', etag: '', resourcetype: ['collection', 'schedule-outbox'] }), false)
+})
+
+test('isCalendarResource: rejects non-calendar collection (e.g. CardDAV addressbook)', () => {
+  assert.equal(isCalendarResource({ href: '/x', displayname: 'X', etag: '', resourcetype: ['collection', 'addressbook'] }), false)
 })
 
 // ---- toDavTime: CalDAV time-range conversion (RFC 4791 §5.9.1) ----

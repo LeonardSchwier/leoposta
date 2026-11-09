@@ -253,19 +253,42 @@ export function extractResponseSet(xml) {
   )
   const innerOf = (m) => (m[2] ?? m[5] ?? '').trim()
   const respRe = new RegExp(tagRe('response').source, 'g')
+  // Matches any self-closing tag inside a <resourcetype> block, with
+  // optional namespace prefix (e.g. <c:schedule-inbox/>) or bare.
+  const RES_TYPES_RE = /<(\w+:)?([\w\-]+)\s*\//
+  const RT_RE = new RegExp(tagRe('resourcetype').source)
   let m
   while ((m = respRe.exec(xml)) !== null) {
     const inner = innerOf(m)
-    const hrefRe = tagRe('href')
-    const nameRe = tagRe('displayname')
-    const etagRe = tagRe('etag')
-    const hrefM = inner.match(hrefRe)
-    const nameM = inner.match(nameRe)
-    const etagM = inner.match(etagRe)
+    const hrefM = inner.match(tagRe('href'))
+    const nameM = inner.match(tagRe('displayname'))
+    const etagM = inner.match(tagRe('etag'))
     const href = hrefM ? innerOf(hrefM) : ''
     const displayname = nameM ? innerOf(nameM) : ''
     const etag = etagM ? innerOf(etagM).replace(/"/g, '') : ''
-    if (href) responses.push({ href, displayname, etag })
+    // Local names (not namespace URIs) — enough for client-side filtering
+    // across arbitrary CalDAV backends that vary their ns prefixes.
+    const resourcetype = []
+    const rtM = inner.match(RT_RE)
+    if (rtM) {
+      const rtInner = innerOf(rtM)
+      for (const m2 of rtInner.matchAll(new RegExp(RES_TYPES_RE.source, 'g'))) {
+        resourcetype.push(m2[2])
+      }
+    }
+    if (href) responses.push({ href, displayname, etag, resourcetype })
   }
   return responses
+}
+
+// A collection is a *user-viewable* CalDAV calendar iff its resourcetype
+// includes c:calendar.  Siblings like schedule-inbox / schedule-outbox
+// (RFC 6746 iMip plumbing) do NOT include c:calendar and would 403 on
+// REPORT, so they are excluded.
+// Servers that do not report resourcetype at all are kept with the old
+// lenient behaviour (treat as calendar) so we don't regress on older or
+// non-standard backends.
+export function isCalendarResource(entry) {
+  const rt = (entry && Array.isArray(entry.resourcetype)) ? entry.resourcetype : []
+  return rt.length === 0 || rt.includes('calendar')
 }

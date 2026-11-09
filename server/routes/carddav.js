@@ -88,7 +88,11 @@ router.get('/contacts', async (req, res) => {
           const phone = (vcf.match(/TEL[^:]*:(.+)/) || [])[1] || ''
           const uid = (vcf.match(/UID:(.+)/) || [])[1] || c.href.split('/').pop()?.replace(/\.vcf$/i, '')
           const org = (vcf.match(/ORG:(.+)/) || [])[1] || ''
-          return { uid: uid.trim(), name: fn.trim(), email: email.trim(), phone: phone.trim(), org: org.trim().split(';')[0], vcf, href: c.href, etag: c.etag || '' }
+          const notes = (vcf.match(/NOTE:(.+)/) || [])[1] || ''
+          const website = (vcf.match(/URL[^:]*:(.+)/) || [])[1] || ''
+          const addrRaw = (vcf.match(/ADR:[^:]*:(.+)/) || [])[1] || ''
+          const address = addrRaw.split(';').map(s => s.trim()).filter(Boolean).join(', ')
+          return { uid: uid.trim(), name: fn.trim(), email: email.trim(), phone: phone.trim(), org: org.trim().split(';')[0], notes: notes.trim(), website: website.trim(), address, vcf, href: c.href, etag: c.etag || '' }
         })
         state.davCache.set(cacheKey, contacts, TTL_LONG)
       } else {

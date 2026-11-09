@@ -211,9 +211,9 @@
 
 <style>
   .message-list-container {
-    width: 40%;
-    min-width: 300px;
-    border-right: 1px solid var(--color-border);
+    width: var(--list-w, 40%);
+    min-width: 280px;
+    border-right: none;
     height: 100%;
     display: flex;
     flex-direction: column;
