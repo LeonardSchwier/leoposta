@@ -10,6 +10,7 @@ export interface CalEvent {
   allDay?: boolean
   href?: string
   ics?: string
+  attendees?: string[] // email addresses; emitted as ATTENDEE;CN=... mailto:addr
 }
 
 function foldLine(line: string): string {
@@ -50,21 +51,61 @@ export function eventToICS(ev: CalEvent, uid: string): string {
   if (ev.summary) lines.push(`SUMMARY:${escIcs(ev.summary)}`)
   if (ev.location) lines.push(`LOCATION:${escIcs(ev.location)}`)
   if (ev.description) lines.push(`DESCRIPTION:${escIcs(ev.description)}`)
+  if (ev.attendees && ev.attendees.length) {
+    for (const rawAddr of ev.attendees) {
+      const addr = (rawAddr || '').trim()
+      if (!addr) continue
+      const mailto = addr.toLowerCase().startsWith('mailto:') ? addr.slice(7) : addr
+      const cn = mailto.split('@')[0] || mailto
+      const cnEscaped = cn.replace(/;/g, '\\;').replace(/,/g, '\\,')
+      lines.push(`ATTENDEE;CN=${cnEscaped};RSVP=TRUE:mailto:${mailto}`)
+    }
+  }
   lines.push('END:VEVENT', 'END:VCALENDAR')
   return lines.map(foldLine).join('\r\n')
 }
 
+export interface ContactInput {
+  name?: string
+  email?: string
+  phone?: string
+  org?: string
+  notes?: string
+  website?: string
+  addressComponents?: { street?: string; locality?: string; region?: string; postalCode?: string }
+  uid?: string
+}
+
 export function contactToVCF(name: string, email: string, phone: string, org: string, uid?: string): string {
-  const id = uid || 'leoposta_' + Date.now()
+  return contactToVCFObj({ name, email, phone, org, uid })
+}
+
+export function contactToVCFObj(c: ContactInput): string {
+  const id = c.uid || 'leoposta_' + Date.now()
   const lines = [
     'BEGIN:VCARD',
     'VERSION:3.0',
     `UID:${id}`,
-    `FN:${(name || '').replace(/,/g, '\\,')}`,
+    `FN:${(c.name || '').replace(/,/g, '\\,').replace(/;/g, '\\;')}`,
   ]
-  if (email) lines.push(`EMAIL;TYPE=INTERNET:${email}`)
-  if (phone) lines.push(`TEL;TYPE=CELL:${phone}`)
-  if (org) lines.push(`ORG:${org.replace(/;/g, '\\;')}`)
+  if (c.email) lines.push(`EMAIL;TYPE=INTERNET:${c.email}`)
+  if (c.phone) lines.push(`TEL;TYPE=CELL:${c.phone}`)
+  if (c.org) lines.push(`ORG:${c.org.replace(/;/g, '\\;').replace(/,/g, '\\,')}`)
+  if (c.notes) lines.push(`NOTE:${c.notes.replace(/,/g, '\\,').replace(/;/g, '\\;')}`)
+  if (c.website) lines.push(`URL:${c.website}`)
+  const ac = c.addressComponents
+  if (ac && (ac.street || ac.locality || ac.region || ac.postalCode)) {
+    const parts = [
+      '',                       // PO box
+      ac.street || '',          // extended
+      '',                       // street
+      ac.locality || '',        // locality (city)
+      ac.region || '',          // region (state)
+      ac.postalCode || '',      // postal code
+      '',                       // country
+    ]
+    lines.push(`ADR;TYPE=HOME:${parts.join(';')}`)
+  }
   lines.push('END:VCARD')
   return lines.map(foldLine).join('\r\n')
 }

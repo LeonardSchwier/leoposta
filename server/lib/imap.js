@@ -130,4 +130,49 @@ export function createSmtpTransporter(acct) {
   })
 }
 
+// ── Save sent mail to IMAP Sent folder ───────────────────────────────────────
+// Best-effort: returns true if saved, false otherwise. Never throws.
+const SENT_FOLDER_CANDIDATES = ['Sent', 'Sent Items', 'sent', 'INBOX.Sent']
+
+export async function saveToSentFolder(acct, messageData, { messageId, date } = {}) {
+  if (!acct) return false
+  const pool = getPoolFor(acct)
+  const msg = new nodemailer.Message(messageData)
+  const raw = msg.getSourceStream()
+
+  // Collect all folder names once
+  let folders = []
+  try {
+    folders = await pool.run(async (client) => {
+      const list = await client.list('')
+      return list.map(f => f.path)
+    })
+  } catch (_) {
+    return false
+  }
+
+  // Choose the most likely "sent" folder by exact name match, else first
+  // candidate, else fall back to "INBOX" so we don't drop the message.
+  const normalized = new Set(folders.map(p => p.toLowerCase()))
+  let target = SENT_FOLDER_CANDIDATES.find(name => normalized.has(name.toLowerCase()))
+  if (!target) {
+    const fuzzy = folders.find(p => /sent/i.test(p))
+    target = fuzzy || 'INBOX'
+  }
+
+  const meta = { flags: ['\\Seen'] }
+  if (messageId) meta.messageId = messageId
+  if (date) meta.date = date
+  try {
+    await pool.run(async (client) => {
+      await client.append(target, meta, raw)
+    })
+    console.log(`[imap] saved sent mail to ${acct.email} :: ${target} (id=${messageId || 'auto'})`)
+    return true
+  } catch (err) {
+    console.error(`[imap] failed to save sent mail to ${target}:`, err && err.message || err)
+    return false
+  }
+}
+
 

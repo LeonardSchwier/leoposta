@@ -22,6 +22,36 @@
   let queuedCount = $state(0)
   let showPalette = $state(false)
 
+  const SPLIT_MIN = 280
+  const SPLIT_MAX_FRAC = 0.8
+  let listWidth = $state(localStorage.getItem('leoposta.listW') || '')
+
+  function startSplitDrag(e: PointerEvent) {
+    e.preventDefault()
+    const startX = e.clientX
+    const contentEl = (e.target as HTMLElement).closest('.content') as HTMLElement
+    if (!contentEl) return
+    const contentRect = contentEl.getBoundingClientRect()
+    const handleRect = (e.target as HTMLElement).getBoundingClientRect()
+    const startW = handleRect.left - contentRect.left - 3
+    const clampW = (w: number) => Math.round(Math.min(contentRect.width * SPLIT_MAX_FRAC, Math.max(SPLIT_MIN, w)))
+    const onMove = (ev: PointerEvent) => {
+      listWidth = clampW(startW + (ev.clientX - startX)) + 'px'
+    }
+    const onUp = () => {
+      splitActive = false
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      document.body.style.cursor = ''
+      document.body.style.userSelect = ''
+      try { localStorage.setItem('leoposta.listW', listWidth) } catch {}
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    document.body.style.cursor = 'col-resize'
+    document.body.style.userSelect = 'none'
+  }
+
   function togglePalette() {
     showPalette = !showPalette
   }
@@ -446,7 +476,7 @@
     {:else if appMode === 'contacts'}
       <Contacts showToast={showToast} />
     {:else}
-      <div class="content">
+      <div class="content" style:--list-w={listWidth}>
         <MessageList
           folder={activeView}
           onCompose={openCompose}
@@ -459,6 +489,13 @@
           isLoading={$store.isLoading}
           error={$store.error}
         />
+        <div
+          class="split-handle"
+          role="separator"
+          aria-orientation="vertical"
+          aria-label="Resize list column"
+          onpointerdown={startSplitDrag}
+        ></div>
         {#if $store.selectedMessageId}
           <MessageView
             onDelete={handleDelete}
@@ -507,6 +544,21 @@
     overflow: hidden;
     display: flex;
     flex-direction: row;
+  }
+
+  .split-handle {
+    width: 6px;
+    min-width: 6px;
+    cursor: col-resize;
+    background: var(--color-border);
+    margin: 0 -3px;
+    z-index: 10;
+    transition: background 150ms ease;
+  }
+  .split-handle:hover,
+  .split-handle:active {
+    background: var(--color-accent);
+    opacity: 0.55;
   }
 
   .toast {

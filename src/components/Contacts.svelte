@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { ContactsAPI } from '../api'
-  import { contactToVCF } from '../lib/vcf'
+  import { contactToVCFObj } from '../lib/vcf'
 
   let { showToast } = $props()
 
@@ -20,6 +20,13 @@
   let fEmail = $state('')
   let fPhone = $state('')
   let fOrg = $state('')
+  let fNotes = $state('')
+  let fWebsite = $state('')
+  let fStreet = $state('')
+  let fCity = $state('')
+  let fRegion = $state('')
+  let fZip = $state('')
+  let fBookUri = $state('')
 
   async function loadBooks() {
     try {
@@ -42,27 +49,44 @@
   function openCreate() {
     editingUid = null
     fName = ''; fEmail = ''; fPhone = ''; fOrg = ''
+    fNotes = ''; fWebsite = ''
+    fStreet = ''; fCity = ''; fRegion = ''; fZip = ''
+    fBookUri = currentBook?.uri || books[0]?.uri || ''
     showEditor = true
   }
 
   function openEdit(c: any) {
     selectedUid = c.uid
     editingUid = c.uid
+    fBookUri = c.bookUri || currentBook?.uri || ''
     fEmail = (c.emails && c.emails[0]) || c.email || ''
     fPhone = (c.phones && c.phones[0]) || c.phone || ''
     fOrg = c.org || c.organization || ''
     fName = c.name || c.displayName || ''
+    fNotes = c.notes || ''
+    fWebsite = c.website || ''
+    const addrParts = (c.address || '').split(',').map((s: string) => s.trim()).filter(Boolean)
+    fStreet = addrParts[0] || ''
+    fCity = addrParts[1] || ''
+    fRegion = addrParts[2] || ''
+    fZip = addrParts[3] || ''
     showEditor = true
   }
 
   async function saveContact() {
-    if (!currentBook) return
     if (!fName.trim() && !fEmail.trim() && !fPhone.trim()) { showToast('Add a name, email, or phone'); return }
+    const targetUri = editingUid ? (currentBook?.uri || fBookUri) : (fBookUri || currentBook?.uri || books[0]?.uri || '')
+    if (!targetUri) { showToast('No address book available'); return }
     try {
       busy = true
       const uid = editingUid || (fEmail.trim() || fName.trim().toLowerCase().replace(/\s+/g, '_'))
-      const vcf = contactToVCF(fName, fEmail, fPhone, fOrg, uid)
-      await ContactsAPI.saveContact(currentBook.uri, vcf)
+      const vcf = contactToVCFObj({
+        name: fName, email: fEmail, phone: fPhone, org: fOrg,
+        notes: fNotes, website: fWebsite,
+        addressComponents: { street: fStreet, locality: fCity, region: fRegion, postalCode: fZip },
+        uid,
+      })
+      await ContactsAPI.saveContact(targetUri, vcf)
       showEditor = false
       await loadContacts(q)
       showToast(editingUid ? 'Contact updated' : 'Contact created')
@@ -70,11 +94,12 @@
   }
 
   async function deleteContact(uid: string) {
-    if (!currentBook) return
+    const bookUri = currentBook?.uri || fBookUri || books[0]?.uri || ''
+    if (!bookUri) return
     if (!confirm('Delete this contact?')) return
     try {
       busy = true
-      await ContactsAPI.deleteContact(currentBook.uri, uid)
+      await ContactsAPI.deleteContact(bookUri, uid)
       selectedUid = null
       await loadContacts(q)
       showToast('Contact deleted')
@@ -165,6 +190,9 @@
               <div class="nm">{name}</div>
               <div class="d1">{(c.emails && c.emails[0]) || c.email || ''}</div>
               <div class="d2">{(c.phones && c.phones[0]) || c.phone || ''}</div>
+              {#if c.website}<div class="d3">{c.website}</div>{/if}
+              {#if c.address}<div class="d3">{c.address}</div>{/if}
+              {#if c.notes}<div class="d3 d-notes" title={c.notes}>{c.notes}</div>{/if}
             </div>
             <button class="del" onclick={(e) => { e.stopPropagation(); deleteContact(c.uid) }} title="Delete contact" aria-label={`Delete contact ${c.name || c.uid}`}>🗑</button>
           </div>
@@ -177,10 +205,24 @@
     <div class="modal-back" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }} role="dialog">
       <div class="modal">
         <h4>{editingUid ? 'Edit contact' : 'New contact'}</h4>
+        <label>
+          <span>{editingUid ? 'Address book' : 'Create in'}</span>
+          <select bind:value={fBookUri} disabled={editingUid}>
+            {#each books as b (b.uri)}
+              <option value={b.uri}>{b.name}</option>
+            {/each}
+          </select>
+        </label>
         <label><span>Name</span><input type="text" bind:value={fName} placeholder="Jane Appleseed" /></label>
         <label><span>Email</span><input type="email" bind:value={fEmail} placeholder="jane@example.com" /></label>
         <label><span>Phone</span><input type="tel" bind:value={fPhone} placeholder="+1 555 0100" /></label>
         <label><span>Organization</span><input type="text" bind:value={fOrg} /></label>
+        <label><span>Notes</span><textarea bind:value={fNotes} rows="2" placeholder="Notes about this contact"></textarea></label>
+        <label><span>Website</span><input type="url" bind:value={fWebsite} placeholder="https://example.com" /></label>
+        <label><span>Street</span><input type="text" bind:value={fStreet} placeholder="Street number and name" /></label>
+        <label><span>City</span><input type="text" bind:value={fCity} placeholder="City" /></label>
+        <label><span>State</span><input type="text" bind:value={fRegion} placeholder="State/Province" /></label>
+        <label><span>ZIP / Postal code</span><input type="text" bind:value={fZip} placeholder="12345" /></label>
         <div class="actions">
           {#if editingUid}<button class="danger" onclick={() => { showEditor = false; deleteContact(editingUid!) }}>Delete</button>{/if}
           <span class="spacer"></span>
@@ -226,6 +268,7 @@
   .meta { flex: 1; min-width: 0; }
   .nm { font-size: 14px; font-weight: 500; color: var(--color-text); }
   .d1, .d2 { font-size: 12px; color: var(--color-text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .d3 { font-size: 11px; color: var(--color-text-secondary); opacity: 0.7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .del { background: transparent; border: none; font-size: 14px; cursor: pointer; padding: 6px; border-radius: 6px; opacity: 0.6; }
   .del:hover { opacity: 1; background: var(--color-hover); }
 
@@ -233,8 +276,11 @@
   .modal { background: var(--color-bg); border-radius: 14px; padding: 18px 20px 14px; width: min(460px, 92vw); max-height: 90vh; overflow-y: auto; box-shadow: 0 18px 60px rgba(0,0,0,0.35); border: 1px solid var(--color-border); }
   .modal h4 { font-size: 15px; font-weight: 700; margin: 0 0 12px; }
   .modal label { display: block; margin-bottom: 10px; font-size: 12px; color: var(--color-text-secondary); font-weight: 600; }
-  .modal input { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 6px; font-size: 13px; background: var(--color-bg); color: var(--color-text); }
-  .modal input:focus { outline: none; border-color: var(--color-accent); }
+  .modal input, .modal textarea, .modal select { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 6px; font-size: 13px; background: var(--color-bg); color: var(--color-text); font-family: inherit; }
+  .modal select:focus { outline: none; border-color: var(--color-accent); }
+  .modal select:disabled { opacity: 0.6; cursor: not-allowed; }
+  .modal textarea { resize: vertical; min-height: 50px; }
+  .modal input:focus, .modal textarea:focus { outline: none; border-color: var(--color-accent); }
   .actions { display: flex; gap: 8px; margin-top: 6px; }
   .actions .spacer { flex: 1; }
   .actions button { padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--color-border); background: var(--color-bg-secondary); color: var(--color-text); }
