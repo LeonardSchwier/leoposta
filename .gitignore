@@ -49,3 +49,4 @@ scripts/src-tauri/
 test-results/
 playwright-report/
 .superpowers/
+.worktrees/
