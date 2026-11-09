@@ -1,9 +1,10 @@
 <script lang="ts">
   import { apiFetch, AccountAPI, setActiveAccountEmail } from '../api'
   import {
-    store, getState, setAccounts, setActiveAccount
+    store, getState, setAccounts, setActiveAccount, setRefreshInterval
   } from '../store'
   import type { MailAccount } from '../store'
+  import type { RefreshMode } from '../refresh'
   import { RULE_FIELDS, RULE_OPERATORS, RULE_ACTIONS } from '../lib/rules'
   import type { Rule } from '../lib/rules'
 
@@ -379,15 +380,34 @@
          </div>
        </div>
 
+        <div class="form-section">
+          <h3>Preferences</h3>
+         <div class="form-group checkbox">
+           <label>
+             <input type="checkbox" bind:checked={$store.threadGrouping} />
+             <span>Group messages by thread</span>
+           </label>
+         </div>
+       </div>
+
        <div class="form-section">
-         <h3>Preferences</h3>
-        <div class="form-group checkbox">
-          <label>
-            <input type="checkbox" bind:checked={$store.threadGrouping} />
-            <span>Group messages by thread</span>
-          </label>
-        </div>
-      </div>
+         <h3>Inbox sync</h3>
+         <div class="form-group">
+           <label>Inbox auto-refresh</label>
+           <select value={$store.refreshInterval}
+                   on:change={(e) => setRefreshInterval((e.currentTarget as HTMLSelectElement).value as RefreshMode)}>
+             <option value="instant">Instant (push)</option>
+             <option value="5m">Every 5 minutes</option>
+             <option value="15m">Every 15 minutes</option>
+             <option value="60m">Every 60 minutes</option>
+             <option value="off">Off</option>
+           </select>
+           <p class="text-xs text-neutral-500 dark:text-neutral-400 mt-1">
+             The list and unread badge refresh when new mail arrives — or on a
+             fixed cadence. Never refreshes while you are typing.
+           </p>
+         </div>
+       </div>
       
       <div class="form-group">
         <label>Password</label>

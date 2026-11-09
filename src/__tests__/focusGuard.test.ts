@@ -10,7 +10,7 @@ function focus(el: HTMLElement): void {
 describe('isTypingFocused', () => {
   beforeEach(() => {
     document.body.innerHTML = ''
-    document.activeElement?.blur?.()
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur()
   })
 
   it('is false when body is focused', () => {
