@@ -1,131 +1,24 @@
 <script lang="ts">
-  import { apiFetch, ContactsAPI } from '../api'
-  import { store, getState, setComposeTo, setComposeSubject, setComposeBody, setIsLoading, setComposeScheduled, clearCompose, setComposing } from '../store'
+  import { apiFetch } from '../api'
+  import { store, getState, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setIsLoading, setComposeScheduled, clearCompose, setComposing } from '../store'
   import { onMount } from 'svelte'
   import { addQueuedMessage } from '../lib/offlineQueue'
   import { buildMessageBody, normalizeAccount, type Signature } from '../lib/signature'
   import { fileToAttachment, type OutboundAttachment, AttachmentTooLargeError } from '../lib/attachments'
-
-  // ---- Contact autocomplete ----
-  interface AddressBook { uri: string; name: string }
-  let addressBooks = $state<AddressBook[]>([])
-  let contactsCache = $state<Record<string, any[]>>({})
-  let contactsLoadingBook = $state<string | null>(null)
-  let activeBookUri = $state<string>('')
-  let toSuggestions = $state<any[]>([])
-  let showSuggestions = $state(false)
-  let suggestionIndex = $state(-1)
-  let debounce: any = null
-
-  async function loadAddressBooks() {
-    try {
-      const data = await ContactsAPI.addressBooks()
-      addressBooks = data.addressBooks || []
-      if (addressBooks.length) activeBookUri = addressBooks[0].uri
-    } catch { addressBooks = [] }
-  }
-
-  async function loadContactsForBook(uri: string): Promise<any[]> {
-    if (contactsCache[uri]) return contactsCache[uri]
-    if (!contactsLoadingBook) {
-      contactsLoadingBook = uri
-      try {
-        const data = await ContactsAPI.contacts(uri)
-        const contacts = data.contacts || []
-        contactsCache[uri] = contacts
-        return contacts
-      } catch {
-        return []
-      } finally {
-        contactsLoadingBook = null
-      }
-    }
-    return []
-  }
-
-  function allContacts(): any[] {
-    const out: any[] = []
-    for (const b of addressBooks) {
-      const list = contactsCache[b.uri]
-      if (list) for (const c of list) {
-        if (!out.find((x: any) => x.email === c.email || x.uid === c.uid)) out.push(c)
-      }
-    }
-    return out
-  }
-
-  function computeSuggestions(rawValue: string): any[] {
-    const q = (rawValue || '').split(/[,\s;]+/).pop()?.trim().toLowerCase() || ''
-    if (q.length < 1) return []
-    const all = allContacts()
-    // Lazily load contacts for the first book if we haven't yet
-    if (activeBookUri) void loadContactsForBook(activeBookUri)
-    return all
-      .filter((c: any) => {
-        const name = (c.name || '').toLowerCase()
-        const email = (c.email || '').toLowerCase()
-        const org = (c.org || '').toLowerCase()
-        return name.startsWith(q) || email.includes(q) || org.includes(q)
-      })
-      .slice(0, 8)
-  }
-
-  function onToInput() {
-    clearTimeout(debounce)
-    debounce = setTimeout(() => {
-      toSuggestions = computeSuggestions(toInput)
-      suggestionIndex = -1
-      showSuggestions = toSuggestions.length > 0
-    }, 120)
-  }
-
-  function addSuggestion() {
-    if (suggestionIndex < 0 || suggestionIndex >= toSuggestions.length) return
-    const c = toSuggestions[suggestionIndex]
-    const emails = [...getState().composeTo, c.email]
-    setComposeTo(emails)
-    toInput = ''
-    toSuggestions = []
-    showSuggestions = false
-  }
-
-  function onToKey(e: KeyboardEvent) {
-    if (showSuggestions) {
-      if (e.key === 'ArrowDown') { e.preventDefault(); suggestionIndex = Math.min(suggestionIndex + 1, toSuggestions.length - 1); return }
-      if (e.key === 'ArrowUp') { e.preventDefault(); suggestionIndex = Math.max(suggestionIndex - 1, 0); return }
-      if (e.key === 'Tab' || (e.key === 'Enter' && suggestionIndex >= 0)) {
-        e.preventDefault()
-        addSuggestion()
-        return
-      }
-      if (e.key === 'Escape') { showSuggestions = false; return }
-      if (e.key === ',' || (e.key === 'Enter' && suggestionIndex === -1)) {
-        e.preventDefault()
-        addRecipient(toInput)
-        toSuggestions = []
-        showSuggestions = false
-        return
-      }
-    }
-    if (e.key === 'Enter' || e.key === ',') {
-      e.preventDefault()
-      addRecipient(toInput)
-    }
-  }
+  import RecipientAutocomplete from './RecipientAutocomplete.svelte'
 
   let { onClose } = $props()
-  
-  
-  // Local editable state
+
+  // Local flat-string state driven by RecipientAutocomplete (same pattern as Calendar).
+  // Seed once from the store; the store is written back on send.
+  let toValue   = $state(getState().composeTo.join(', '))
+  let ccValue   = $state(getState().composeCc.join(', '))
+  let bccValue  = $state(getState().composeBcc.join(', '))
+
   let subjectInput = $state(getState().composeSubject || '')
-  let bodyInput = $state(getState().composeBody || '')
+  let bodyInput    = $state(getState().composeBody || '')
 
   // ---- Signature seeding ----
-  // The compose body is finalized the moment the panel opens so the user types
-  // above the signature. New compose seeds the signature text only; reply and
-  // forward place it per the account's `position` setting, above/below the
-  // quoted original. The backend is the source of truth for the active
-  // account's signature (GET /api/account returns it normalized).
   function quotedOriginal(): string | null {
     const m = getState().composeOriginalMessage
     if (!m) return null
@@ -133,7 +26,6 @@
   }
   function applySignature(sig: Signature, original: string | null): boolean {
     if (!sig || !sig.enabled || !sig.text.trim()) {
-      // No active signature — still seed the quoted original for reply/forward.
       if (original) { const q = '\n--\n' + original; bodyInput = q; setComposeBody(q) }
       return false
     }
@@ -142,7 +34,6 @@
     return true
   }
   async function seedBody() {
-    // Prefer the store account (already normalized); fall back to the backend.
     const s = getState()
     const account = s.accounts.find(a => a.id === s.activeAccountId)
     if (account && (account as any).signature) {
@@ -155,12 +46,9 @@
       const raw = await res.json()
       if (!raw || raw.connected === false || !raw.signature) return
       applySignature(normalizeAccount(raw as Record<string, unknown>).signature, quotedOriginal())
-    } catch {
-      /* offline / no backend: seed with nothing */
-    }
+    } catch { /* offline / no backend: seed with nothing */ }
   }
-  
-  let toInput = $state('')
+
   let showCc = $state(false)
   let showBcc = $state(false)
   let showSchedule = $state(false)
@@ -176,23 +64,14 @@
     if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`
   }
-  
-  function addRecipient(input: string) {
-    const emails = input.split(/[,;]/).map(e => e.trim()).filter(e => e)
-    if (emails.length > 0) {
-      setComposeTo([...getState().composeTo, ...emails])
-      toInput = ''
-    }
+
+  function parseRecipients(value: string): string[] {
+    return value.split(/[,;\s]+/).map(e => e.trim()).filter(e => e)
   }
-  
-  function removeRecipient(email: string) {
-    setComposeTo(getState().composeTo.filter(e => e !== email))
-  }
-  
+
   function handleKeyDown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault()
-      if (toInput.trim()) addRecipient(toInput)
       handleSend()
       return
     }
@@ -209,7 +88,6 @@
       const first = focusables[0]
       const last = focusables[focusables.length - 1]
       const active = document.activeElement as HTMLElement | null
-      // If focus is outside the dialog, snap it back to the first element.
       if (!active || !root.contains(active)) {
         e.preventDefault()
         first.focus()
@@ -226,24 +104,32 @@
   }
 
   function handleSend() {
-    if (toInput.trim()) addRecipient(toInput)
-    if (getState().composeTo.length === 0) {
+    const to   = parseRecipients(toValue)
+    const cc   = parseRecipients(ccValue)
+    const bcc  = parseRecipients(bccValue)
+
+    // Sync parsed recipients back to the store so downstream state is consistent.
+    if (to.length)  setComposeTo(to)
+    if (cc.length)  setComposeCc(cc)
+    if (bcc.length) setComposeBcc(bcc)
+
+    if (to.length === 0) {
       alert('Please add at least one recipient')
       return
     }
-    
+
     setIsLoading(true)
-    
+
     const message: Record<string, unknown> = {
-      to: getState().composeTo,
-      cc: getState().composeCc,
-      bcc: getState().composeBcc,
+      to,
+      cc,
+      bcc,
       subject: subjectInput,
       body: bodyInput,
       scheduled: getState().composeScheduled
     }
     if (attachments.length) message.attachments = attachments
-    
+
     apiFetch('/api/send', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -256,7 +142,6 @@
         setComposing(false)
         onClose()
       } else if (data.queued) {
-        // Offline: queued for later sending
         clearCompose()
         setComposing(false)
         onClose()
@@ -269,9 +154,7 @@
       if (!navigator.onLine) {
         try {
           const queued: Parameters<typeof addQueuedMessage>[0] = {
-            to: getState().composeTo,
-            cc: getState().composeCc,
-            bcc: getState().composeBcc,
+            to, cc, bcc,
             subject: subjectInput,
             body: bodyInput,
             scheduled: getState().composeScheduled,
@@ -293,7 +176,7 @@
       setIsLoading(false)
     })
   }
-  
+
   function handleSchedule() {
     if (!scheduleDate || !scheduleTime) {
       scheduleError = 'Pick both a date and a time to schedule'
@@ -309,7 +192,6 @@
     showSchedule = false
   }
 
-  // Quick-preset schedule buttons: now+30m, +1d, +1w, +1m
   function pad2(n: number): string { return String(n).padStart(2, '0') }
   function localDateStr(d: Date): string {
     return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`
@@ -335,7 +217,7 @@
       prefillSchedule('30m')
     }
   }
-  
+
   async function handleAttach(e: Event) {
     const input = e.target as HTMLInputElement
     if (!input.files) return
@@ -350,7 +232,6 @@
       }
     }
     attachmentError = lastError
-    // Reset so re-selecting the same file fires change again.
     input.value = ''
   }
 
@@ -361,113 +242,72 @@
   onMount(() => {
     void seedBody()
     window.addEventListener('keydown', handleKeyDown)
-    // Move initial focus to the first recipient input for keyboard entry.
-    requestAnimationFrame(() => {
-      const el = document.querySelector<HTMLInputElement>('.compose-window .recipient-input input')
-        || document.querySelector<HTMLInputElement>('.compose-window input')
-      if (el) el.focus()
-    })
     return () => window.removeEventListener('keydown', handleKeyDown)
   })
 </script>
 
-<div class="compose-window" role="dialog" aria-modal="true" aria-label="Compose message" onclick={e => e.stopPropagation()}>
+<!-- svelte-ignore a11y_click_events_have_key_events -->
+<div class="compose-window" role="dialog" aria-modal="true" aria-label="Compose message" tabindex="-1" onclick={e => e.stopPropagation()}>
   <div class="compose-header">
     <h2 class="compose-title">
       {#if $store.composeReplyTo}Reply{:else if $store.composeForward}Forward{:else}New Message{/if}
     </h2>
     <button class="close-btn" onclick={onClose} aria-label="Close compose (Esc)">✕</button>
   </div>
-  
+
   <div class="compose-body">
     <div class="field-row">
-      <label class="field-label">To</label>
-      <div class="recipient-input" class:focused={toInput} class:open={showSuggestions}>
-        {#each $store.composeTo as email (email)}
-          <span class="chip">{email} <button aria-label={`Remove ${email}`} onclick={() => removeRecipient(email)}>✕</button></span>
-        {/each}
-        <input
-          type="text"
-          bind:value={toInput}
-          oninput={onToInput}
-          onkeydown={onToKey}
-          onblur={() => { setTimeout(() => { toSuggestions = []; showSuggestions = false }, 150) }}
-          placeholder={$store.composeTo.length === 0 ? "recipient@example.com" : ""}
-          autocomplete="off"
-        />
-        {#if showSuggestions && toSuggestions.length > 0}
-          <div class="suggestions" role="listbox">
-            {#each toSuggestions as c, i (c.uid || c.email)}
-              <div
-                class="suggestion"
-                class:active={i === suggestionIndex}
-                role="option"
-                aria-selected={i === suggestionIndex}
-                onmousedown={(e) => { e.preventDefault(); showSuggestions = false
-                  const emails = [...getState().composeTo, c.email]
-                  setComposeTo(emails)
-                  toInput = ''
-                  toSuggestions = [] }
-                }
-              >
-                <span class="sug-name">{c.name || c.email}</span>
-                {#if c.email && c.name}<span class="sug-email">{c.email}</span>{/if}
-                {#if c.org}<span class="sug-org">{c.org}</span>{/if}
-              </div>
-            {/each}
-          </div>
-        {/if}
+      <label class="field-label" for="compose-to">To</label>
+      <div class="field-control">
+        <RecipientAutocomplete bind:value={toValue} placeholder="recipient@example.com" maxSuggestions={8} />
       </div>
     </div>
-    
+
     {#if showCc}
       <div class="field-row">
-        <label class="field-label">Cc</label>
-        <div class="recipient-input">
-          {#each $store.composeCc as email (email)}
-            <span class="chip">{email}</span>
-          {/each}
-          <input type="text" placeholder="Add Cc..." />
+        <label class="field-label" for="compose-cc">Cc</label>
+        <div class="field-control">
+          <RecipientAutocomplete bind:value={ccValue} placeholder="recipient@example.com" maxSuggestions={8} />
         </div>
       </div>
     {/if}
-    
+
     {#if showBcc}
       <div class="field-row">
-        <label class="field-label">Bcc</label>
-        <div class="recipient-input">
-          {#each $store.composeBcc as email (email)}
-            <span class="chip">{email}</span>
-          {/each}
-          <input type="text" placeholder="Add Bcc..." />
+        <label class="field-label" for="compose-bcc">Bcc</label>
+        <div class="field-control">
+          <RecipientAutocomplete bind:value={bccValue} placeholder="recipient@example.com" maxSuggestions={8} />
         </div>
       </div>
     {/if}
-    
+
     <div class="field-row">
-      <label class="field-label">&nbsp;</label>
+      <span class="field-label">&nbsp;</span>
       <div class="field-actions">
-        <button class="text-btn" onclick={() => showCc = !showCc}>
+        <button type="button" class="text-btn" onclick={() => showCc = !showCc}>
           {#if showCc}Hide Cc{:else}Add Cc{/if}
         </button>
-        <button class="text-btn" onclick={() => showBcc = !showBcc}>
+        <button type="button" class="text-btn" onclick={() => showBcc = !showBcc}>
           {#if showBcc}Hide Bcc{:else}Add Bcc{/if}
         </button>
       </div>
     </div>
-    
+
     <div class="field-row">
-      <label class="field-label">Subject</label>
-      <input 
-        type="text"
-        bind:value={subjectInput}
-        oninput={() => setComposeSubject(subjectInput)}
-        placeholder="Subject"
-      />
+      <label class="field-label" for="compose-subject">Subject</label>
+      <div class="field-control">
+        <input id="compose-subject"
+          type="text"
+          bind:value={subjectInput}
+          oninput={() => setComposeSubject(subjectInput)}
+          placeholder="Subject"
+        />
+      </div>
     </div>
-    
+
     <div class="compose-editor">
       <textarea
+        id="compose-body"
         bind:value={bodyInput}
         oninput={() => setComposeBody(bodyInput)}
         placeholder="Write your message..."
@@ -475,7 +315,7 @@
       ></textarea>
     </div>
   </div>
-  
+
   {#if showSchedule}
     <div class="schedule-panel">
       <h3>Schedule Send</h3>
@@ -486,45 +326,41 @@
         <button type="button" class="quick-btn" onclick={() => prefillSchedule('1m')}>+1 month</button>
       </div>
       <div class="schedule-row">
-        <input type="date" bind:value={scheduleDate} required />
-        <input type="time" step="300" bind:value={scheduleTime} required />
+        <input type="date" aria-label="Schedule date" bind:value={scheduleDate} required />
+        <input type="time" step="300" aria-label="Schedule time" bind:value={scheduleTime} required />
       </div>
       {#if scheduleError}
         <p class="schedule-error" role="alert">{scheduleError}</p>
       {/if}
       <div class="schedule-actions">
-        <button class="btn-secondary" onclick={() => { showSchedule = false; scheduleError = null }}>Cancel</button>
-        <button class="btn-primary" onclick={handleSchedule}>Schedule</button>
+        <button type="button" class="btn-secondary" onclick={() => { showSchedule = false; scheduleError = null }}>Cancel</button>
+        <button type="button" class="btn-primary" onclick={handleSchedule}>Schedule</button>
       </div>
     </div>
   {/if}
-  
+
   <div class="compose-footer">
     <div class="footer-left">
-      <button class="icon-btn" title="Attach file" aria-label="Attach file" onclick={() => attachFile?.click()}>
+      <button type="button" class="icon-btn" title="Attach file" aria-label="Attach file" onclick={() => attachFile?.click()}>
         <span>📎</span>
       </button>
-      <input 
-        type="file" 
-        multiple 
-        bind:this={attachFile}
-        onchange={handleAttach}
-        hidden
-      />
+      <input type="file" multiple bind:this={attachFile} onchange={handleAttach} hidden />
       <div class="attachment-chips" class:empty={attachments.length === 0}>
         {#each attachments as att, i (att.filename + i)}
           <span class="attachment-chip" title="{att.contentType}">
             <span class="attachment-name">{att.filename}</span>
-            <button class="attachment-remove" onclick={() => removeAttachment(i)} aria-label="Remove {att.filename}">✕</button>
+            <button type="button" class="attachment-remove" onclick={() => removeAttachment(i)} aria-label="Remove {att.filename}">✕</button>
           </span>
         {/each}
       </div>
       {#if attachmentError}
         <span class="attachment-error">{attachmentError}</span>
       {/if}
-      <button 
-        class="icon-btn" 
+      <button
+        type="button"
+        class="icon-btn"
         title="Schedule send"
+        aria-label="Schedule send"
         class:active={showSchedule || $store.composeScheduled}
         onclick={toggleSchedulePanel}
       >
@@ -533,14 +369,15 @@
       {#if $store.composeScheduled}
         <span class="schedule-badge">
           Scheduled: {new Date($store.composeScheduled).toLocaleString()}
-          <button aria-label="Clear scheduled time" onclick={() => setComposeScheduled(null)}>✕</button>
+          <button type="button" aria-label="Clear scheduled time" onclick={() => setComposeScheduled(null)}>✕</button>
         </span>
       {/if}
     </div>
     <div class="footer-right">
-      <button class="btn-secondary" onclick={onClose}>Save Draft</button>
-      <button 
-        class="btn-primary" 
+      <button type="button" class="btn-secondary" onclick={onClose}>Save Draft</button>
+      <button
+        type="button"
+        class="btn-primary"
         onclick={handleSend}
         disabled={$store.isLoading}
       >
@@ -552,26 +389,41 @@
 
 <style>
   .compose-window {
+    position: fixed;
+    inset: 0;
+    margin: auto;
+    width: min(560px, 92vw);
+    height: min(80vh, 720px);
+    max-height: 90vh;
     display: flex;
     flex-direction: column;
-    height: 100%;
     background: var(--color-bg);
+    border-radius: 14px;
+    box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
+    border: 1px solid var(--color-border);
+    overflow: hidden;
   }
-  
+
+  .compose-window:popover-open {
+    display: flex;
+  }
+
   .compose-header {
     display: flex;
     align-items: center;
     justify-content: space-between;
     padding: 12px 20px;
     border-bottom: 1px solid var(--color-border);
+    flex-shrink: 0;
   }
-  
+
   .compose-title {
     font-size: 16px;
     font-weight: 600;
     color: var(--color-text);
+    margin: 0;
   }
-  
+
   .close-btn {
     display: flex;
     align-items: center;
@@ -588,95 +440,60 @@
     transition: background var(--transition);
     box-sizing: border-box;
   }
-  
+
   .close-btn:hover {
     background: var(--color-hover);
   }
-  
+
   .compose-body {
     flex: 1;
     overflow-y: auto;
     padding: 16px 20px;
   }
-  
+
   .field-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 12px;
     margin-bottom: 12px;
   }
-  
+
   .field-label {
     width: 60px;
     font-size: 14px;
     color: var(--color-text-secondary);
     text-align: right;
     flex-shrink: 0;
-  }
-  
-  .recipient-input {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    flex-wrap: wrap;
-    gap: 6px;
-    padding: 8px 12px;
-    background: var(--color-bg-secondary);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-  }
-  
-  .recipient-input input {
-    flex: 1;
-    min-width: 100px;
-    border: none;
-    background: transparent;
-    font-size: 14px;
-    color: var(--color-text);
-    outline: none;
-  }
-  
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
-    background: var(--color-selected);
-    border-radius: 12px;
-    font-size: 13px;
-    color: var(--color-text);
-  }
-  
-  .chip button {
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 16px;
-    height: 16px;
-    background: transparent;
-    border: none;
-    font-size: 10px;
-    color: var(--color-text-secondary);
-    cursor: pointer;
+    padding-top: 8px;
+    line-height: 1.4;
   }
 
-  .chip button::before {
-    content: '';
-    position: absolute;
-    inset: -14px;
+  .field-control {
+    flex: 1;
+    min-width: 0;
   }
-  
-  .chip button:hover {
-    color: var(--color-danger);
+
+  .field-control input[type="text"] {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-sm);
+    font-size: 14px;
+    color: var(--color-text);
+    background: var(--color-bg-secondary);
   }
-  
+
+  .field-control input[type="text"]:focus {
+    outline: none;
+    border-color: var(--color-accent);
+  }
+
   .field-actions {
     flex: 1;
     display: flex;
     gap: 12px;
   }
-  
+
   .text-btn {
     background: transparent;
     border: none;
@@ -687,15 +504,15 @@
     border-radius: var(--radius-sm);
     transition: background var(--transition);
   }
-  
+
   .text-btn:hover {
     background: var(--color-hover);
   }
-  
+
   .compose-editor {
     margin-top: 12px;
   }
-  
+
   .compose-editor textarea {
     width: 100%;
     padding: 12px;
@@ -706,33 +523,34 @@
     color: var(--color-text);
     background: var(--color-bg);
     resize: vertical;
-    font-family: var(--font-sans);
+    font-family: inherit;
   }
-  
+
   .compose-editor textarea:focus {
     outline: none;
     border-color: var(--color-accent);
   }
-  
+
   .schedule-panel {
     padding: 16px 20px;
     background: var(--color-bg-secondary);
     border-top: 1px solid var(--color-border);
+    flex-shrink: 0;
   }
-  
+
   .schedule-panel h3 {
     font-size: 14px;
     font-weight: 600;
-    margin-bottom: 12px;
+    margin: 0 0 12px;
     color: var(--color-text);
   }
-  
+
   .schedule-row {
     display: flex;
     gap: 12px;
     margin-bottom: 12px;
   }
-  
+
   .schedule-row input {
     padding: 8px 12px;
     border: 1px solid var(--color-border);
@@ -741,15 +559,15 @@
     color: var(--color-text);
     background: var(--color-bg);
   }
-  
+
   .schedule-actions {
     display: flex;
     justify-content: flex-end;
     gap: 8px;
   }
-  
+
   .schedule-error {
-    margin: 0;
+    margin: 0 0 10px;
     padding: 8px 10px;
     background: rgba(220, 38, 38, 0.08);
     color: #b91c1c;
@@ -757,7 +575,29 @@
     border-radius: 6px;
     font-size: 13px;
   }
-  
+
+  .schedule-quick {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+
+  .schedule-quick .quick-btn {
+    padding: 5px 12px;
+    background: transparent;
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    font-size: 12px;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition: all var(--transition);
+  }
+
+  .schedule-quick .quick-btn:hover {
+    background: var(--color-hover);
+    color: var(--color-text);
+  }
+
   .compose-footer {
     display: flex;
     align-items: center;
@@ -765,8 +605,9 @@
     padding: 12px 20px;
     border-top: 1px solid var(--color-border);
     background: var(--color-bg-secondary);
+    flex-shrink: 0;
   }
-  
+
   .footer-left {
     display: flex;
     align-items: center;
@@ -834,82 +675,6 @@
     white-space: nowrap;
   }
 
-  .recipient-input {
-    position: relative;
-  }
-
-  .recipient-input .suggestions {
-    position: absolute;
-    top: 100%;
-    left: 0;
-    width: 100%;
-    margin-top: 4px;
-    background: var(--color-bg);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-sm);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
-    z-index: 50;
-    overflow: auto;
-    max-height: 220px;
-  }
-
-  .recipient-input .suggestion {
-    display: flex;
-    align-items: baseline;
-    gap: 8px;
-    padding: 8px 12px;
-    cursor: pointer;
-    font-size: 13px;
-    color: var(--color-text);
-    border-bottom: 1px solid var(--color-border);
-  }
-
-  .recipient-input .suggestion:last-child {
-    border-bottom: none;
-  }
-
-  .recipient-input .suggestion.active,
-  .recipient-input .suggestion:hover {
-    background: var(--color-selected);
-  }
-
-  .sug-name {
-    font-weight: 500;
-  }
-
-  .sug-email {
-    color: var(--color-text-secondary);
-    font-size: 12px;
-  }
-
-  .sug-org {
-    color: var(--color-text-secondary);
-    font-size: 12px;
-    margin-left: auto;
-  }
-
-  .schedule-quick {
-    display: flex;
-    gap: 8px;
-    margin-bottom: 10px;
-  }
-
-  .schedule-quick .quick-btn {
-    padding: 5px 12px;
-    background: transparent;
-    border: 1px solid var(--color-border);
-    border-radius: 16px;
-    font-size: 12px;
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    transition: all var(--transition);
-  }
-
-  .schedule-quick .quick-btn:hover {
-    background: var(--color-hover);
-    color: var(--color-text);
-  }
-
   .icon-btn {
     display: flex;
     align-items: center;
@@ -925,16 +690,16 @@
     transition: all var(--transition);
     box-sizing: border-box;
   }
-  
+
   .icon-btn:hover {
     background: var(--color-hover);
   }
-  
+
   .icon-btn.active {
     background: var(--color-selected);
     border-color: var(--color-accent);
   }
-  
+
   .schedule-badge {
     display: inline-flex;
     align-items: center;
@@ -945,7 +710,7 @@
     font-size: 12px;
     color: var(--color-text);
   }
-  
+
   .schedule-badge button {
     display: flex;
     align-items: center;
@@ -957,17 +722,18 @@
     font-size: 8px;
     color: var(--color-text-secondary);
     cursor: pointer;
+    padding: 0;
   }
-  
+
   .schedule-badge button:hover {
     color: var(--color-danger);
   }
-  
+
   .footer-right {
     display: flex;
     gap: 8px;
   }
-  
+
   .btn-secondary {
     padding: 8px 16px;
     background: transparent;
@@ -978,11 +744,11 @@
     cursor: pointer;
     transition: all var(--transition);
   }
-  
+
   .btn-secondary:hover {
     background: var(--color-hover);
   }
-  
+
   .btn-primary {
     padding: 8px 16px;
     background: var(--color-accent);
@@ -994,11 +760,11 @@
     cursor: pointer;
     transition: background var(--transition);
   }
-  
+
   .btn-primary:hover {
     background: var(--color-accent-hover);
   }
-  
+
   .btn-primary:disabled {
     opacity: 0.5;
     cursor: not-allowed;
