@@ -131,6 +131,13 @@ update it as each item lands.
   - `vitest.config.ts`: added `svelte({ hot: false })` plugin + `resolve.conditions: ['browser']` for Vitest 5 Svelte 5 `mount()` support.
   - Accept (verified 2026-11-09): `npx vitest run` → 96 pass / 0 fail (14 files); `npm run typecheck` clean; `npx vite build` clean; `node --test server/*.test.js` → 32 pass / 0 fail; `node --test 'server/**/*.test.js'` → 109 pass / 0 fail.
 - [x] **Autocomplete for To/CC/BCC from contacts** (AGENTS.md core feature checklist) — shipped with the entry above.
+- [x] **Inbox auto-refresh (sync mode)** — done 2026-11-09.
+  - `src/refresh.ts` (new): `isTypingFocused()` guard; `startRefresh(mode, onTick, idleUrl?)` SSE/timer controller + `stopRefresh()`; `loadPersistedRefreshMode()` / `saveRefreshMode()` over an injectable `Storage`; `runRefreshTick(onTick)` applies the typing-focus guard; `RefreshMode` union `'instant' | '5m' | '15m' | '60m' | 'off'`.
+  - 19 unit tests across `src/__tests__/focusGuard.test.ts` (7) + `refreshController.test.ts` (8) + `refreshStore.test.ts` (4).
+  - `src/store/index.ts`: `refreshInterval: RefreshMode` (default `'instant'`) in `State`; `setRefreshInterval(mode)` updates store + persists; `bootstrapRefreshMode()` restores saved mode.
+  - `src/components/Settings.svelte`: "Inbox sync" section with `<select onchange={onRefreshIntervalChange}>` mapping 5 modes; Svelte-5 `onchange` syntax.
+  - `src/App.svelte`: `$effect` keyed on `refreshInterval` + `activeAccountId` + `appMode`, calls `startRefresh`/`stopRefresh`; `bootstrapRefreshMode()` in `onMount`.
+  - Accept (verified 2026-11-09): `npx vitest run` → 115 pass / 0 fail (17 files); `npm run typecheck` clean; `npm run build` clean (PWA generated); `node --test 'server/**/*.test.js' 'server/*.test.js'` → 109 pass / 0 fail.
 
 ## Later (P2)
 
