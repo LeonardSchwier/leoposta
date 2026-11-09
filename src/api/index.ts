@@ -70,7 +70,10 @@ export const MailAPI = {
     withToken(`${API_BASE}/api/message/${id}/attachment/${partId}`),
   scheduled: () => api('/scheduled'),
   cancelScheduled: (id: string) => api(`/scheduled/${id}`, { method: 'DELETE' }),
-  idle: () => withToken(`${API_BASE}/api/idle`),
+  idle: () => {
+    const base = withToken(`${API_BASE}/api/idle`)
+    return activeAccountEmail ? `${base}&account=${encodeURIComponent(activeAccountEmail)}` : base
+  },
 }
 
 /** Map a DAV server entry ({href, displayname, etag}) to the UI shape ({uri, name}). */

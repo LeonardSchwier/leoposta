@@ -453,21 +453,31 @@
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', () => refreshQueueCount())
     window.addEventListener('keydown', handleKeydown)
+    return () => stopRefresh()
   })
 
+  // Refresh controller: react only to the three values that change the
+  // controller's identity (mode, active account, app view). Reading
+  // $store.* registers the whole store as a dep, so guard against unrelated
+  // writes (selectMessage, setIsLoading, ...) re-running the effect and
+  // churning the SSE/timer teardown+recreate. startRefresh is idempotent
+  // per-mode (tears down any previous stream first), so no cleanup return
+  // is needed here — a returned cleanup would be invoked by Svelte on every
+  // unrelated re-run, killing the stream.
+  let prevRefreshKey = ''
   $effect(() => {
     const mode = $store.refreshInterval
     const account = $store.activeAccountId
-    const view = appMode
-    if (mode === 'off' || !account || view !== 'mail') {
+    const key = `${mode}|${account ?? ''}|${appMode}`
+    if (key === prevRefreshKey) return
+    prevRefreshKey = key
+    if (mode === 'off' || account == null || appMode !== 'mail') {
       stopRefresh()
-      return () => stopRefresh()
+      return
     }
     startRefresh(mode, () => {
-      const folder = getState().activeFolder
-      loadMessages(folder).catch(() => {})
+      loadMessages(getState().activeFolder).catch(() => {})
     })
-    return () => stopRefresh()
   })
 </script>
 
