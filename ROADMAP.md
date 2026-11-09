@@ -115,6 +115,14 @@ update it as each item lands.
   - Accept (verified 2026-11-07): `npx vitest run` → 53 pass / 0 fail;
     `node --test server/lib/rules.test.js` → 18 pass; `npx tsc --noEmit`
     clean; `npx vite build` clean.
+- [x] **DAV: timeout tuning, multiget retry, response cache, calendar multi-select** — done 2026-11-09. Design: `docs/design/dav-cache-cal-multiselect.md`.
+  - `server/lib/dav.js`: `DAV_READ_TIMEOUT_MS` (120 s) / `DAV_WRITE_TIMEOUT_MS` (30 s), method-driven `timeoutForMethod()`, and `multigetWithRetry()` — on a DAV timeout the href batch is halved and retried (`maxBatch 500` → `minBatch 50`).
+  - `server/lib/davcache.js` (new): TTL cache (`createCache(maxEntries)`), `get`/`set` (sliding), `invalidate` (exact key), `invalidatePrefix` (account-scoped). `server/lib/state.js` owns `state.davCache` + `invalidateAccountDavCache(acctId)`.
+  - `server/routes/carddav.js`: `/contacts/calendars` (keyed `calendars|<acct>`) and `/contacts?book=` (keyed `contacts|<acct>|<book>`) are now cache-served; the multiget loop is replaced by `multigetWithRetry`; PUT/DELETE/import invalidate the account's cache.
+  - `server/routes/calendar.js`: `/calendar/events` (keyed `events|<acct>|<cal>|<start>|<end>`) is cache-served; PUT/DELETE/import invalidate.
+  - `src/lib/calSelection.ts` (new) + `src/__tests__/calSelection.test.ts` (9 tests): `defaultSelection` / `loadSelection` / `saveSelection` / `isCalSelected` over an injectable `Storage` — default-all on first load, persist subset, drop unknown uris, keep a deliberate empty selection, never auto-add new calendars.
+  - `src/components/Calendar.svelte`: `currentCal` (single) → `selectedCals` (multi, `localStorage`-persisted). Calendar list is now checkboxes with **All / None** quick actions; `loadEvents()` is `Promise.allSettled` over the selected uris with uid-dedupe and a partial-failure banner; create/save/delete/import target the **first selected** calendar (shown in the editor as "Target calendar: <name>").
+  - Accept (verified 2026-11-09): `node --test 'server/**/*.test.js' 'server/*.test.js'` → 103 pass / 0 fail; `npx vitest run` → 75 pass / 0 fail (10 files); `npm run typecheck` clean; `npm run build` clean (PWA generated).
 
 ## Later (P2)
 

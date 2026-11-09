@@ -7,6 +7,18 @@ export const DAV_PORT = parseInt(process.env.DAV_PORT || '443', 10)
 export const DAV_TLS = (process.env.DAV_TLS || (process.env.DAV_HOST ? 'true' : 'false')) === 'true'
 export const DAV_PATH_PREFIX = (user) => (process.env.DAV_PREFIX || '/dav/' + user)
 
+// Read vs write timeouts. Reads (PROPFIND/REPORT) against a large book can take
+// well over the old hard 30s under load, so they get a longer ceiling; writes
+// stay short. Both env-overridable for tests.
+export const DAV_READ_TIMEOUT_MS = Number(process.env.DAV_TIMEOUT_READ_MS) || 120_000
+export const DAV_WRITE_TIMEOUT_MS = Number(process.env.DAV_TIMEOUT_WRITE_MS) || 30_000
+
+const READ_METHODS = new Set(['GET', 'PROPFIND', 'REPORT', 'OPTIONS'])
+
+export function timeoutForMethod(method) {
+  return READ_METHODS.has(String(method || '').toUpperCase()) ? DAV_READ_TIMEOUT_MS : DAV_WRITE_TIMEOUT_MS
+}
+
 export function resolveDavTarget(acct) {
   const a = acct || {}
   const user = a.davUser || a.imapUser || ''
@@ -49,6 +61,7 @@ export function davRequest(method, urlPath, body, contentType, acct, depth) {
     }
     if (contentType === 'text/xml') opts.headers['Content-Type'] = contentType
     const lib = t.tls ? https : http
+    const timeoutMs = timeoutForMethod(method)
     const req = lib.request(opts, (res) => {
       const chunks = []
       res.on('data', c => chunks.push(c))
@@ -62,8 +75,8 @@ export function davRequest(method, urlPath, body, contentType, acct, depth) {
       })
     })
     req.on('error', reject)
-    req.setTimeout(30000, () => {
-      req.destroy(new Error(`DAV ${method} times out after 30s`))
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error(`DAV ${method} times out after ${Math.round(timeoutMs / 1000)}s`))
     })
     if (body) req.write(body)
     req.end()
@@ -202,6 +215,35 @@ export function toDavTime(s, endOfDay = false) {
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
   if (m) return `${m[1]}${m[2]}${m[3]}T${endOfDay ? '235959' : '000000'}Z`
   return s
+}
+
+// Halving-retry wrapper for addressbook/calendar multiget REPORTs. `fetchBatch`
+// receives a slice of hrefs (already formatted the way the caller wants, e.g.
+// `<d:href>…</d:href>` strings or raw hrefs) and does ONE REPORT, returning an
+// array of parsed cards. Normal path keeps batches at <= maxBatch. If a single
+// REPORT times out (the OX "ein paar" failure) and the slice is larger than
+// minBatch, split the slice in half and retry each half — recursively. Any
+// non-timeout error propagates to the route's 500 handler.
+// `acct` is passed for call-site clarity; `fetchBatch` typically closes over it.
+export async function multigetWithRetry(urlPath, allHrefs, fetchBatch, acct, { maxBatch = 500, minBatch = 50 } = {}) {
+  if (allHrefs.length > maxBatch) {
+    const out = []
+    for (let i = 0; i < allHrefs.length; i += maxBatch) {
+      out.push(...await multigetWithRetry(urlPath, allHrefs.slice(i, i + maxBatch), fetchBatch, acct, { maxBatch, minBatch }))
+    }
+    return out
+  }
+  try {
+    return await fetchBatch(allHrefs)
+  } catch (err) {
+    if (/times out after \d+s/i.test(String((err && err.message) || '')) && allHrefs.length > minBatch) {
+      const half = Math.ceil(allHrefs.length / 2)
+      const front = await multigetWithRetry(urlPath, allHrefs.slice(0, half), fetchBatch, acct, { maxBatch, minBatch })
+      const back = await multigetWithRetry(urlPath, allHrefs.slice(half), fetchBatch, acct, { maxBatch, minBatch })
+      return [...front, ...back]
+    }
+    throw err
+  }
 }
 
 export function extractResponseSet(xml) {
