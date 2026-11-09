@@ -123,6 +123,14 @@ update it as each item lands.
   - `src/lib/calSelection.ts` (new) + `src/__tests__/calSelection.test.ts` (9 tests): `defaultSelection` / `loadSelection` / `saveSelection` / `isCalSelected` over an injectable `Storage` — default-all on first load, persist subset, drop unknown uris, keep a deliberate empty selection, never auto-add new calendars.
   - `src/components/Calendar.svelte`: `currentCal` (single) → `selectedCals` (multi, `localStorage`-persisted). Calendar list is now checkboxes with **All / None** quick actions; `loadEvents()` is `Promise.allSettled` over the selected uris with uid-dedupe and a partial-failure banner; create/save/delete/import target the **first selected** calendar (shown in the editor as "Target calendar: <name>").
   - Accept (verified 2026-11-09): `node --test 'server/**/*.test.js' 'server/*.test.js'` → 103 pass / 0 fail; `npx vitest run` → 75 pass / 0 fail (10 files); `npm run typecheck` clean; `npm run build` clean (PWA generated).
+- [x] **Recipient autocomplete (To/Cc/Bcc + Calendar attendees) + Compose modal restyle** — done 2026-11-09.
+  - `src/lib/contacts.ts` (new): `createContactsCache({ fetcher })` — shared cardbook fetcher + matcher; 8 unit tests.
+  - `src/components/RecipientAutocomplete.svelte` (new): shared flat-string autocomplete (debounced, keyboard-nav, `bind:value`); 5 mount tests (incl. parent-driven value re-render).
+  - `src/components/Calendar.svelte`: attendees `<input>` → `<RecipientAutocomplete bind:value={fAttendees}>`; 3 new integration tests.
+  - `src/components/Compose.svelte`: full rewrite — `.modal-back` + `.modal.compose` centered card (Contacts pattern), To/Cc/Bcc use `RecipientAutocomplete` (flat-string model, `parseRecipients` on send), local autocomplete (~140 lines) deleted; `.compose-window` rules replaced with `.modal-back`/`.modal.compose` CSS; Escape dismiss + focus-trap + Ctrl/⌘+Enter preserved; initial focus on To input.
+  - `vitest.config.ts`: added `svelte({ hot: false })` plugin + `resolve.conditions: ['browser']` for Vitest 5 Svelte 5 `mount()` support.
+  - Accept (verified 2026-11-09): `npx vitest run` → 96 pass / 0 fail (14 files); `npm run typecheck` clean; `npx vite build` clean; `node --test server/*.test.js` → 32 pass / 0 fail; `node --test 'server/**/*.test.js'` → 109 pass / 0 fail.
+- [x] **Autocomplete for To/CC/BCC from contacts** (AGENTS.md core feature checklist) — shipped with the entry above.
 
 ## Later (P2)
 
