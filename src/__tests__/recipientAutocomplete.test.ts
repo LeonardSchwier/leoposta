@@ -2,6 +2,7 @@
 import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
 import { mount, unmount } from 'svelte'
 import RecipientAutocomplete from '../components/RecipientAutocomplete.svelte'
+import ParentWrapper from './ParentWrapper.svelte'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -67,6 +68,8 @@ describe('RecipientAutocomplete', () => {
     expect(rows.length).toBe(1)
     expect(rows[0].getAttribute('aria-selected')).toBe('false')
     expect(rows[0].textContent).toContain('Jane')
+    const input = target.querySelector('input.ra-input') as HTMLInputElement
+    expect(input.value).toBe('j')
     unmount(c)
   })
 
@@ -86,6 +89,7 @@ describe('RecipientAutocomplete', () => {
     await sleep(30)
     expect(input.value).toContain('jane@example.com')
     expect(target.querySelector('.suggestions')).toBeNull()
+    expect(input.value).toBe('jane@example.com')
     unmount(c)
   })
 
@@ -104,6 +108,21 @@ describe('RecipientAutocomplete', () => {
     )
     await sleep(30)
     expect(input.value).toBe('noone@nowhere.test')
+    expect(target.querySelector('.suggestions')).toBeNull()
+    unmount(c)
+  })
+
+  it('case 5: parent writes value from outside -> dropdown appears (Fix 2 $effect)', async () => {
+    const target = makeTarget()
+    targets.push(target)
+    const c = mount(ParentWrapper as any, { target, props: {} } as any)
+    await sleep(300)
+    expect(target.querySelector('.suggestions')).toBeNull()
+    ;(c as any).setValue('j')
+    await sleep(350)
+    const list = target.querySelector('.suggestions')
+    expect(list).not.toBeNull()
+    expect(list!.querySelectorAll('.suggestion').length).toBe(1)
     unmount(c)
   })
 })

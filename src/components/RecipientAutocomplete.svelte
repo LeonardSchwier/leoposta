@@ -23,6 +23,7 @@
 
   let suggestions: Contact[] = $state([])
   let suggestionIndex = $state(-1)
+  let cacheReady = $state(false)
   let debounce: ReturnType<typeof setTimeout> | null = null
   let blurTimer: ReturnType<typeof setTimeout> | null = null
 
@@ -40,8 +41,17 @@
       } catch {
         /* ignore */
       }
-      refreshFromToken(value)
+      cacheReady = true
     })()
+  })
+
+  $effect(() => {
+    if (!cacheReady) return
+    const v = value
+    if (debounce) clearTimeout(debounce)
+    debounce = setTimeout(() => {
+      refreshFromToken(v)
+    }, 120)
   })
 
   function activeToken(v: string): string {
@@ -56,7 +66,10 @@
       suggestionIndex = -1
       return
     }
-    suggestions = cache.matches(token, maxSuggestions)
+    const taken = new Set(v.split(/[,\s;]+/).map((p) => p.trim().toLowerCase()).filter(Boolean))
+    suggestions = cache
+      .matches(token, maxSuggestions)
+      .filter((c) => !taken.has(c.email.toLowerCase()))
     suggestionIndex = -1
   }
 
@@ -73,14 +86,6 @@
     if (input) input.value = value
     suggestions = []
     suggestionIndex = -1
-  }
-
-  function onInput(e: Event): void {
-    value = (e.target as HTMLInputElement).value
-    if (debounce) clearTimeout(debounce)
-    debounce = setTimeout(() => {
-      refreshFromToken(value)
-    }, 120)
   }
 
   function onKeyDown(e: KeyboardEvent): void {
@@ -119,13 +124,20 @@
       return
     }
     if (e.key === 'Enter') {
-      e.preventDefault()
       if (open) {
+        e.preventDefault()
         commit(suggestions[Math.max(suggestionIndex, 0)].email)
+        suggestions = []
+        suggestionIndex = -1
         return
       }
       const raw = activeToken(value)
-      if (raw) commit(raw)
+      if (raw) {
+        e.preventDefault()
+        commit(raw)
+        suggestions = []
+        suggestionIndex = -1
+      }
       return
     }
   }
@@ -153,7 +165,6 @@
     spellcheck={false}
     bind:value={value}
     placeholder={placeholder}
-    oninput={onInput}
     onkeydown={onKeyDown}
     onblur={onBlur}
   />
