@@ -2,7 +2,7 @@
 import { describe, it, expect, beforeAll, beforeEach, afterEach, vi } from 'vitest'
 import { mount, unmount } from 'svelte'
 import Compose from '../components/Compose.svelte'
-import { clearCompose, setComposeTo } from '../store'
+import { clearCompose, setComposeTo, setComposeCc, setComposeBcc } from '../store'
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms))
 
@@ -90,6 +90,37 @@ describe('Compose — shared RecipientAutocomplete in To field', () => {
     expect(capturedBody, 'API should be called with a body').not.toBeNull()
     const parsed = JSON.parse(capturedBody!) as any
     expect(parsed.to, 'to-array should include the seeded recipient').toContain('alice@example.com')
+    unmount(c)
+  })
+
+  it('send with To + Cc + Bcc parses all three fields', async () => {
+    setComposeTo(['alice@example.com'])
+    setComposeCc(['carol@example.com'])
+    setComposeBcc(['bob@example.com'])
+    const origFetch = globalThis.fetch
+    let capturedBody: string | null = null
+    globalThis.fetch = ((input: any, init?: any) => {
+      const url = String(input)
+      if (url.includes('/api/send')) {
+        capturedBody = init?.body || null
+        return Promise.resolve({ ok: true, status: 200, json: async () => ({ success: true }) })
+      }
+      return origFetch(input)
+    }) as any
+
+    const c = mount(Compose as any, { target, props: { onClose: vi.fn() } } as any)
+    await sleep(250)
+    const sendBtn = Array.from(target.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'Send')
+    expect(sendBtn, 'Send button should exist').not.toBeNull()
+    sendBtn!.click()
+    await sleep(200)
+    globalThis.fetch = origFetch
+
+    expect(capturedBody, 'API should be called with a body').not.toBeNull()
+    const parsed = JSON.parse(capturedBody!) as any
+    expect(parsed.to, 'to-array should include the seeded recipient').toContain('alice@example.com')
+    expect(parsed.cc, 'cc-array should include the seeded CC').toContain('carol@example.com')
+    expect(parsed.bcc, 'bcc-array should include the seeded BCC').toContain('bob@example.com')
     unmount(c)
   })
 
