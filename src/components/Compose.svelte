@@ -70,6 +70,11 @@
   }
 
   function handleKeyDown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      onClose()
+      return
+    }
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
       e.preventDefault()
       handleSend()
@@ -77,7 +82,7 @@
     }
     // Focus trap within the compose dialog: cycle Tab/Shift-Tab.
     if (e.key === 'Tab') {
-      const root = document.querySelector<HTMLElement>('.compose-window')
+      const root = document.querySelector<HTMLElement>('.modal.compose')
       if (!root) return
       const focusables = Array.from(
         root.querySelectorAll<HTMLElement>(
@@ -239,15 +244,24 @@
     attachments.splice(index, 1)
   }
 
+  function onCloseBack(e: MouseEvent) {
+    if (e.target === e.currentTarget) onClose()
+  }
+
   onMount(() => {
     void seedBody()
     window.addEventListener('keydown', handleKeyDown)
+    requestAnimationFrame(() => {
+      (document.querySelector<HTMLElement>('.modal.compose input.ra-input')
+        ?? document.querySelector<HTMLElement>('.modal.compose textarea'))?.focus()
+    })
     return () => window.removeEventListener('keydown', handleKeyDown)
   })
 </script>
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
-<div class="compose-window" role="dialog" aria-modal="true" aria-label="Compose message" tabindex="-1" onclick={e => e.stopPropagation()}>
+<div class="modal-back" onclick={onCloseBack} role="dialog" aria-modal="true" aria-label="Compose message" tabindex="-1">
+<div class="modal compose">
   <div class="compose-header">
     <h2 class="compose-title">
       {#if $store.composeReplyTo}Reply{:else if $store.composeForward}Forward{:else}New Message{/if}
@@ -386,12 +400,20 @@
     </div>
   </div>
 </div>
+</div>
 
 <style>
-  .compose-window {
+  .modal-back {
     position: fixed;
     inset: 0;
-    margin: auto;
+    background: rgba(0, 0, 0, 0.4);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+  }
+
+  .modal.compose {
     width: min(560px, 92vw);
     height: min(80vh, 720px);
     max-height: 90vh;
@@ -402,10 +424,6 @@
     box-shadow: 0 18px 60px rgba(0, 0, 0, 0.35);
     border: 1px solid var(--color-border);
     overflow: hidden;
-  }
-
-  .compose-window:popover-open {
-    display: flex;
   }
 
   .compose-header {
