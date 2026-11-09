@@ -43,15 +43,18 @@ router.get('/idle', async (req, res) => {
     res.write('event: mailbox-update\ndata: {"type":"fetch"}\n\n')
   })
 
-  try {
-    await client.idle({ maxTimeout: 29 * 60 * 1000 })
-  } catch (err) {
-    res.write(`event: idle-end\ndata: ${JSON.stringify({ reason: err.message })}\n\n`)
-  }
-
   const heartbeat = setInterval(() => {
     try { res.write(': keepalive\n\n') } catch (e) {}
   }, 25000)
+
+  // client.idle() stays pending until broken by idle.stop() or an error.
+  // ImapFlow's autoidle() keeps the connection idling on inactivity, so this
+  // stream stays live until the client disconnects. Rejecting here means the
+  // connection died underneath us - end the SSE stream.
+  client.idle().catch(() => {
+    clearInterval(heartbeat)
+    try { res.end() } catch (e) {}
+  })
 
   req.on('close', () => {
     clearInterval(heartbeat)

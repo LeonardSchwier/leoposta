@@ -92,13 +92,19 @@ export function getActiveAccount() {
 
 /**
  * Resolve the account for an HTTP request.
- * x-account header (an email address) wins; otherwise the first account.
+ * x-account header (an email address) wins; then the ?account= query param
+ * (used by SSE, which can't set custom headers); otherwise the first account.
  * Returns null if no account is configured.
  */
 export function resolveAccount(req) {
   const header = req && req.headers && req.headers['x-account']
   if (header) {
     return getAccount(header)
+  }
+  const query = req && req.query && req.query.account
+  if (query) {
+    const acct = getAccount(query)
+    if (acct) return acct
   }
   return getActiveAccount()
 }

@@ -1,5 +1,7 @@
 export type RefreshMode = 'instant' | '5m' | '15m' | '60m' | 'off'
 
+import { MailAPI } from './api'
+
 const REFRESH_MS: Record<Exclude<RefreshMode, 'instant' | 'off'>, number> = {
   '5m': 5 * 60_000,
   '15m': 15 * 60_000,
@@ -22,8 +24,8 @@ export function isTypingFocused(): boolean {
     node.tagName === 'INPUT' ||
     node.tagName === 'TEXTAREA' ||
     node.tagName === 'SELECT' ||
-    node.getAttribute('contenteditable') !== null ||
-    node.isContentEditable
+    node.isContentEditable ||
+    node.getAttribute('contenteditable') === 'true'
   ) {
     return true
   }
@@ -55,8 +57,6 @@ function teardown(): void {
 export function getRefreshMode(): RefreshMode {
   return current
 }
-
-import { MailAPI } from './api'
 
 export function startRefresh(
   mode: RefreshMode,

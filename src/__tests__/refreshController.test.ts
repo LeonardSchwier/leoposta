@@ -6,8 +6,14 @@ import { loadPersistedRefreshMode, saveRefreshMode } from '../refresh'
 class FakeEs {
   static instances: FakeEs[] = []
   close = vi.fn()
-  addEventListener = vi.fn()
+  listeners: Record<string, Array<(...a: unknown[]) => void>> = {}
+  addEventListener = vi.fn((type: string, fn: (...a: unknown[]) => void) => {
+    ;(this.listeners[type] ??= []).push(fn)
+  })
   constructor(public url: string) { FakeEs.instances.push(this) }
+  emit(type: string) {
+    for (const fn of this.listeners[type] ?? []) fn()
+  }
 }
 
 class MemStorage implements Storage {
@@ -76,6 +82,27 @@ describe('startRefresh', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  it('runs onTick when a mailbox-update event arrives (no typing focus)', () => {
+    const onTick = vi.fn()
+    startRefresh('instant', onTick)
+    expect(onTick).not.toHaveBeenCalled()
+    const es = FakeEs.instances[0]
+    es.emit('mailbox-update')
+    expect(onTick).toHaveBeenCalledTimes(1)
+  })
+
+  it('skips onTick for mailbox-update while a text input has focus', () => {
+    const onTick = vi.fn()
+    startRefresh('instant', onTick)
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.focus()
+    const es = FakeEs.instances[0]
+    es.emit('mailbox-update')
+    expect(onTick).not.toHaveBeenCalled()
+    input.blur()
   })
 })
 
