@@ -10,10 +10,13 @@ export interface Contact {
   org?: string
 }
 
-export interface ContactFetcher {
+export interface ContactsFetcher {
   fetchBooks(): Promise<AddressBook[]>
   fetchContacts(uri: string): Promise<Contact[]>
 }
+
+// Backwards-compat alias so existing imports keep working.
+export type ContactFetcher = ContactsFetcher
 
 export interface ContactsCache {
   addressBooks: AddressBook[]
@@ -24,7 +27,7 @@ export interface ContactsCache {
 }
 
 export interface ContactsCacheOptions {
-  fetcher: ContactFetcher
+  fetcher: ContactsFetcher
 }
 
 const DEFAULT_LIMIT = 8
@@ -57,15 +60,17 @@ export function createContactsCache({ fetcher }: ContactsCacheOptions): Contacts
   const loaded: Contact[] = []
   let booksPromise: Promise<void> | null = null
 
-  function addContacts(cs: Contact[]): void {
-    loaded.push(...cs)
-  }
-
   async function loadBooks(): Promise<void> {
     if (!booksPromise) {
-      booksPromise = fetcher.fetchBooks().then((books) => {
-        for (const b of books) addressBooks.push(b)
-      })
+      booksPromise = fetcher
+        .fetchBooks()
+        .then((books) => {
+          for (const b of books) addressBooks.push(b)
+        })
+        .catch((err) => {
+          booksPromise = null
+          throw err
+        })
     }
     await booksPromise
   }
@@ -73,10 +78,16 @@ export function createContactsCache({ fetcher }: ContactsCacheOptions): Contacts
   function loadContacts(uri: string): Promise<Contact[]> {
     const existing = inFlight.get(uri)
     if (existing) return existing
-    const p = fetcher.fetchContacts(uri).then((cs) => {
-      addContacts(cs ?? [])
-      return cs ?? []
-    })
+    const p = fetcher
+      .fetchContacts(uri)
+      .then((cs) => {
+        loaded.push(...(cs ?? []))
+        return cs ?? []
+      })
+      .catch((err) => {
+        inFlight.delete(uri)
+        throw err
+      })
     inFlight.set(uri, p)
     return p
   }

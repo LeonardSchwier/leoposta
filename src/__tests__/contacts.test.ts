@@ -120,7 +120,43 @@ describe('createContactsCache', () => {
     const matchesAll = cache.matches('a')
     expect(matchesAll.length).toBeLessThanOrEqual(8)
     const limited = cache.matches('a', 2)
-    expect(limited.length).toBeLessThanOrEqual(2)
-    expect(matchesAll.length).toBeGreaterThanOrEqual(limited.length)
+    expect(limited.length).toBe(2)
+    expect(matchesAll.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('loadBooks retries after a failed fetch (second call re-invokes the fetcher)', async () => {
+    let fails = true
+    const fetcher: ContactFetcher = {
+      async fetchBooks() {
+        if (fails) throw new Error('boom')
+        return BOOKS
+      },
+      async fetchContacts(uri) {
+        return CONTACTS_BY_BOOK[uri] ?? []
+      },
+    }
+    const cache = createContactsCache({ fetcher })
+    await expect(cache.loadBooks()).rejects.toThrow('boom')
+    fails = false
+    await cache.loadBooks()
+    expect(cache.addressBooks).toEqual(BOOKS)
+  })
+
+  it('loadContacts retries per-uri after a failed fetch (second call re-invokes the fetcher)', async () => {
+    let fails = true
+    const fetcher: ContactFetcher = {
+      async fetchBooks() {
+        return BOOKS
+      },
+      async fetchContacts(uri) {
+        if (fails && uri === 'dav://host/b1') throw new Error('boom')
+        return CONTACTS_BY_BOOK[uri] ?? []
+      },
+    }
+    const cache = createContactsCache({ fetcher })
+    await expect(cache.loadContacts('dav://host/b1')).rejects.toThrow('boom')
+    fails = false
+    const second = await cache.loadContacts('dav://host/b1')
+    expect(second).toEqual(CONTACTS_BY_BOOK['dav://host/b1'])
   })
 })
