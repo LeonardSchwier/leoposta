@@ -49,6 +49,11 @@
     error = ''
   }
 
+  function onRefreshIntervalChange(e: Event) {
+    const el = e.currentTarget as HTMLSelectElement
+    setRefreshInterval(el.value as RefreshMode)
+  }
+
   // ---- Signature ----
   let sigEnabled = $state(false)
   let sigText = $state('')
@@ -395,7 +400,7 @@
          <div class="form-group">
            <label>Inbox auto-refresh</label>
            <select value={$store.refreshInterval}
-                   on:change={(e) => setRefreshInterval((e.currentTarget as HTMLSelectElement).value as RefreshMode)}>
+                   onchange={onRefreshIntervalChange}>
              <option value="instant">Instant (push)</option>
              <option value="5m">Every 5 minutes</option>
              <option value="15m">Every 15 minutes</option>
