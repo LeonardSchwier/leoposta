@@ -1,7 +1,9 @@
 import { writable } from 'svelte/store'
 import { get } from 'svelte/store'
 import { setActiveAccountEmail } from '../api'
+import { loadPersistedRefreshMode, saveRefreshMode } from '../refresh'
 import type { Signature } from '../lib/signature'
+import type { RefreshMode } from '../refresh'
 
 export interface MailMessage {
   id: string
@@ -88,6 +90,7 @@ export interface State {
   isLoading: boolean
   error: string | null
   threadGrouping: boolean
+  refreshInterval: RefreshMode
 }
 
 const initialState: State = {
@@ -113,6 +116,7 @@ const initialState: State = {
   isLoading: false,
   error: null,
   threadGrouping: true,
+  refreshInterval: 'instant',
 }
 
 export const store = writable<State>(initialState)
@@ -217,6 +221,15 @@ export function setComposeReplyTo(messageId: string | null) {
 }
 export function setComposeForward(forward: boolean) {
   store.update(s => ({ ...s, composeForward: forward }))
+}
+
+export function setRefreshInterval(mode: RefreshMode) {
+  store.update(s => ({ ...s, refreshInterval: mode }))
+  saveRefreshMode(mode)
+}
+
+export function bootstrapRefreshMode() {
+  setRefreshInterval(loadPersistedRefreshMode())
 }
 export function setComposeOriginalMessage(message: MailMessage | null) {
   store.update(s => ({ ...s, composeOriginalMessage: message }))
