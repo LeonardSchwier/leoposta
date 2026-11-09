@@ -3,6 +3,7 @@
   import { CalendarAPI } from '../api'
   import { eventToICS, parseICSBlocks } from '../lib/vcf'
   import { loadSelection, saveSelection, STORAGE_KEY } from '../lib/calSelection'
+  import RecipientAutocomplete from './RecipientAutocomplete.svelte'
 
   let { showToast } = $props()
 
@@ -365,7 +366,10 @@
           {#if !fAllDay}<label><span>Time</span><input type="time" bind:value={fEndTime} placeholder={fTime || '10:00'} /></label>{/if}
         </div>
         <label><span>Location</span><input type="text" bind:value={fLocation} /></label>
-        <label><span>Attendees</span><input type="text" bind:value={fAttendees} placeholder="alice@example.com, bob@example.com" /></label>
+        <label>
+          <span>Attendees</span>
+          <RecipientAutocomplete bind:value={fAttendees} placeholder="alice@example.com, bob@example.com" />
+        </label>
         <label><span>Description</span><textarea bind:value={fDescription} rows="3"></textarea></label>
         <div class="actions">
           {#if editingUid}<button class="danger" onclick={() => { showEditor = false; deleteEvent(editingUid!) }}>Delete</button>{/if}
