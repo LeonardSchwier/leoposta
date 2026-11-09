@@ -10,7 +10,8 @@
   import Settings from './components/Settings.svelte'
   import Calendar from './components/Calendar.svelte'
   import Contacts from './components/Contacts.svelte'
-  import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward } from './store'
+  import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward, bootstrapRefreshMode } from './store'
+  import { startRefresh, stopRefresh } from './refresh'
   import { MailAPI } from './api'
   import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
 
@@ -445,12 +446,28 @@
   })
 
   onMount(() => {
+    bootstrapRefreshMode()
     loadFolders()
     loadMessages('INBOX')
     refreshQueueCount()
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', () => refreshQueueCount())
     window.addEventListener('keydown', handleKeydown)
+  })
+
+  $effect(() => {
+    const mode = $store.refreshInterval
+    const account = $store.activeAccountId
+    const view = appMode
+    if (mode === 'off' || !account || view !== 'mail') {
+      stopRefresh()
+      return () => stopRefresh()
+    }
+    startRefresh(mode, () => {
+      const folder = getState().activeFolder
+      loadMessages(folder).catch(() => {})
+    })
+    return () => stopRefresh()
   })
 </script>
 
