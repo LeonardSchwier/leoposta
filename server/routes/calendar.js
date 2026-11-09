@@ -1,6 +1,7 @@
 import { Router } from 'express'
-import { resolveAccount } from '../lib/state.js'
+import { resolveAccount, state, invalidateAccountDavCache } from '../lib/state.js'
 import { davRequest, resolveDavBase, extractResponseSet, extractDataBlocks, joinDavPath, toDavTime } from '../lib/dav.js'
+import { TTL_LONG } from '../lib/davcache.js'
 
 const router = Router()
 
@@ -58,6 +59,9 @@ router.get('/calendar/events', async (req, res) => {
   </c:filter>
 </c:calendar-query>`
     const urlPath = joinDavPath(basePath, calendar) + '/'
+    const cacheKey = `events|${acct.id}|${calendar}|${req.query.start || ''}|${req.query.end || ''}`
+    const cached = state.davCache.get(cacheKey)
+    if (cached) return res.json(cached)
     const r = await davRequest('REPORT', urlPath, report, null, acct, 1)
     const blocks = extractDataBlocks(r.body, 'calendar-data')
     const events = blocks.map(b => {
@@ -70,7 +74,9 @@ router.get('/calendar/events', async (req, res) => {
       const description = (ics.match(/DESCRIPTION:(.+)/) || [])[1] || ''
       return { uid: uid.trim(), summary: summary.trim(), start: dtstart.trim(), end: dtend.trim(), location: location.trim(), description: description.trim(), etag: b.etag || '', href: b.href, ics }
     })
-    res.json({ events })
+    const payload = { events }
+    state.davCache.set(cacheKey, payload, TTL_LONG)
+    res.json(payload)
   } catch (err) {
     console.error('CalDAV events error:', err.message)
     res.status(500).json({ error: err.message })
@@ -88,6 +94,7 @@ router.put('/calendar/event', async (req, res) => {
     const fileUid = uid || Date.now()
     const urlPath = joinDavPath(basePath, calendar) + `/${fileUid}.ics`
     const r = await davRequest('PUT', urlPath, ics, 'text/calendar; charset=utf-8', acct)
+    invalidateAccountDavCache(acct.id)
     res.json({ success: true, uid: fileUid, etag: r.headers.etag || '' })
   } catch (err) {
     console.error('CalDAV event PUT error:', err.message)
@@ -105,6 +112,7 @@ router.delete('/calendar/event', async (req, res) => {
     const basePath = (await resolveDavBase(acct, 'calendar')).basePath
     const urlPath = joinDavPath(basePath, calendar) + `/${uid}.ics`
     await davRequest('DELETE', urlPath, null, null, acct)
+    invalidateAccountDavCache(acct.id)
     res.json({ success: true })
   } catch (err) {
     console.error('CalDAV event DELETE error:', err.message)
@@ -143,6 +151,7 @@ router.post('/calendar/import', async (req, res) => {
         imported++
       } catch {}
     }
+    invalidateAccountDavCache(acct.id)
     res.json({ success: true, imported, total: events.length })
   } catch (err) {
     console.error('CalDAV import error:', err.message)

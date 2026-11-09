@@ -46,11 +46,22 @@ export const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS
   || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001')
   .split(',').map(s => s.trim()).filter(Boolean)
 
+// Server-side DAV response cache shared by every route module and the tests.
+import { createCache } from './davcache.js'
+
 // Mutable shared state — every route module reads/writes through this.
 export const state = {
   accounts: [],
   scheduledMessages: [],
-  rules: []
+  rules: [],
+  davCache: createCache(500)
+}
+
+// Drop every cached DAV read for one account (contacts, calendar list, events).
+export function invalidateAccountDavCache(acctId) {
+  state.davCache.invalidatePrefix(`contacts|${acctId}|`)
+  state.davCache.invalidate(`calendars|${acctId}`)
+  state.davCache.invalidatePrefix(`events|${acctId}|`)
 }
 
 // Load accounts: prefer accounts.json; fall back to legacy account.json

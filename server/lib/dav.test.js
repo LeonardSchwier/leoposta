@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { resolveDavTarget, resolveDavBase, extractResponseSet, clearDavBaseCache, extractAddressData, extractDataBlocks, toDavTime } from './dav.js'
+import { resolveDavTarget, resolveDavBase, extractResponseSet, clearDavBaseCache, extractAddressData, extractDataBlocks, toDavTime, timeoutForMethod, multigetWithRetry, DAV_READ_TIMEOUT_MS, DAV_WRITE_TIMEOUT_MS } from './dav.js'
 import { accountPayloadFrom } from './state.js'
 
 test('resolveDavTarget: davUrl with explicit port and path', () => {
@@ -349,4 +349,80 @@ END:VCALENDAR
   assert.ok(r[0].body.includes('SUMMARY:Test Event'))
   assert.ok(r[0].body.includes('BEGIN:VCALENDAR'))
   assert.equal(r[0].etag, 'e1')
+})
+
+// ---- timeoutForMethod: read vs write ceiling ----
+
+test('timeoutForMethod: reads are 120s, writes are 30s', () => {
+  const reads = ['GET', 'PROPFIND', 'REPORT', 'OPTIONS']
+  const writes = ['PUT', 'DELETE', 'MKCOL', 'PATCH']
+  for (const m of reads) assert.equal(timeoutForMethod(m), DAV_READ_TIMEOUT_MS)
+  for (const m of writes) assert.equal(timeoutForMethod(m), DAV_WRITE_TIMEOUT_MS)
+})
+
+test('timeoutForMethod is case-insensitive and safe on empty', () => {
+  assert.equal(timeoutForMethod('propfind'), DAV_READ_TIMEOUT_MS)
+  assert.equal(timeoutForMethod('report'), DAV_READ_TIMEOUT_MS)
+  assert.equal(timeoutForMethod(''), DAV_WRITE_TIMEOUT_MS)
+  assert.equal(timeoutForMethod(undefined), DAV_WRITE_TIMEOUT_MS)
+})
+
+// ---- multigetWithRetry: halving on timeout, no halving on other errors ----
+
+function timeoutErr() { return new Error('DAV REPORT times out after 120s') }
+function plainErr() { return new Error('DAV REPORT 500: boom') }
+
+test('multigetWithRetry: small slice that succeeds returns its cards verbatim', async () => {
+  const hrefs = [1, 2, 3].map(h => `<d:href>x${h}</d:href>`)
+  const calls = []
+  const fetchBatch = async (slice) => { calls.push(slice.length); return slice.map((_, i) => ({ i })) }
+  const out = await multigetWithRetry('/p', hrefs, fetchBatch, null, { maxBatch: 10, minBatch: 1 })
+  assert.equal(out.length, 3)
+  assert.deepEqual(calls, [3])
+})
+
+test('multigetWithRetry: chunking keeps order when over maxBatch', async () => {
+  const hrefs = Array.from({ length: 7 }, (_, i) => `<d:href>x${i}</d:href>`)
+  const calls = []
+  const fetchBatch = async (slice) => {
+    calls.push(slice.length)
+    return slice.map((h, i) => h)
+  }
+  const out = await multigetWithRetry('/p', hrefs, fetchBatch, null, { maxBatch: 3, minBatch: 1 })
+  assert.equal(out.length, 7)
+  assert.equal(out[0], hrefs[0])
+  assert.equal(out[6], hrefs[6])
+  assert.deepEqual(calls, [3, 3, 1])
+})
+
+test('multigetWithRetry: halves the slice on timeout until it fits, union complete + order-stable', async () => {
+  const hrefs = Array.from({ length: 8 }, (_, i) => `<d:href>${i}</d:href>`)
+  const sizes = []
+  const fetchBatch = async (slice) => {
+    sizes.push(slice.length)
+    if (slice.length > 4) throw timeoutErr()
+    return Array.from({ length: slice.length }, (_, i) => `${slice[0]}#${i}`)
+  }
+  const out = await multigetWithRetry('/p', hrefs, fetchBatch, null, { maxBatch: 8, minBatch: 1 })
+  assert.equal(out.length, 8)
+  // 8 times out → halves to 4/4 (both succeed).
+  assert.deepEqual(sizes, [8, 4, 4])
+})
+
+test('multigetWithRetry: does NOT retry a non-timeout error', async () => {
+  const hrefs = Array.from({ length: 8 }, (_, i) => `<d:href>${i}</d:href>`)
+  const fetchBatch = async () => { throw plainErr() }
+  await assert.rejects(
+    () => multigetWithRetry('/p', hrefs, fetchBatch, null, { maxBatch: 8, minBatch: 1 }),
+    (e) => /500/.test(e.message)
+  )
+})
+
+test('multigetWithRetry: halving stops at minBatch and propagates', async () => {
+  const hrefs = Array.from({ length: 2 }, (_, i) => `<d:href>${i}</d:href>`)
+  const fetchBatch = async () => { throw timeoutErr() }
+  await assert.rejects(
+    () => multigetWithRetry('/p', hrefs, fetchBatch, null, { maxBatch: 8, minBatch: 5 }),
+    (e) => /times out/i.test(e.message)
+  )
 })

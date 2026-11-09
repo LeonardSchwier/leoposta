@@ -2,18 +2,20 @@
   import { onMount } from 'svelte'
   import { CalendarAPI } from '../api'
   import { eventToICS, parseICSBlocks } from '../lib/vcf'
+  import { loadSelection, saveSelection, STORAGE_KEY } from '../lib/calSelection'
 
   let { showToast } = $props()
 
   interface Cal { uri: string; name: string; color?: string }
   let calendars = $state<Cal[]>([])
-  let currentCal = $state<Cal | null>(null)
+  let selectedCals = $state<string[]>([])
   let events = $state<any[]>([])
   let viewDate = $state(new Date())
   let selectedUid = $state<string | null>(null)
   let loading = $state(false)
   let busy = $state(false)
   let err = $state('')
+  let partialErrors = $state<string[]>([])
   let monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December']
   let weekdayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
 
@@ -44,23 +46,55 @@
     return fmtISODate(x)
   }
 
+  let firstSel = $derived(
+    calendars.find(c => selectedCals.includes(c.uri)) || null
+  )
+
   async function loadCalendars() {
     try {
       const data = await CalendarAPI.calendars()
       calendars = data.calendars || []
-      if (calendars.length && !currentCal) currentCal = calendars[0]
-      if (currentCal && !calendars.find(c => c.uri === currentCal!.uri)) currentCal = calendars[0] || null
+      selectedCals = loadSelection(localStorage, STORAGE_KEY, calendars)
     } catch (e: any) { err = e.message }
   }
 
+  function toggleCal(uri: string) {
+    const next = selectedCals.includes(uri)
+      ? selectedCals.filter(u => u !== uri)
+      : [...selectedCals, uri]
+    selectedCals = next
+    saveSelection(localStorage, STORAGE_KEY, calendars, next)
+    loadEvents()
+  }
+  function selectAll() {
+    selectedCals = calendars.map(c => c.uri)
+    saveSelection(localStorage, STORAGE_KEY, calendars, selectedCals)
+    loadEvents()
+  }
+  function selectNone() {
+    selectedCals = []
+    saveSelection(localStorage, STORAGE_KEY, calendars, selectedCals)
+    loadEvents()
+  }
+
   async function loadEvents() {
-    if (!currentCal) return
+    if (!selectedCals.length) { events = []; partialErrors = []; return }
     const s = isoWeek(monthStart(), -2)
     const e = isoWeek(monthEnd(), 2)
     try {
       loading = true
-      const data = await CalendarAPI.events(currentCal.uri, s, e)
-      events = data.events || []
+      partialErrors = []
+      const results = await Promise.allSettled(
+        selectedCals.map(uri => CalendarAPI.events(uri, s, e))
+      )
+      const byUid = new Map<string, any>()
+      for (const r of results) {
+        if (r.status === 'rejected') { partialErrors.push(String((r.reason && r.reason.message) || r.reason)); continue }
+        for (const ev of (r.value.events || [])) {
+          if (!byUid.has(ev.uid)) byUid.set(ev.uid, ev)
+        }
+      }
+      events = Array.from(byUid.values())
     } catch (e2: any) {
       err = e2.message
     } finally { loading = false }
@@ -73,8 +107,14 @@
     })
   }
 
-  function shiftMonth(delta: number) { viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth() + delta, 1) }
-  function goToday() { viewDate = new Date(); }
+  function shiftMonth(delta: number) {
+    viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth() + delta, 1)
+    loadEvents()
+  }
+  function goToday() {
+    viewDate = new Date()
+    loadEvents()
+  }
 
   function openCreate(dateStr?: string) {
     editingUid = null
@@ -115,7 +155,7 @@
   }
 
   async function saveEvent() {
-    if (!currentCal) return
+    if (!firstSel) return
     if (!fSummary.trim() && !fDescription.trim()) { showToast('Add a title or description'); return }
     try {
       busy = true
@@ -129,7 +169,7 @@
         allDay: fAllDay,
       }
       const ics = eventToICS(ev, uid)
-      await CalendarAPI.saveEvent(currentCal.uri, ics, editingUid || undefined)
+      await CalendarAPI.saveEvent(firstSel.uri, ics, editingUid || undefined)
       showEditor = false
       await loadEvents()
       showToast(editingUid ? 'Event updated' : 'Event created')
@@ -137,11 +177,11 @@
   }
 
   async function deleteEvent(uid: string) {
-    if (!currentCal) return
+    if (!firstSel) return
     if (!confirm('Delete this event?')) return
     try {
       busy = true
-      await CalendarAPI.deleteEvent(currentCal.uri, uid)
+      await CalendarAPI.deleteEvent(firstSel.uri, uid)
       selectedUid = null
       await loadEvents()
       showToast('Event deleted')
@@ -153,10 +193,10 @@
     reader.onload = async () => {
       const ics = String(reader.result || '')
       const blocks = parseICSBlocks(ics)
-      if (!currentCal) return
+      if (!firstSel) return
       try {
         busy = true
-        await CalendarAPI.importICS(currentCal.uri, ics)
+        await CalendarAPI.importICS(firstSel.uri, ics)
         await loadEvents()
         showToast(`Imported ${Math.max(blocks.length, 1)} event(s)`);
       } catch (e: any) { showToast(e.message, 5000) } finally { busy = false }
@@ -195,12 +235,22 @@
       <h2>Calendars</h2>
       <button class="add-evt" onclick={() => openCreate()}>+ New event</button>
     </div>
+    <div class="cal-actions">
+      <button class="cal-act" onclick={selectAll} disabled={!calendars.length}>All</button>
+      <button class="cal-act" onclick={selectNone} disabled={!selectedCals.length}>None</button>
+    </div>
     <div class="cal-list">
       {#each calendars as cal (cal.uri)}
-        <button class="cal-item" class:active={currentCal?.uri === cal.uri} onclick={() => { currentCal = cal; loadEvents() }}>
+        <label class="cal-item" class:checked={selectedCals.includes(cal.uri)}>
+          <input
+            type="checkbox"
+            checked={selectedCals.includes(cal.uri)}
+            onchange={() => toggleCal(cal.uri)}
+            aria-label={cal.name}
+          />
           <span class="cal-dot" style="background:{cal.color || 'var(--color-accent)'}"></span>
           <span class="cal-name">{cal.name}</span>
-        </button>
+        </label>
       {/each}
       {#if calendars.length === 0}<p class="empty">No calendars found.</p>{/if}
     </div>
@@ -227,6 +277,9 @@
         <span>{err}</span>
         <button onclick={loadEvents}>Retry</button>
       </div>
+    {/if}
+    {#if !err && partialErrors.length}
+      <div class="cal-warn">Could not load {partialErrors.length} calendar(s): {partialErrors[0]}</div>
     {/if}
 
     <div class="weekdays">
@@ -269,6 +322,7 @@
     <div class="modal-back" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }} role="dialog">
       <div class="modal">
         <h4>{editingUid ? 'Edit event' : 'New event'}</h4>
+        {#if firstSel}<p class="cal-target">Target calendar: {firstSel.name}</p>{/if}
         <label>
           <span>Title</span>
           <input type="text" bind:value={fSummary} placeholder="Event title" />
@@ -304,10 +358,17 @@
   .cal-side-head h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--color-text-secondary); margin: 0 0 4px; font-weight: 700; }
   .add-evt { background: var(--color-accent); color: #fff; border: none; padding: 7px 12px; border-radius: var(--radius-sm); font-weight: 600; font-size: 12px; cursor: pointer; }
   .add-evt:hover { background: var(--color-accent-hover); }
+  .cal-actions { display: flex; gap: 6px; padding: 4px 8px; }
+  .cal-act { flex: 1; padding: 5px 8px; border: 1px solid var(--color-border); background: var(--color-bg-secondary); color: var(--color-text); border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; }
+  .cal-act:hover:not(:disabled) { border-color: var(--color-accent); color: var(--color-accent); }
+  .cal-act:disabled { opacity: 0.4; cursor: default; }
   .cal-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
   .cal-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border: none; background: transparent; color: var(--color-text); border-radius: 6px; font-size: 13px; cursor: pointer; text-align: left; margin-bottom: 2px; }
+  .cal-item input[type="checkbox"] { width: 14px; height: 14px; flex: 0 0 auto; margin: 0; accent-color: var(--color-accent); }
+  .cal-item.checked { font-weight: 500; }
+  .cal-warn { background: var(--color-bg-secondary); color: var(--color-text-secondary); border-left: 3px solid var(--color-warn, #b58900); padding: 8px 18px; font-size: 12px; }
+  .cal-target { font-size: 11px; color: var(--color-text-secondary); margin: -6px 0 10px; }
   .cal-item:hover { background: var(--color-hover); }
-  .cal-item.active { background: var(--color-selected); font-weight: 500; }
   .cal-dot { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
   .cal-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .empty { font-size: 12px; color: var(--color-text-secondary); padding: 8px; }
