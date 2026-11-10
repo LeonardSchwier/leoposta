@@ -80,6 +80,17 @@ test('wrong token gives 401', async () => {
   assert.equal(res2.status, 401)
 })
 
+test('GET /api/status needs the token because it lists account addresses', async () => {
+  const open = await fetch(`${base}/api/status`)
+  assert.equal(open.status, 401)
+  assert.deepEqual(await open.json(), { error: 'unauthorized' })
+  const ok = await fetch(`${base}/api/status`, { headers: authed })
+  assert.equal(ok.status, 200)
+  const body = await ok.json()
+  assert.equal(typeof body.connected, 'boolean')
+  assert.ok(Array.isArray(body.accounts))
+})
+
 test('GET /api/health is open without a header', async () => {
   const res = await fetch(`${base}/api/health`)
   assert.equal(res.status, 200)

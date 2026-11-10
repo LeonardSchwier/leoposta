@@ -118,19 +118,28 @@ export async function sendScheduledMessage(msg) {
   return messageId
 }
 
-export function processScheduledMessages() {
+// Messages whose send is in flight. They stay `pending` on disk until the send
+// resolves (a crash mid-send re-sends rather than loses the mail), so the
+// 30 s tick needs this to know it must not dispatch them again: a slow SMTP
+// server or a large attachment would otherwise send the same mail every tick.
+const inFlight = new Set()
+
+export function processScheduledMessages(send = sendScheduledMessage) {
   const now = new Date()
-  const dueMessages = state.scheduledMessages.filter(m => m.status === 'pending' && new Date(m.scheduled) <= now)
+  const dueMessages = state.scheduledMessages.filter(
+    m => m.status === 'pending' && !inFlight.has(m) && new Date(m.scheduled) <= now
+  )
 
   for (const msg of dueMessages) {
-    sendScheduledMessage(msg).then(() => {
+    inFlight.add(msg)
+    Promise.resolve().then(() => send(msg)).then(() => {
       msg.status = 'sent'
       saveScheduled()
     }).catch(err => {
       console.error('Error sending scheduled message:', err)
       msg.status = 'failed'
       saveScheduled()
-    })
+    }).finally(() => inFlight.delete(msg))
   }
 }
 

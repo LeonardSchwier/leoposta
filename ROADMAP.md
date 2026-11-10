@@ -139,6 +139,15 @@ update it as each item lands.
   - `src/App.svelte`: `$effect` keyed on `refreshInterval` + `activeAccountId` + `appMode`, calls `startRefresh`/`stopRefresh`; `bootstrapRefreshMode()` in `onMount`.
   - Accept (verified 2026-11-09): `npx vitest run` → 115 pass / 0 fail (17 files); `npm run typecheck` clean; `npm run build` clean (PWA generated); `node --test 'server/**/*.test.js' 'server/*.test.js'` → 109 pass / 0 fail.
 
+## Review run 2026-11-10 (no open item; review mode, unattended)
+
+- [x] **CI never ran the server tests; scheduled mail could be sent twice; `/api/status` was open** — done 2026-11-10. Design: `docs/design/review-2026-11-10-ci-scheduler-status.md`; plan: `docs/plans/review-2026-11-10-ci-scheduler-status.md`.
+  - `package.json`: `test:server` is now `node --test "server/**/*.test.js"` (it was `node --test server`, which on Node 22 ran `server/index.js` as one trivial test, so CI and `npm run check` skipped all server tests). Guard: `src/__tests__/serverTestScript.test.ts`.
+  - `server/routes/send.js`: `processScheduledMessages(send = sendScheduledMessage)` keeps an in-memory `inFlight` set so a send slower than the 30 s tick is not dispatched again. Tests: `server/scheduler.test.js` (3).
+  - `server/index.js`: `GET /api/status` moved behind `requireToken`; only `/api/health` is open. Test in `server/server.test.js`.
+  - Accept (verified 2026-11-10, Node 22.23): baseline `npm run test:server` → `# tests 1`; after: `npm run test:server` → 114 pass / 0 fail; `npx vitest run` → 119 pass / 0 fail (18 files); `npm run typecheck` clean; `npm run build` clean. Without the three source changes all 6 behaviour tests fail (2 script guard, 3 scheduler, 1 status); a seventh new test (synchronous throw) covers a path that already worked.
+  - Not run: `npm run test:e2e` (the sandbox proxy refuses the Playwright browser download). Open: `/api/idle` still writes its own `Access-Control-Allow-Origin: *` (behind the token; low risk).
+
 ## Later (P2)
 
 - [x] Public GitHub repo + `MIT LICENSE` + leotheca-style README —
