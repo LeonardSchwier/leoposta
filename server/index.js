@@ -28,6 +28,9 @@ app.use(cors({
 }))
 
 app.get('/api/health', (req, res) => res.json({ ok: true }))
+app.use('/api', requireToken(API_TOKEN))
+
+// Behind the token: it lists the configured mailbox addresses. Only /api/health is open.
 app.get('/api/status', (req, res) => {
   const accounts = state.accounts || []
   res.json({
@@ -37,7 +40,6 @@ app.get('/api/status', (req, res) => {
     version: '0.1.0'
   })
 })
-app.use('/api', requireToken(API_TOKEN))
 
 const defaultJson = express.json({ limit: '1mb' })
 // /api/send carries attachments (25 MB is ~33.4 MB as base64): it gets its own parser inline.
