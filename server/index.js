@@ -5,6 +5,7 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { requireToken } from './lib/auth.js'
+import { apiErrorHandler, originNotAllowedError } from './lib/errors.js'
 import { API_TOKEN, TOKEN_FROM_ENV, ALLOWED_ORIGINS, state } from './lib/state.js'
 
 import accountRoutes from './routes/account.js'
@@ -23,7 +24,7 @@ const app = express()
 app.use(cors({
   origin: (origin, cb) => {
     if (!origin || ALLOWED_ORIGINS.includes(origin)) return cb(null, true)
-    cb(new Error('Not allowed by CORS'), false)
+    cb(originNotAllowedError(), false)
   }
 }))
 
@@ -62,11 +63,9 @@ if (fs.existsSync(DIST_DIR)) {
   console.log(`Serving PWA from ${DIST_DIR}`)
 }
 
-// Body-too-large -> 413 JSON
-app.use((err, req, res, next) => {
-  if (err && err.type === 'entity.too.large') return res.status(413).json({ error: 'too_large' })
-  next(err)
-})
+// Every error becomes JSON: 413 for an oversized body, 400 for malformed JSON,
+// 403 for a rejected origin, a generic 500 otherwise (never a stack trace).
+app.use(apiErrorHandler)
 
 export { processPgp }
 export { processScheduledMessages }
