@@ -309,3 +309,30 @@ test('DAV (calendar + contacts) routes follow the x-account header, not accounts
   assert.match(davLastPath, /\/dav\/user-b/, `contacts x-account path should be user-b, got ${davLastPath}`)
   assert.equal(davLastAuth, authB, `contacts x-account auth should be user-b, got ${davLastAuth}`)
 })
+
+test('PGP: repeated wrong passphrases lock /api/pgp/unlock with 429 and Retry-After, even for the right one', async () => {
+  const json = { ...authed, 'content-type': 'application/json' }
+  const pass = 'throttle-pass-1'
+  const { privateKey } = await openpgp.generateKey({
+    type: 'ecc', curve: 'curve25519Legacy', userIDs: [{ name: 'T', email: 't@example.com' }], passphrase: pass, format: 'armored'
+  })
+  const put = await fetch(`${base}/api/pgp`, { method: 'PUT', headers: json, body: JSON.stringify({ privateAsc: privateKey, passphrase: pass }) })
+  assert.equal(put.status, 200)
+  await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: authed })
+  const unlock = (passphrase) => fetch(`${base}/api/pgp/unlock`, { method: 'POST', headers: json, body: JSON.stringify({ passphrase }) })
+
+  // A success resets the counter, so earlier tests in this file cannot count.
+  assert.equal((await unlock(pass)).status, 200)
+  await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: authed })
+
+  for (let i = 0; i < 5; i++) assert.equal((await unlock('wrong-' + i)).status, 401)
+  const blocked = await unlock('wrong-again')
+  assert.equal(blocked.status, 429)
+  assert.deepEqual(await blocked.json(), { error: 'too_many_attempts' })
+  assert.ok(Number(blocked.headers.get('retry-after')) > 0)
+
+  const right = await unlock(pass)
+  assert.equal(right.status, 429, 'the correct passphrase must not get through while locked out')
+  const st = await (await fetch(`${base}/api/pgp/status`, { headers: authed })).json()
+  assert.equal(st.unlocked, false)
+})

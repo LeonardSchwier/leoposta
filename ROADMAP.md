@@ -148,6 +148,15 @@ update it as each item lands.
   - Accept (verified 2026-11-10, Node 22.23): baseline `npm run test:server` → `# tests 1`; after: `npm run test:server` → 114 pass / 0 fail; `npx vitest run` → 119 pass / 0 fail (18 files); `npm run typecheck` clean; `npm run build` clean. Without the three source changes all 6 behaviour tests fail (2 script guard, 3 scheduler, 1 status); a seventh new test (synchronous throw) covers a path that already worked.
   - Not run: `npm run test:e2e` (the sandbox proxy refuses the Playwright browser download). Open: `/api/idle` still writes its own `Access-Control-Allow-Origin: *` (behind the token; low risk).
 
+## Review run 2026-11-11 (no open item; review mode, unattended)
+
+- [x] **SSE disconnect leaked IMAP sessions; `/api/idle` wildcard CORS; HTML stack-trace errors; unlock without throttling** — done 2026-11-11. Design: `docs/design/review-2026-11-11-idle-leak-cors-unlock.md`; plan: `docs/plans/review-2026-11-11-idle-leak-cors-unlock.md`.
+  - `server/routes/idle.js`: `createIdleRouter({ createClient, resolve, heartbeatMs })`; the `res` close handler is registered before the first await and aborts a pending connect/lock; idempotent `teardown()` releases the lock and logs out; a failed connect logs out its client; the handler-level `Access-Control-Allow-Origin: *` is removed. Tests: `server/idle.test.js` (6).
+  - `server/lib/errors.js` + `server/index.js`: one `apiErrorHandler` (413 `too_large`, 400 `invalid_json`, 403 `origin_not_allowed`, 404 `not_found`, other 4xx `bad_request`, generic 500 `internal_error`; no stack traces). Tests: `server/cors.test.js` (5).
+  - `server/lib/throttle.js` + `server/routes/pgp.js`: `POST /api/pgp/unlock` allows 5 attempts per 60 s window (counted before the decrypt), then 429 `too_many_attempts` + `Retry-After`; a success resets. Tests: `server/lib/throttle.test.js` (5), route test in `server/server.test.js`.
+  - Accept (verified 2026-11-11, Node 22.23.4): baseline `npm run test:server` → 114 pass, `npx vitest run` → 119 pass; after: `npm run test:server` → 131 pass / 0 fail; `npx vitest run` → 119 pass (18 files); `npm run typecheck` clean; `npm run build` clean. On the old code the new behaviour tests fail (idle leak 3 of 4 original race tests, wildcard CORS, 403/400/500 JSON, 429).
+  - Not run: `npm run test:e2e` (the sandbox proxy refuses the Playwright browser download). Still open: `?token=` on idle and attachment GETs may reach logs (needs an EventSource ticket scheme, a design change).
+
 ## Later (P2)
 
 - [x] Public GitHub repo + `MIT LICENSE` + leotheca-style README —
@@ -297,7 +306,7 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
 
 ## Standing rules
 
-- needs_validation (security-audit guidance, B5): `POST /api/pgp/unlock` has no attempt throttling (token-gated only). Frontend still needs an unlock prompt; `pgp_locked` is returned as `error` inside the message's pgp status, there is no sign route yet.
+- security-audit guidance, B5: `POST /api/pgp/unlock` is throttled since 2026-11-11 (5 attempts per 60 s). Frontend still needs an unlock prompt; `pgp_locked` is returned as `error` inside the message's pgp status, there is no sign route yet.
 
 - needs_validation (security-audit guidance, B1): how the Tauri sidecar and frontend share `LEOPOSTA_TOKEN` (the Vite build bakes `VITE_LEOPOSTA_TOKEN` into the bundle; `src-tauri` not reviewed). `?token=` on idle/attachment GETs may reach logs.
 
