@@ -6,6 +6,7 @@ import { normalizeFlags, parseFromAddr, toISO, messageDate } from '../lib/addres
 import { messageRange } from '../lib/mailRange.js'
 import { processPgp } from '../lib/pgp.js'
 import { applyRules } from '../lib/rules.js'
+import { MailActionError, moveChecked, parseUid, removeMessage } from '../lib/removal.js'
 
 const router = Router()
 
@@ -320,28 +321,34 @@ router.post('/message/:id/flags', async (req, res) => {
 })
 
 // DELETE /api/message/:id
+// Moves the message to the server's Trash (creating it if there is none); only a
+// message that is already in Trash is removed for good. See lib/removal.js.
 router.delete('/message/:id', async (req, res) => {
   try {
-    const { id } = req.params
+    const uid = parseUid(req.params.id)
+    if (uid === null) return res.status(400).json({ error: 'invalid message id' })
     const { folder = 'INBOX' } = req.query
-    const { toTrash = false } = req.query
     const acct = resolveAccount(req)
     if (!acct) return res.status(400).json({ error: 'No account configured' })
     const pool = getPoolFor(acct)
 
-    await pool.run(async (client) => {
+    // A refusal by the server is returned as a value, not thrown: an error thrown
+    // inside pool.run makes the pool log the shared IMAP client out.
+    const outcome = await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
       try {
-        if (toTrash) {
-          await client.messageMove(Number(id), 'Trash', { uid: true })
-        } else {
-          await client.messageDelete(Number(id), { uid: true })
-        }
-        res.json({ success: true })
+        // lock.path is the mailbox the server selected (namespace prefix applied);
+        // `folder` is only what the client called it.
+        return await removeMessage(client, lock.path || folder, uid)
+      } catch (err) {
+        if (err instanceof MailActionError) return { error: err.message }
+        throw err
       } finally {
         lock.release()
       }
     })
+    if (outcome.error) return res.status(500).json({ error: outcome.error })
+    res.json({ success: true, ...outcome })
   } catch (err) {
     console.error('Error deleting message:', err)
     res.status(500).json({ error: err.message })
@@ -351,21 +358,27 @@ router.delete('/message/:id', async (req, res) => {
 // POST /api/message/:id/move
 router.post('/message/:id/move', async (req, res) => {
   try {
-    const { id } = req.params
-    const { from = 'INBOX', to } = req.body
+    const uid = parseUid(req.params.id)
+    if (uid === null) return res.status(400).json({ error: 'invalid message id' })
+    const { from = 'INBOX', to } = req.body || {}
     const acct = resolveAccount(req)
     if (!acct || !to) return res.status(400).json({ error: 'from/to required' })
     const pool = getPoolFor(acct)
 
-    await pool.run(async (client) => {
+    const outcome = await pool.run(async (client) => {
       const lock = await client.getMailboxLock(from)
       try {
-        await client.messageMove(Number(id), to, { uid: true })
-        res.json({ success: true })
+        await moveChecked(client, uid, to)
+        return {}
+      } catch (err) {
+        if (err instanceof MailActionError) return { error: err.message }
+        throw err
       } finally {
         lock.release()
       }
     })
+    if (outcome.error) return res.status(500).json({ error: outcome.error })
+    res.json({ success: true })
   } catch (err) {
     console.error('Error moving message:', err)
     res.status(500).json({ error: err.message })
