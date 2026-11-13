@@ -97,7 +97,7 @@ export const CalendarAPI = {
 }
 
 export const GoaAPI = {
-  /** Never throws: 503 (GOA not available on this platform/build) is a normal
+  /** Always 200: "not available on this platform/build" is a normal
    *  `{available: false, accounts: []}` body, not an error toast. */
   accounts: async (): Promise<{ available: boolean, accounts: any[] }> => {
     const res = await apiFetch(`${API_BASE}/api/goa/accounts`)
