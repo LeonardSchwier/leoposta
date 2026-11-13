@@ -54,3 +54,5 @@ playwright-report/
 
 # Real-stack e2e state (tests/stack)
 .e2e-real/
+dist-e2e
+dist-e2e-desktop

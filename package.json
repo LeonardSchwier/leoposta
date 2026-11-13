@@ -19,6 +19,7 @@
     "test": "vitest run",
     "test:server": "node --test \"server/**/*.test.js\"",
     "test:e2e": "playwright test",
+    "test:e2e:real": "bash tests/stack/run-e2e.sh",
     "check:svelte": "svelte-check --tsconfig ./tsconfig.app.json --threshold error",
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && npm run check:svelte",
     "screenshots": "SCREENSHOTS=1 playwright test",
