@@ -25,6 +25,12 @@ function toggleFor(label: string): HTMLButtonElement {
   return t as HTMLButtonElement
 }
 
+const noop = () => {}
+const handlers = {
+  onCompose: noop, onSettings: noop, onNewFolder: noop,
+  onNewSubFolder: noop, onRenameFolder: noop, onDeleteFolder: noop
+}
+
 beforeEach(() => {
   localStorage.clear()
   selected = []
@@ -32,7 +38,7 @@ beforeEach(() => {
   document.body.appendChild(target)
   app = mount(Sidebar, {
     target,
-    props: { folders, onFolderSelect: (id: string) => selected.push(id) }
+    props: { ...handlers, folders, onFolderSelect: (id: string) => selected.push(id) }
   })
   flushSync()
 })
@@ -77,6 +83,7 @@ describe('Sidebar folder tree', () => {
     app = mount(Sidebar, {
       target,
       props: {
+        ...handlers,
         folders: [
           { id: 'INBOX.Shared', name: 'Shared', parentId: 'INBOX', delimiter: '.', noselect: true },
           { id: 'INBOX.Shared.Team', name: 'Team', parentId: 'INBOX.Shared', delimiter: '.' }
@@ -98,7 +105,7 @@ describe('Sidebar folder tree', () => {
     toggleFor('Projects').click(); flushSync()
     unmount(app)
     target.innerHTML = ''
-    app = mount(Sidebar, { target, props: { folders, onFolderSelect: () => {} } })
+    app = mount(Sidebar, { target, props: { ...handlers, folders, onFolderSelect: () => {} } })
     flushSync()
     expect(names()).toContain('2026')
   })

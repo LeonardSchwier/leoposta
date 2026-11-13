@@ -73,11 +73,10 @@ describe('Sidebar folder expansion', () => {
     } as any)
     flushSync()
     expect(target.textContent).not.toContain('Alpha')
-    const row = Array.from(target.querySelectorAll('.folder-row')).find(
-      (r) => r.textContent?.includes('Projects')
-    ) as HTMLElement
-    expect(row).toBeDefined()
-    row.click()
+    // The chevron expands; clicking the folder name opens the folder instead.
+    const chevron = target.querySelector('[aria-label="Expand Projects"]') as HTMLElement
+    expect(chevron).toBeTruthy()
+    chevron.click()
     flushSync()
     expect(target.textContent).toContain('Alpha')
     unmount(c)
