@@ -133,6 +133,17 @@ test('/api/send accepts bodies larger than the 1 MB default', async () => {
   assert.notEqual(res.status, 413)
 })
 
+test('/api/send without a JSON body answers 400, not a destructuring crash', async () => {
+  const res = await fetch(`${base}/api/send`, {
+    method: 'POST',
+    headers: { ...authed, 'content-type': 'application/json, application/json' },
+    body: JSON.stringify({ to: 'a@example.com' })
+  })
+  assert.equal(res.status, 400)
+  const data = await res.json()
+  assert.doesNotMatch(data.error, /destructure/)
+})
+
 test('PGP: passphrase never persisted; locked until unlocked; wrong passphrase 401', async () => {
   const pass = 'correct horse'
   const { privateKey, publicKey } = await openpgp.generateKey({
