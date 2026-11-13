@@ -54,6 +54,12 @@ roadmap.
   `Content-Security-Policy: sandbox; default-src 'none'`; `Cache-Control:
   private, no-store`; `Content-Disposition` has an ASCII fallback plus an RFC 5987
   `filename*`.
+- **The saved Blob is `application/octet-stream`**, whatever the server declared:
+  a `blob:` URL has the app's origin, so if a browser ignored `download` and opened
+  it, an HTML or SVG attachment would run there. (Added after judge review.)
+- **The message is parsed outside `pool.run`**: a parser failure must not log the
+  shared IMAP client out, and parsing a large message while holding the mailbox
+  lock would block the account's other IMAP work. (Added after judge review.)
 - **Message source is parsed as a Buffer** in both routes. The message route
   converted it to a UTF-8 string first, which corrupts bytes of 8bit bodies in
   other charsets. A regression test covers it.

@@ -447,23 +447,24 @@ router.get('/message/:id/attachment/:attachmentId', async (req, res) => {
     const pool = getPoolFor(acct)
 
     // "Not found" is returned as a value, not thrown: an error thrown inside
-    // pool.run makes the pool log the shared IMAP client out.
-    const outcome = await pool.run(async (client) => {
+    // pool.run makes the pool log the shared IMAP client out. Only the fetch runs
+    // under the mailbox lock; parsing a large message there would block the
+    // account's other IMAP work, and a parser failure must not drop the connection.
+    const fetched = await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
       try {
         const msg = await client.fetchOne(uid, { source: true }, { uid: true })
         if (!msg || !msg.source) return { status: 404, error: 'message_not_found' }
-        const parsed = await parseMessageSource(msg.source)
-        const att = attachmentAt(parsed.attachments, req.params.attachmentId)
-        if (!att) return { status: 404, error: 'attachment_not_found' }
-        return { att }
+        return { source: msg.source }
       } finally {
         lock.release()
       }
     })
-    if (outcome.error) return res.status(outcome.status).json({ error: outcome.error })
+    if (fetched.error) return res.status(fetched.status).json({ error: fetched.error })
+    const parsed = await parseMessageSource(fetched.source)
+    const att = attachmentAt(parsed.attachments, req.params.attachmentId)
+    if (!att) return res.status(404).json({ error: 'attachment_not_found' })
 
-    const { att } = outcome
     // The bytes come from whoever sent the mail: always a download, never
     // sniffed, and sandboxed if someone opens the URL directly.
     res.set({

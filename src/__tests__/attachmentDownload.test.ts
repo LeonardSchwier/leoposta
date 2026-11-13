@@ -30,6 +30,15 @@ describe('downloadAttachment', () => {
     expect(blob.size).toBe(4)
   })
 
+  it('saves the bytes as octet-stream whatever type the server declared (a blob: URL has the app origin)', async () => {
+    const save = vi.fn()
+    const html = new Response('<script>1</script>', { headers: { 'Content-Type': 'text/html' } })
+    await downloadAttachment(async () => html, 'page.html', save)
+    const [blob] = save.mock.calls[0]
+    expect(blob.type).toBe('application/octet-stream')
+    expect(await blob.text()).toBe('<script>1</script>')
+  })
+
   it('falls back to a generic name', async () => {
     const save = vi.fn()
     await downloadAttachment(async () => new Response('x'), '', save)
