@@ -15,6 +15,7 @@
   import { MailAPI } from './api'
   import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
   import { beginSplitDrag } from './lib/splitHandle'
+  import { specialFolderPath } from './lib/specialFolders'
 
   let activeView = $state('inbox')
   let appMode = $state<'mail' | 'calendar' | 'contacts'>('mail')
@@ -237,17 +238,26 @@
     if (folder === 'calendar') { appMode = 'calendar'; return }
     if (folder === 'contacts') { appMode = 'contacts'; return }
     appMode = 'mail'
+    const folders = getState().folders
     const mapping: Record<string, string> = {
       'inbox': 'INBOX',
-      'sent': 'Sent',
-      'drafts': 'Drafts',
-      'trash': 'Trash',
-      'archive': 'Archive',
+      'sent': specialFolderPath(folders, '\\Sent', 'Sent'),
+      'drafts': specialFolderPath(folders, '\\Drafts', 'Drafts'),
+      'trash': specialFolderPath(folders, '\\Trash', 'Trash'),
+      'archive': specialFolderPath(folders, '\\Archive', 'Archive'),
       'flagged': 'INBOX'
     }
     const imapFolder = mapping[folder] || folder
     setActiveFolder(imapFolder)
     loadMessages(imapFolder)
+  }
+
+  // The draft is now in `folder` on the server: confirm it, refresh the folder
+  // counts, and reload the list when that Drafts folder is the one on screen.
+  function handleDraftSaved(folder: string) {
+    showToast('Draft saved')
+    loadFolders()
+    if (getState().activeFolder === folder) loadMessages(folder)
   }
 
   function handleSelectMessage(id: string) {
@@ -518,6 +528,7 @@
     {#if $store.isComposing}
       <Compose
         onClose={() => { setComposing(false); clearCompose() }}
+        onDraftSaved={handleDraftSaved}
       />
     {:else if appMode === 'calendar'}
       <Calendar showToast={showToast} />

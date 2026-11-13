@@ -2,6 +2,7 @@
   import { SvelteSet } from 'svelte/reactivity'
   import { store } from '../store'
   import ContextMenu from './ContextMenu.svelte'
+  import { specialFolderPath } from '../lib/specialFolders'
 
   let {
     onFolderSelect,
@@ -43,12 +44,14 @@
   
   // Build folder tree
   const specialFolders = $derived([
+    // Special-use mailboxes open the server's real path (e.g. INBOX.Drafts,
+    // [Gmail]/Drafts, a localized name); they are hidden from the custom list.
     { id: 'INBOX', name: 'Inbox', icon: '📥' },
-    { id: 'Sent', name: 'Sent', icon: '📤' },
-    { id: 'Drafts', name: 'Drafts', icon: '📝' },
-    { id: 'Archive', name: 'Archive', icon: '📦' },
-    { id: 'Junk', name: 'Junk', icon: '🚫' },
-    { id: 'Trash', name: 'Trash', icon: '🗑️' },
+    { id: specialFolderPath(apiFolders, '\\Sent', 'Sent'), name: 'Sent', icon: '📤' },
+    { id: specialFolderPath(apiFolders, '\\Drafts', 'Drafts'), name: 'Drafts', icon: '📝' },
+    { id: specialFolderPath(apiFolders, '\\Archive', 'Archive'), name: 'Archive', icon: '📦' },
+    { id: specialFolderPath(apiFolders, '\\Junk', 'Junk'), name: 'Junk', icon: '🚫' },
+    { id: specialFolderPath(apiFolders, '\\Trash', 'Trash'), name: 'Trash', icon: '🗑️' },
   ])
 
   const appItems = $derived([
