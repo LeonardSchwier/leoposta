@@ -20,6 +20,12 @@ update_desktop() {
   echo "leoposta desktop: $have -> $want"
   # A failed desktop build leaves the installed version untouched (it is only
   # swapped in after a complete build) and must not roll back the server.
+  # WebKitGTK smoke of the desktop bundle (the engine the app really uses):
+  # a red smoke keeps the installed version.
+  if [ -x tests/desktop/run-desktop-smoke.sh ] && ! E2E_STACK_ID=9 tests/desktop/run-desktop-smoke.sh; then
+    echo "leoposta desktop: WebKitGTK smoke failed, keeping $have" >&2
+    return 1
+  fi
   if ! bash scripts/install-desktop.sh; then
     echo "leoposta desktop: build failed, keeping $have" >&2
     return 1
@@ -50,8 +56,13 @@ rollback() {
 trap rollback ERR
 
 npm ci --no-audit --no-fund
+# The same gate as CI and skills/verification.md: nothing is deployed unless
+# the real-stack end-to-end suite passes on this exact tree. Stack id 9 keeps
+# the nightly stack off the ports a developer checkout uses.
 npm run typecheck
+npm test
 npm run test:server
+E2E_STACK_ID=9 npm run test:e2e:real
 npm run build
 
 systemctl --user restart leoposta.service
