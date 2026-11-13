@@ -44,8 +44,9 @@ app.get('/api/status', (req, res) => {
 })
 
 const defaultJson = express.json({ limit: '1mb' })
-// /api/send carries attachments (25 MB is ~33.4 MB as base64): it gets its own parser inline.
-app.use((req, res, next) => (req.path === '/api/send' ? next() : defaultJson(req, res, next)))
+// /api/send and /api/drafts carry attachments (25 MB is ~33.4 MB as base64): they get their own parser inline.
+const OWN_JSON_PARSER = new Set(['/api/send', '/api/drafts'])
+app.use((req, res, next) => (OWN_JSON_PARSER.has(req.path) ? next() : defaultJson(req, res, next)))
 
 app.use('/api', accountRoutes)
 app.use('/api', mailRoutes)

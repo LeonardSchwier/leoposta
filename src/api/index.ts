@@ -16,12 +16,10 @@ export function setActiveAccountEmail(email: string | null) {
 }
 
 function authHeaders(extra: HeadersInit = {}): Record<string, string> {
-  return {
-    'Content-Type': 'application/json',
-    'x-leoposta-token': API_TOKEN,
-    ...(activeAccountEmail ? { 'x-account': activeAccountEmail } : {}),
-    ...Object.fromEntries(new Headers(extra))
-  }
+  const h = new Headers({ 'Content-Type': 'application/json', 'x-leoposta-token': API_TOKEN })
+  if (activeAccountEmail) h.set('x-account', activeAccountEmail)
+  new Headers(extra).forEach((value, key) => h.set(key, value))
+  return Object.fromEntries(h)
 }
 
 /** fetch() with the API token + account headers; use for raw stream calls. */
@@ -58,6 +56,10 @@ export const MailAPI = {
   folders: () => api('/folders'),
   search: (query: string, folder = 'INBOX') => api(`/search?q=${encodeURIComponent(query)}&folder=${folder}`),
   send: (data: any) => api('/send', { method: 'POST', body: JSON.stringify(data) }),
+  /** Store the compose window as a draft in the account's Drafts mailbox.
+   *  Resolves { success, folder, uid? }: `folder` is the real IMAP path. */
+  saveDraft: (data: any): Promise<{ success: boolean, folder: string, uid?: number }> =>
+    api('/drafts', { method: 'POST', body: JSON.stringify(data) }),
   delete: (id: string, folder: string) => api(`/message/${id}?folder=${folder}`, { method: 'DELETE' }),
   move: (id: string, from: string, to: string) => api(`/message/${id}/move`, {
     method: 'POST', body: JSON.stringify({ from, to })

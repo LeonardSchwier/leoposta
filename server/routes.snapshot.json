@@ -29,6 +29,7 @@
   "POST /accounts",
   "POST /calendar/import",
   "POST /contacts/import",
+  "POST /drafts",
   "POST /folder",
   "POST /folder/rename",
   "POST /goa/import",
