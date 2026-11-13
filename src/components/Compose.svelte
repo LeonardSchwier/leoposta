@@ -233,7 +233,7 @@
       } catch (err) {
         lastError = err instanceof AttachmentTooLargeError
           ? err.message
-          : `Could not attach ${f.name}: ${err?.message ?? String(err)}`
+          : `Could not attach ${f.name}: ${err instanceof Error ? err.message : String(err)}`
       }
     }
     attachmentError = lastError

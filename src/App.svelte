@@ -202,7 +202,7 @@
       const data = await MailAPI.search(query, getState().activeFolder)
       if (data.messages) setMessages(data.messages)
     } catch (e) {
-      setError(e.message)
+      setError(e instanceof Error ? e.message : String(e))
     }
   }
 
@@ -496,11 +496,13 @@
 
 <div class="app" style:--sidebar-w={sidebarWidth}>
         <Sidebar
-        activeFolder={activeView}
         onFolderSelect={handleFolderSelect}
         onCompose={openCompose}
         onSettings={() => showSettings = true}
         onNewFolder={handleNewFolder}
+        onNewSubFolder={handleNewSubFolder}
+        onRenameFolder={handleRenameFolder}
+        onDeleteFolder={handleDeleteFolder}
         folders={$store.folders}
         activeView={activeView}
       />
@@ -516,7 +518,6 @@
     {#if $store.isComposing}
       <Compose
         onClose={() => { setComposing(false); clearCompose() }}
-        onSent={() => { setComposing(false); clearCompose(); loadMessages(getState().activeFolder) }}
       />
     {:else if appMode === 'calendar'}
       <Calendar showToast={showToast} />
@@ -525,7 +526,6 @@
     {:else}
       <div class="content" style:--list-w={listWidth}>
         <MessageList
-          folder={activeView}
           onCompose={openCompose}
           onSelectMessage={handleSelectMessage}
           onDelete={handleDelete}

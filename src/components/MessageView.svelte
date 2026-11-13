@@ -184,7 +184,7 @@
         {/if}
       </div>
 
-      {#if msg.attachments?.length > 0}
+      {#if msg.attachments && msg.attachments.length > 0}
         <div class="attachments">
           <h3>📎 {msg.attachments.length} Attachment{msg.attachments.length !== 1 ? 's' : ''}</h3>
           <div class="attachment-list">
