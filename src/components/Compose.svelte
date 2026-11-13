@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { apiFetch } from '../api'
+  import { apiFetch, MailAPI } from '../api'
   import { store, getState, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setIsLoading, setComposeScheduled, clearCompose, setComposing } from '../store'
   import { onMount } from 'svelte'
   import { addQueuedMessage } from '../lib/offlineQueue'
@@ -7,7 +7,9 @@
   import { fileToAttachment, type OutboundAttachment, AttachmentTooLargeError } from '../lib/attachments'
   import RecipientAutocomplete from './RecipientAutocomplete.svelte'
 
-  let { onClose } = $props()
+  // onDraftSaved(folder): the draft is stored on the server in `folder` (the
+  // real IMAP path of the Drafts mailbox), so the app can refresh that view.
+  let { onClose, onDraftSaved }: { onClose: () => void, onDraftSaved?: (folder: string) => void, onSent?: () => void } = $props()
 
   // Local flat-string state driven by RecipientAutocomplete (same pattern as Calendar).
   // Seed once from the store; the store is written back on send.
@@ -180,6 +182,36 @@
     .finally(() => {
       setIsLoading(false)
     })
+  }
+
+  let savingDraft = $state(false)
+
+  // Save Draft stores the message on the server (IMAP APPEND to the account's
+  // Drafts mailbox, see server/lib/drafts.js), so it shows in the Drafts folder.
+  // The window only closes once the server confirms; on failure it stays open
+  // so nothing typed is lost.
+  async function handleSaveDraft() {
+    if (savingDraft) return
+    savingDraft = true
+    const draft: Record<string, unknown> = {
+      to: parseRecipients(toValue),
+      cc: parseRecipients(ccValue),
+      bcc: parseRecipients(bccValue),
+      subject: subjectInput,
+      body: bodyInput
+    }
+    if (attachments.length) draft.attachments = attachments
+    try {
+      const data = await MailAPI.saveDraft(draft)
+      onDraftSaved?.(data.folder)
+      clearCompose()
+      setComposing(false)
+      onClose()
+    } catch (err: any) {
+      alert('Failed to save draft: ' + (err?.message ?? String(err)))
+    } finally {
+      savingDraft = false
+    }
   }
 
   function handleSchedule() {
@@ -388,7 +420,7 @@
       {/if}
     </div>
     <div class="footer-right">
-      <button type="button" class="btn-secondary" onclick={onClose}>Save Draft</button>
+      <button type="button" class="btn-secondary" onclick={handleSaveDraft} disabled={savingDraft}>Save Draft</button>
       <button
         type="button"
         class="btn-primary"
