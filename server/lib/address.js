@@ -1,8 +1,11 @@
 // Pure helpers for IMAP address parsing / flag normalisation / date coercion.
 // No side effects, no state — safe to import from anywhere.
 
+/** Message flags as an array. ImapFlow reports them as a Set<string>; Object.keys
+ * of a Set is [], which made every message read as unread and unstarred. */
 export function normalizeFlags(flags) {
   if (Array.isArray(flags)) return flags
+  if (flags instanceof Set) return [...flags]
   if (flags && typeof flags === 'object') return Object.keys(flags).filter(k => flags[k])
   return []
 }
