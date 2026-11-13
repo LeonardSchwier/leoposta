@@ -17,10 +17,15 @@ function publicFields(a) {
 }
 
 // GET /api/goa/accounts — list GOA accounts leoposta could import from.
-// 503 (not 500) when GOA/the session bus/keyring tooling isn't present at
-// all, e.g. inside the container or on a non-Linux build.
+// Always 200: "not available on this platform" (container, non-Linux build,
+// or just no session bus) is the common case, not a server error — a non-2xx
+// here would make the browser itself log a console error on every Settings
+// load even though the frontend handles it fine, which the e2e suite's
+// zero-console-errors check (tests/e2e/fixtures.ts) correctly treats as a
+// real problem. POST /goa/import below is a deliberate user action, not a
+// background poll, so 503 there is fine.
 router.get('/goa/accounts', async (req, res) => {
-  if (!await isGoaAvailable()) return res.status(503).json({ available: false, accounts: [] })
+  if (!await isGoaAvailable()) return res.json({ available: false, accounts: [] })
   const accounts = await listGoaAccounts()
   res.json({ available: true, accounts: accounts.map(publicFields) })
 })

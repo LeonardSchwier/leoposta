@@ -64,10 +64,10 @@ before(async () => {
 after(() => server.close())
 beforeEach(() => { state.accounts = [] })
 
-test('GET /api/goa/accounts: 503 + available:false when GOA is not reachable', async () => {
+test('GET /api/goa/accounts: 200 + available:false when GOA is not reachable (not 503 — a browser logs a console error on any non-2xx fetch, and this is the common case, not a server error)', async () => {
   _setExecFileForTest(fakeExecUnavailable())
   const res = await fetch(`${base}/api/goa/accounts`, { headers: authed })
-  assert.equal(res.status, 503)
+  assert.equal(res.status, 200)
   assert.deepEqual(await res.json(), { available: false, accounts: [] })
 })
 
