@@ -7,6 +7,7 @@ import { messageRange } from '../lib/mailRange.js'
 import { processPgp } from '../lib/pgp.js'
 import { applyRules } from '../lib/rules.js'
 import { MailActionError, moveChecked, parseUid, removeMessage } from '../lib/removal.js'
+import { changeFlags, parseFlagList } from '../lib/flags.js'
 
 const router = Router()
 
@@ -176,8 +177,8 @@ router.get('/message/:id', async (req, res) => {
         const isRead = flags.includes('\\Seen') || flags.includes('Seen')
         if (!isRead && msg.uid) {
           try {
-            await client.messageFlags(msg.uid, { add: ['\\Seen'], remove: [] }, { uid: true })
-          } catch (e) { /* ignore */ }
+            await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true })
+          } catch (e) { /* the message is shown either way; marking it read is best effort */ }
         }
 
         const pgp = await processPgp(body || msg.source?.toString('utf-8') || '')
@@ -297,23 +298,35 @@ router.get('/search', async (req, res) => {
 // POST /api/message/:id/flags
 router.post('/message/:id/flags', async (req, res) => {
   try {
-    const { id } = req.params
-    const { folder = 'INBOX', add = [], remove = [] } = req.body
+    const uid = parseUid(req.params.id)
+    if (uid === null) return res.status(400).json({ error: 'invalid message id' })
+    const { folder = 'INBOX' } = req.body || {}
+    const add = parseFlagList(req.body?.add)
+    const remove = parseFlagList(req.body?.remove)
+    if (add === null || remove === null || typeof folder !== 'string' || !folder) {
+      return res.status(400).json({ error: 'invalid flags or folder' })
+    }
     const acct = resolveAccount(req)
     if (!acct) return res.status(400).json({ error: 'No account configured' })
+    if (add.length === 0 && remove.length === 0) return res.json({ success: true })
     const pool = getPoolFor(acct)
 
-    await pool.run(async (client) => {
+    // A refusal by the server is returned as a value, not thrown: an error thrown
+    // inside pool.run makes the pool log the shared IMAP client out.
+    const outcome = await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
       try {
-        if (add.length > 0 || remove.length > 0) {
-          await client.messageFlags(Number(id), { add, remove }, { uid: true })
-        }
-        res.json({ success: true })
+        await changeFlags(client, uid, { add, remove })
+        return {}
+      } catch (err) {
+        if (err instanceof MailActionError) return { error: err.message }
+        throw err
       } finally {
         lock.release()
       }
     })
+    if (outcome.error) return res.status(500).json({ error: outcome.error })
+    res.json({ success: true })
   } catch (err) {
     console.error('Error updating flags:', err)
     res.status(500).json({ error: err.message })
