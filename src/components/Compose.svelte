@@ -233,7 +233,7 @@
       } catch (err) {
         lastError = err instanceof AttachmentTooLargeError
           ? err.message
-          : `Could not attach ${f.name}: ${err?.message ?? String(err)}`
+          : `Could not attach ${f.name}: ${err instanceof Error ? err.message : String(err)}`
       }
     }
     attachmentError = lastError
@@ -325,7 +325,7 @@
         bind:value={bodyInput}
         oninput={() => setComposeBody(bodyInput)}
         placeholder="Write your message..."
-        rows="15"
+        rows="8"
       ></textarea>
     </div>
   </div>
@@ -414,9 +414,11 @@
   }
 
   .modal.compose {
-    width: min(560px, 92vw);
-    height: min(80vh, 720px);
-    max-height: 90vh;
+    width: min(560px, calc(100vw - 32px));
+    /* Fill most of the viewport (capped at 720px) so the body textarea gets
+       the leftover space; short windows use nearly the full height. */
+    height: min(720px, calc(100vh - 48px));
+    height: min(720px, calc(100dvh - 48px));
     display: flex;
     flex-direction: column;
     background: var(--color-bg);
@@ -463,8 +465,15 @@
     background: var(--color-hover);
   }
 
+  /* Header and footer keep their natural height; the body is a flex column
+     whose last child (the editor) takes all remaining height. When the
+     window is too short for the editor's min-height, the body scrolls
+     instead of pushing the footer out of view. */
   .compose-body {
-    flex: 1;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
     padding: 16px 20px;
   }
@@ -476,6 +485,7 @@
      (scoped under .field-control, so Calendar's use is unaffected) gives
      them exactly the same box and type as the Subject field. */
   .field-row {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     gap: var(--ds-space-3);
@@ -548,11 +558,20 @@
   }
 
   .compose-editor {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    /* ~8 lines of 14px / 1.6 text + 24px padding + 2px border */
+    min-height: calc(8 * 1.6 * 14px + 26px);
     margin-top: 12px;
   }
 
   .compose-editor textarea {
+    flex: 1 1 0;
+    min-height: 0;
     width: 100%;
+    box-sizing: border-box;
+    margin: 0;
     padding: 12px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
@@ -560,7 +579,7 @@
     line-height: 1.6;
     color: var(--color-text);
     background: var(--color-bg);
-    resize: vertical;
+    resize: none;
     font-family: inherit;
   }
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteSet } from 'svelte/reactivity'
   import { store } from '../store'
   import ContextMenu from './ContextMenu.svelte'
 
@@ -76,7 +77,8 @@
   }
   
   // Expand/collapse state
-  const expandedFolders = $state(new Set<string>())
+  // Plain Set inside $state is not reactive; SvelteSet tracks add/delete.
+  const expandedFolders = new SvelteSet<string>()
   
   function toggleFolder(folderId: string) {
     if (expandedFolders.has(folderId)) {
@@ -84,8 +86,6 @@
     } else {
       expandedFolders.add(folderId)
     }
-    // Force reactivity
-    expandedFolders.set = expandedFolders
   }
   
   function handleFolderClick(folderId: string, hasChildren: boolean) {

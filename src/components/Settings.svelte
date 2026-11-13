@@ -169,7 +169,7 @@
       const d = await r.json()
       if (d.success) { pgpMsg = 'PGP key saved'; pgpPrivate = ''; pgpPublic = ''; pgpPassphrase = '' }
       else pgpErr = d.error || 'failed'
-    } catch (e) { pgpErr = e.message }
+    } catch (e) { pgpErr = e instanceof Error ? e.message : String(e) }
     pgpLoading = false
   }
 

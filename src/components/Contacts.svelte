@@ -31,7 +31,7 @@
   async function loadBooks() {
     try {
       const data = await ContactsAPI.addressBooks()
-      books = data.addressBooks || data.calendars || []
+      books = data.addressBooks || []
       if (books.length && !currentBook) currentBook = books[0]
       if (currentBook && !books.find(b => b.uri === currentBook!.uri)) currentBook = books[0] || null
     } catch (e: any) { err = e.message }
@@ -43,6 +43,7 @@
       loading = true
       const data = await ContactsAPI.contacts(currentBook.uri, search)
       contacts = data.contacts || []
+      err = ''
     } catch (e: any) { err = e.message } finally { loading = false }
   }
 
@@ -173,7 +174,7 @@
     </header>
 
     {#if err}
-      <div class="c-err"><span>{err}</span><button onclick={loadContacts}>Retry</button></div>
+      <div class="c-err"><span>{err}</span><button onclick={() => loadContacts(q)}>Retry</button></div>
     {/if}
 
     <div class="c-body">
@@ -207,7 +208,7 @@
         <h4>{editingUid ? 'Edit contact' : 'New contact'}</h4>
         <label>
           <span>{editingUid ? 'Address book' : 'Create in'}</span>
-          <select bind:value={fBookUri} disabled={editingUid}>
+          <select bind:value={fBookUri} disabled={editingUid !== null}>
             {#each books as b (b.uri)}
               <option value={b.uri}>{b.name}</option>
             {/each}
