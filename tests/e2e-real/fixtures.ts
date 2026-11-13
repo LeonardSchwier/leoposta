@@ -15,9 +15,10 @@ import { ImapFlow } from 'imapflow'
 import MailComposer from 'nodemailer/lib/mail-composer/index.js'
 
 export const TOKEN = 'e2e-real-token'
-export const IMAP_PORT = 3143
-export const SMTP_PORT = 3587
-export const DAV_PORT = 5233
+const SID = Number(process.env.E2E_STACK_ID || 0)
+export const IMAP_PORT = 3143 + 10 * SID
+export const SMTP_PORT = 3587 + 10 * SID
+export const DAV_PORT = 5233 + 10 * SID
 export const PASSWORD = 'pass'
 export const LAYOUT = (process.env.E2E_LAYOUT || 'slash') as 'slash' | 'dot'
 

@@ -5,14 +5,18 @@
 #   tests/stack/stack.sh up [slash|dot]   # start (default layout: slash)
 #   tests/stack/stack.sh down             # stop and remove everything
 #
-# Ports (127.0.0.1): IMAP 3143, SMTP 3587, DAV 5233. Any user, password "pass".
+# Ports (127.0.0.1): IMAP 3143, SMTP 3587, DAV 5233, each + 10*E2E_STACK_ID so
+# several checkouts can run stacks side by side. Any user, password "pass".
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 
 ENGINE="${CONTAINER_ENGINE:-$(command -v docker >/dev/null && echo docker || echo podman)}"
-IMAP_PORT="${IMAP_PORT:-3143}"
-SMTP_PORT="${SMTP_PORT:-3587}"
-DAV_PORT="${DAV_PORT:-5233}"
+SID="${E2E_STACK_ID:-0}"
+IMAP_PORT=$((3143 + 10 * SID))
+SMTP_PORT=$((3587 + 10 * SID))
+DAV_PORT=$((5233 + 10 * SID))
+DOVECOT_NAME="leoposta-e2e-dovecot-$SID"
+RADICALE_NAME="leoposta-e2e-radicale-$SID"
 STATE=".e2e-real"
 DOVECOT_IMAGE="${DOVECOT_IMAGE:-docker.io/dovecot/dovecot:latest}"
 RADICALE_IMAGE="${RADICALE_IMAGE:-docker.io/tomsquest/docker-radicale:latest}"
@@ -26,7 +30,7 @@ wait_tcp() { # host port what
 }
 
 down() {
-  "$ENGINE" rm -f leoposta-e2e-dovecot leoposta-e2e-radicale >/dev/null 2>&1 || true
+  "$ENGINE" rm -f "$DOVECOT_NAME" "$RADICALE_NAME" >/dev/null 2>&1 || true
   if [[ -f "$STATE/smtp.pid" ]]; then kill "$(cat "$STATE/smtp.pid")" 2>/dev/null || true; rm -f "$STATE/smtp.pid"; fi
 }
 
@@ -34,12 +38,12 @@ up() {
   local layout="${1:-slash}"
   down
   rm -rf "$STATE"; mkdir -p "$STATE"
-  "$ENGINE" run -d --name leoposta-e2e-dovecot \
+  "$ENGINE" run -d --name "$DOVECOT_NAME" \
     -e USER_PASSWORD=pass \
     -p "127.0.0.1:$IMAP_PORT:31143" \
     -v "$PWD/tests/stack/dovecot-$layout.conf:/etc/dovecot/conf.d/zz-leoposta.conf:ro,Z" \
     "$DOVECOT_IMAGE" >/dev/null
-  "$ENGINE" run -d --name leoposta-e2e-radicale \
+  "$ENGINE" run -d --name "$RADICALE_NAME" \
     -p "127.0.0.1:$DAV_PORT:5232" \
     -v "$PWD/tests/stack/radicale.conf:/config/config:ro,Z" \
     "$RADICALE_IMAGE" >/dev/null

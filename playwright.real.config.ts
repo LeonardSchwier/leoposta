@@ -9,8 +9,9 @@ import { defineConfig, devices } from '@playwright/test'
 // "desktop" with the desktop build and the token injected like the Tauri
 // shell does. Every test gets its own fresh mailbox (see fixtures.ts).
 export const E2E_TOKEN = 'e2e-real-token'
-const PWA_PORT = 3201
-const DESKTOP_PORT = 3202
+const SID = Number(process.env.E2E_STACK_ID || 0)
+const PWA_PORT = 3201 + 10 * SID
+const DESKTOP_PORT = 3202 + 10 * SID
 
 function server(port: number, dist: string, data: string) {
   return {
