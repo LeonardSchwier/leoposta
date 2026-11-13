@@ -273,7 +273,7 @@
     <div class="field-row">
       <label class="field-label" for="compose-to">To</label>
       <div class="field-control">
-        <RecipientAutocomplete bind:value={toValue} placeholder="recipient@example.com" maxSuggestions={8} />
+        <RecipientAutocomplete id="compose-to" bind:value={toValue} placeholder="recipient@example.com" maxSuggestions={8} />
       </div>
     </div>
 
@@ -281,7 +281,7 @@
       <div class="field-row">
         <label class="field-label" for="compose-cc">Cc</label>
         <div class="field-control">
-          <RecipientAutocomplete bind:value={ccValue} placeholder="recipient@example.com" maxSuggestions={8} />
+          <RecipientAutocomplete id="compose-cc" bind:value={ccValue} placeholder="recipient@example.com" maxSuggestions={8} />
         </div>
       </div>
     {/if}
@@ -290,7 +290,7 @@
       <div class="field-row">
         <label class="field-label" for="compose-bcc">Bcc</label>
         <div class="field-control">
-          <RecipientAutocomplete bind:value={bccValue} placeholder="recipient@example.com" maxSuggestions={8} />
+          <RecipientAutocomplete id="compose-bcc" bind:value={bccValue} placeholder="recipient@example.com" maxSuggestions={8} />
         </div>
       </div>
     {/if}
@@ -469,21 +469,26 @@
     padding: 16px 20px;
   }
 
+  /* Header rows (To / Cc / Bcc / Subject). The recipient inputs are rendered
+     inside the child RecipientAutocomplete component, so Svelte's scoped
+     `.field-control input` rule never reached them and they fell back to the
+     browser default font size and padding. `:global(.ra-input)` below
+     (scoped under .field-control, so Calendar's use is unaffected) gives
+     them exactly the same box and type as the Subject field. */
   .field-row {
     display: flex;
-    align-items: flex-start;
-    gap: 12px;
-    margin-bottom: 12px;
+    align-items: center;
+    gap: var(--ds-space-3);
+    margin-bottom: var(--ds-space-2);
   }
 
   .field-label {
     width: 60px;
-    font-size: 14px;
+    font-size: var(--ds-font-size-md);
+    line-height: var(--ds-line-height-normal);
     color: var(--color-text-secondary);
     text-align: right;
     flex-shrink: 0;
-    padding-top: 8px;
-    line-height: 1.4;
   }
 
   .field-control {
@@ -491,17 +496,30 @@
     min-width: 0;
   }
 
-  .field-control input[type="text"] {
+  .field-control input[type="text"],
+  .field-control :global(input.ra-input) {
+    display: block;
     width: 100%;
-    padding: 8px 12px;
+    margin: 0;
+    padding: var(--ds-space-2) var(--ds-space-3);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
-    font-size: 14px;
+    font-family: inherit;
+    font-size: var(--ds-font-size-md);
+    line-height: var(--ds-line-height-normal);
     color: var(--color-text);
     background: var(--color-bg-secondary);
+    transition: border-color var(--transition);
   }
 
-  .field-control input[type="text"]:focus {
+  .field-control input[type="text"]::placeholder,
+  .field-control :global(input.ra-input::placeholder) {
+    color: var(--color-text-secondary);
+    opacity: 1;
+  }
+
+  .field-control input[type="text"]:focus,
+  .field-control :global(input.ra-input:focus) {
     outline: none;
     border-color: var(--color-accent);
   }
@@ -509,16 +527,18 @@
   .field-actions {
     flex: 1;
     display: flex;
-    gap: 12px;
+    gap: var(--ds-space-1);
+    /* +1px = input border, so "Add Cc" lines up with the typed input text */
+    margin-left: 1px;
   }
 
   .text-btn {
     background: transparent;
     border: none;
-    font-size: 13px;
+    font-size: var(--ds-font-size-sm);
     color: var(--color-accent);
     cursor: pointer;
-    padding: 4px 8px;
+    padding: var(--ds-space-1) var(--ds-space-3);
     border-radius: var(--radius-sm);
     transition: background var(--transition);
   }
