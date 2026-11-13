@@ -5,10 +5,12 @@
 
   let {
     value = $bindable(''),
+    id = undefined,
     placeholder = 'recipient@example.com',
     maxSuggestions = 8
   }: {
     value: string
+    id?: string
     placeholder?: string
     maxSuggestions?: number
   } = $props()
@@ -159,6 +161,7 @@
 <div class="ra">
   <input
     class="ra-input"
+    {id}
     bind:this={input}
     type="text"
     autocomplete="off"
