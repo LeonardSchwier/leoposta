@@ -1,0 +1,186 @@
+{
+ "_provenance": "Generated with ImapFlow 1.7.8 (lib/tools.js parseBodystructure) from hand-written BODYSTRUCTURE responses, so the node shape (part, type, parameters, id, size, disposition, dispositionParameters, childNodes) is what ImapFlow really returns. mixed: text, attached pdf, inline png with Content-ID, attached message/rfc822 that holds its own zip. legacy: a name-only part and an unnamed Content-Disposition: attachment part.",
+ "mixed": {
+  "childNodes": [
+   {
+    "part": "1",
+    "type": "text/plain",
+    "parameters": {
+     "charset": "utf-8"
+    },
+    "encoding": "7bit",
+    "size": 12,
+    "lineCount": 1
+   },
+   {
+    "part": "2",
+    "type": "application/pdf",
+    "parameters": {
+     "name": "report.pdf"
+    },
+    "encoding": "base64",
+    "size": 4096,
+    "disposition": "attachment",
+    "dispositionParameters": {
+     "filename": "report.pdf"
+    }
+   },
+   {
+    "part": "3",
+    "type": "image/png",
+    "parameters": {
+     "name": "logo.png"
+    },
+    "id": "<cid1>",
+    "encoding": "base64",
+    "size": 100,
+    "disposition": "inline",
+    "dispositionParameters": {
+     "filename": "logo.png"
+    }
+   },
+   {
+    "part": "4",
+    "type": "message/rfc822",
+    "parameters": {
+     "name": "fwd.eml"
+    },
+    "encoding": "7bit",
+    "size": 900,
+    "envelope": {
+     "date": "2026-01-01T00:00:00.000Z",
+     "subject": "inner",
+     "from": [
+      {
+       "name": "A",
+       "address": "a@x.test"
+      }
+     ],
+     "sender": [
+      {
+       "name": "A",
+       "address": "a@x.test"
+      }
+     ],
+     "replyTo": [
+      {
+       "name": "A",
+       "address": "a@x.test"
+      }
+     ],
+     "to": [
+      {
+       "name": "B",
+       "address": "b@y.test"
+      }
+     ],
+     "messageId": "<m@x.test>"
+    },
+    "childNodes": [
+     {
+      "part": "4",
+      "childNodes": [
+       {
+        "part": "4.1",
+        "type": "application/zip",
+        "parameters": {
+         "name": "inner.zip"
+        },
+        "encoding": "base64",
+        "size": 50,
+        "disposition": "attachment",
+        "dispositionParameters": {
+         "filename": "inner.zip"
+        }
+       }
+      ],
+      "type": "multipart/mixed",
+      "parameters": {
+       "boundary": "i1"
+      }
+     }
+    ],
+    "lineCount": 20,
+    "disposition": "attachment",
+    "dispositionParameters": {
+     "filename": "fwd.eml"
+    }
+   }
+  ],
+  "type": "multipart/mixed",
+  "parameters": {
+   "boundary": "b1"
+  }
+ },
+ "plain": {
+  "type": "text/plain",
+  "parameters": {
+   "charset": "utf-8"
+  },
+  "encoding": "7bit",
+  "size": 12,
+  "lineCount": 1
+ },
+ "alternative": {
+  "childNodes": [
+   {
+    "part": "1",
+    "type": "text/plain",
+    "parameters": {
+     "charset": "utf-8"
+    },
+    "encoding": "7bit",
+    "size": 12,
+    "lineCount": 1
+   },
+   {
+    "part": "2",
+    "type": "text/html",
+    "parameters": {
+     "charset": "utf-8"
+    },
+    "encoding": "7bit",
+    "size": 40,
+    "lineCount": 2
+   }
+  ],
+  "type": "multipart/alternative",
+  "parameters": {
+   "boundary": "a1"
+  }
+ },
+ "legacy": {
+  "childNodes": [
+   {
+    "part": "1",
+    "type": "text/plain",
+    "parameters": {
+     "charset": "utf-8"
+    },
+    "encoding": "7bit",
+    "size": 12,
+    "lineCount": 1
+   },
+   {
+    "part": "2",
+    "type": "application/octet-stream",
+    "parameters": {
+     "name": "old.bin"
+    },
+    "encoding": "base64",
+    "size": 10
+   },
+   {
+    "part": "3",
+    "type": "application/octet-stream",
+    "encoding": "base64",
+    "size": 10,
+    "disposition": "attachment"
+   }
+  ],
+  "type": "multipart/mixed",
+  "parameters": {
+   "boundary": "b2"
+  }
+ }
+}

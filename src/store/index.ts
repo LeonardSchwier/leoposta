@@ -33,7 +33,10 @@ export interface MailMessage {
 }
 
 export interface Attachment {
-  id: string
+  /** Download id. Absent in the message list (it only has IMAP body-structure
+   * parts) and for attachments of a PGP-decrypted message; present once the
+   * message has been opened. */
+  id?: string
   filename: string
   contentType: string
   size: number
