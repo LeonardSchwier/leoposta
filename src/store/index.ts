@@ -9,6 +9,8 @@ export interface MailMessage {
   id: string
   threadId?: string
   from: string
+  /** Bare sender address; server sends this alongside the display-name `from`. */
+  fromAddress?: string
   to: string[]
   cc?: string[]
   bcc?: string[]

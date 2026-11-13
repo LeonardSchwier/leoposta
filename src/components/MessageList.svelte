@@ -54,8 +54,8 @@
   }
   function handleReplyAll(message: any) {
     const from = extractEmail(message.fromAddress || message.from)
-    const toList = (Array.isArray(message.to) ? message.to : [message.to]).map(extractEmail).filter(e => e && !isOwnEmail(e))
-    const ccList = (Array.isArray(message.cc) ? message.cc : [message.cc]).map(extractEmail).filter(e => e && !isOwnEmail(e))
+    const toList = (Array.isArray(message.to) ? message.to : [message.to]).map(extractEmail).filter((e: string) => e && !isOwnEmail(e))
+    const ccList = (Array.isArray(message.cc) ? message.cc : [message.cc]).map(extractEmail).filter((e: string) => e && !isOwnEmail(e))
     const recipients = Array.from(new Set([...toList, ...ccList]))
     if (recipients.length === 0) recipients.push(from)
     setComposeTo(recipients)
