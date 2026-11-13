@@ -73,5 +73,9 @@ export async function downloadAttachment(
     const detail = await res.json().catch(() => null)
     throw new AttachmentDownloadError(explain(res.status, detail?.error))
   }
-  save(await res.blob(), filename || 'attachment')
+  // Not res.blob(): that keeps the server's Content-Type, and a blob: URL has this
+  // app's origin, so a browser that ignored `download` and opened an HTML or SVG
+  // attachment would run it here. The server's CSP sandbox does not follow the bytes.
+  const bytes = await res.arrayBuffer()
+  save(new Blob([bytes], { type: 'application/octet-stream' }), filename || 'attachment')
 }

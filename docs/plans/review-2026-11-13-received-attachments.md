@@ -12,9 +12,9 @@ minimum code.
    `listAttachments`, `attachmentAt`, `bodyStructureAttachments`,
    `contentDispositionHeader`, `safeContentType`, `parseMessageSource`.
    Verify: `node --test server/lib/attachments.test.js`.
-2. `server/attachments.route.test.js` then `server/routes/mail.js`: new download
+2. `server/mailroutes.test.js` (fake ImapFlow client) then `server/routes/mail.js`: new download
    route, message route and list route use the helpers; PGP attachments have no
-   id. Verify: `node --test server/attachments.route.test.js`.
+   id. Verify: `node --test server/mailroutes.test.js`.
 3. `server/server.test.js` + `server/lib/auth.js`: `?token=` only for `/api/idle`.
    Verify: `node --test server/server.test.js`.
 4. `src/__tests__/attachmentDownload.test.ts` then `src/lib/attachmentDownload.ts`,

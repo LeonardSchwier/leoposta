@@ -146,6 +146,32 @@ test('marking unread removes \\Seen; add and remove in one request run both', as
   assert.deepEqual(find(c, 'messageFlagsRemove').slice(1), [7, ['\\Seen'], { uid: true }])
 })
 
+test('the flag names the UI and common servers use are accepted', async () => {
+  const c = useClient({ messages: [message(7)] })
+  const names_ = ['\\Seen', '\\Flagged', '\\Answered', '$Forwarded', '$MDNSent', '$label1', 'NonJunk', 'Junk']
+  const res = await setFlags(7, { folder: 'INBOX', add: names_, remove: [] })
+  assert.equal(res.status, 200)
+  assert.deepEqual(find(c, 'messageFlagsAdd')[2], names_)
+})
+
+test('if the removal is refused after the addition went through, the request still reports the failure', async () => {
+  const c = useClient({ messages: [message(7)], removeResult: false })
+  const res = await setFlags(7, { folder: 'INBOX', add: ['\\Flagged'], remove: ['\\Seen'] })
+  assert.equal(res.status, 500)
+  assert.ok(res.body.error)
+  assert.ok(names(c).includes('messageFlagsAdd'), 'the first half was applied; the error tells the UI to re-sync')
+  assert.ok(!names(c).includes('logout'))
+})
+
+test('a folder that is not a string is rejected before the server is touched', async () => {
+  const c = useClient({ messages: [message(7)] })
+  for (const folder of [['INBOX', 'Sent'], { a: 1 }, 5, '']) {
+    const res = await setFlags(7, { folder, add: ['\\Seen'] })
+    assert.equal(res.status, 400, JSON.stringify(folder))
+  }
+  assert.deepEqual(names(c), [])
+})
+
 test('a request that changes nothing is a success and sends nothing to the server', async () => {
   const c = useClient({ messages: [message(7)] })
   const res = await setFlags(7, { folder: 'INBOX', add: [], remove: [] })
@@ -278,16 +304,23 @@ test('an attachment downloads as its exact bytes, with a download header and har
   assert.doesNotMatch(bin.headers.get('content-disposition'), /filename="[^"]*%/)
 })
 
-test('a file name with CR/LF cannot break the response', async () => {
+test('a file name that decodes to CR/LF cannot break the response or inject a header', async () => {
+  // Only the RFC 2231 form decodes %0D%0A to real CR/LF (a quoted filename keeps the
+  // percent text literally), so this is what actually reaches contentDispositionHeader.
   const evil = crlf([
     'Content-Type: multipart/mixed; boundary="b"', '',
-    '--b', 'Content-Type: text/plain', 'Content-Disposition: attachment; filename="x%0D%0ASet-Cookie: a=b.txt"', '', 'body',
+    '--b', 'Content-Type: text/plain',
+    "Content-Disposition: attachment; filename*=UTF-8''x%0D%0ASet-Cookie%3A%20a%3Db.txt", '', 'body',
     '--b--', ''
   ])
+  const parsed = await (await import('./lib/attachments.js')).parseMessageSource(evil)
+  assert.match(parsed.attachments[0].filename, /\r\n/, 'the fixture must really contain CR/LF')
   useClient({ messages: [message(7, { source: evil })] })
   const res = await download(7, '0')
   assert.equal(res.status, 200)
   assert.equal(res.headers.get('set-cookie'), null)
+  assert.equal(res.headers.get('content-disposition'), 'attachment; filename="xSet-Cookie: a=b.txt"')
+  assert.equal(res.text(), 'body')
 })
 
 test('an HTML attachment is only ever offered as a download, with nosniff', async () => {

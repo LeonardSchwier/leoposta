@@ -202,3 +202,11 @@ test('mergePgpAttachments appends decrypted attachments without an id and skips 
   assert.equal('id' in merged[1], false)
   assert.deepEqual(mergePgpAttachments(own, undefined), own)
 })
+
+test('contentDispositionHeader survives a lone surrogate and drops bidi controls', () => {
+  const lone = contentDispositionHeader('a\ud800b.pdf')
+  assert.doesNotThrow(() => http.validateHeaderValue('Content-Disposition', lone))
+  assert.match(lone, /filename\*=UTF-8''a%EF%BF%BDb\.pdf/)
+  const bidi = contentDispositionHeader('invoice\u202Efdp.exe')
+  assert.equal(bidi, 'attachment; filename="invoicefdp.exe"')
+})

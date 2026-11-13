@@ -79,8 +79,12 @@ export function bodyStructureAttachments(root) {
 /** A file name that is safe to put in a header and to offer to a browser. */
 function safeFilename(name) {
   const cleaned = String(name ?? '')
+    // A lone surrogate (a broken encoded-word) makes encodeURIComponent throw.
+    .toWellFormed()
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001f\u007f]/g, '')
+    // Bidi controls reorder what the user reads ("exe.pdf" shown as "fdp.exe").
+    .replace(/[\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')
     .replace(/[\\/]/g, '_')
     .trim()
   const bounded = Array.from(cleaned).slice(0, MAX_FILENAME_CHARS).join('')
