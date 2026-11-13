@@ -68,7 +68,7 @@ function message(uid, { flags = [], source, bodyStructure, subject = `Subject ${
   }
 }
 
-function makeFakeClient({ messages = [], addResult = true, removeResult = true } = {}) {
+function makeFakeClient({ messages = [], addResult = true, removeResult = true, mailboxes = [] } = {}) {
   const calls = []
   const client = {
     user: 'tester',
@@ -98,6 +98,8 @@ function makeFakeClient({ messages = [], addResult = true, removeResult = true }
     },
     async messageFlagsAdd(range, flags, opts) { calls.push(['messageFlagsAdd', range, flags, opts]); return addResult },
     async messageFlagsRemove(range, flags, opts) { calls.push(['messageFlagsRemove', range, flags, opts]); return removeResult },
+    async list() { calls.push(['list']); return mailboxes },
+    async mailboxCreate(p) { calls.push(['mailboxCreate', p]); return { path: p, created: true } },
     logout() { calls.push(['logout']); return Promise.resolve() }
   }
   return client
@@ -399,4 +401,91 @@ test('the list shows a paperclip from the real ImapFlow body structure, with no 
   for (const a of byId['1'].attachments) assert.equal('id' in a, false)
   assert.equal(byId['2'].hasAttachment, false)
   assert.equal(byId['3'].attachmentCount, 0)
+})
+
+// ── folders ─────────────────────────────────────────────────────────────────
+
+/** A mailbox as ImapFlow 1.x client.list() returns it (lib/commands/list.js). */
+function mailbox(p, delimiter, { flags = [], specialUse } = {}) {
+  const parts = p.split(delimiter)
+  return {
+    path: p,
+    name: parts[parts.length - 1],
+    delimiter,
+    flags: new Set(flags),
+    parentPath: p.includes(delimiter) ? p.slice(0, p.lastIndexOf(delimiter)) : '',
+    parent: parts,
+    specialUse
+  }
+}
+
+test('an empty folder is rejected with a 400 before IMAP is asked to SELECT ""', async () => {
+  const c = useClient({ messages: [message(7)] })
+  const requests = [
+    ['GET', '/api/messages?folder='],
+    ['GET', '/api/messages?folder=%20'],
+    ['GET', '/api/messages?folder=a&folder=b'],
+    ['GET', '/api/message/7?folder='],
+    ['GET', '/api/search?q=x&folder='],
+    ['DELETE', '/api/message/7?folder='],
+  ]
+  for (const [method, url] of requests) {
+    const res = await fetch(`${base}${url}`, { method, headers: authed })
+    assert.equal(res.status, 400, `${method} ${url}`)
+    assert.match((await res.json()).error, /folder/i)
+  }
+  for (const body of [{ from: '', to: 'Archive' }, { from: 'INBOX', to: '' }, { from: 'INBOX', to: ['a'] }]) {
+    const res = await fetch(`${base}/api/message/7/move`, { method: 'POST', headers: json, body: JSON.stringify(body) })
+    assert.equal(res.status, 400, JSON.stringify(body))
+  }
+  assert.deepEqual(names(c), [], 'nothing reached the IMAP client')
+})
+
+test('a missing folder still means INBOX', async () => {
+  const c = useClient({ messages: [message(7)] })
+  const res = await fetch(`${base}/api/messages`, { headers: authed })
+  assert.equal(res.status, 200)
+  assert.deepEqual(find(c, 'lock'), ['lock', 'INBOX'])
+})
+
+test('a folder name with "#", "&" or "+" reaches IMAP intact when encoded', async () => {
+  const c = useClient({ messages: [message(7)] })
+  const res = await fetch(`${base}/api/messages?folder=${encodeURIComponent('#1 R&D+x')}`, { headers: authed })
+  assert.equal(res.status, 200)
+  assert.deepEqual(find(c, 'lock'), ['lock', '#1 R&D+x'])
+})
+
+test('the folder list carries the real parent path, delimiter and \\Noselect for "/" and "." servers', async () => {
+  useClient({
+    mailboxes: [
+      mailbox('INBOX', '.', { specialUse: '\\Inbox' }),
+      mailbox('INBOX.Projects', '.', { flags: ['\\Noselect', '\\HasChildren'] }),
+      mailbox('INBOX.Projects.2026', '.'),
+      // The leaf name also occurs earlier in the path; splitting the path on the
+      // name used to produce the wrong parent here.
+      mailbox('2026/Projects/2026', '/'),
+    ]
+  })
+  const res = await fetch(`${base}/api/folders`, { headers: authed })
+  assert.equal(res.status, 200)
+  const { folders } = await res.json()
+  const byId = Object.fromEntries(folders.map((f) => [f.id, f]))
+  assert.equal(byId['INBOX'].parentId, null)
+  assert.equal(byId['INBOX.Projects'].parentId, 'INBOX')
+  assert.equal(byId['INBOX.Projects'].delimiter, '.')
+  assert.equal(byId['INBOX.Projects'].noselect, true)
+  assert.equal(byId['INBOX.Projects.2026'].parentId, 'INBOX.Projects')
+  assert.equal(byId['INBOX.Projects.2026'].noselect, false)
+  assert.equal(byId['2026/Projects/2026'].parentId, '2026/Projects')
+  assert.equal(byId['2026/Projects/2026'].name, '2026')
+})
+
+test('a new subfolder is created with the parent\'s delimiter, not a hard-coded "/"', async () => {
+  const c = useClient({ mailboxes: [mailbox('INBOX', '.'), mailbox('INBOX.Projects', '.')] })
+  const res = await fetch(`${base}/api/folder`, {
+    method: 'POST', headers: json, body: JSON.stringify({ name: '2026', parentId: 'INBOX.Projects' })
+  })
+  assert.equal(res.status, 200)
+  assert.deepEqual(find(c, 'mailboxCreate'), ['mailboxCreate', 'INBOX.Projects.2026'])
+  assert.equal((await res.json()).path, 'INBOX.Projects.2026')
 })

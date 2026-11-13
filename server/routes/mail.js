@@ -7,6 +7,7 @@ import { processPgp } from '../lib/pgp.js'
 import { applyRules } from '../lib/rules.js'
 import { MailActionError, moveChecked, parseUid, removeMessage } from '../lib/removal.js'
 import { changeFlags, parseFlagList } from '../lib/flags.js'
+import { folderParam, INVALID_FOLDER, toFolderEntry } from '../lib/folders.js'
 import {
   attachmentAt,
   bodyStructureAttachments,
@@ -22,7 +23,9 @@ const router = Router()
 // GET /api/messages
 router.get('/messages', async (req, res) => {
   try {
-    const { folder = 'INBOX', limit = 100, offset = 0 } = req.query
+    const { limit = 100, offset = 0 } = req.query
+    const folder = folderParam(req.query.folder)
+    if (folder === null) return res.status(400).json({ error: INVALID_FOLDER })
     const limitN = Math.min(Math.max(1, Number(limit) || 100), 200)
     const offsetN = Math.max(0, Number(offset) || 0)
 
@@ -104,7 +107,8 @@ router.get('/messages', async (req, res) => {
 router.get('/message/:id', async (req, res) => {
   try {
     const { id } = req.params
-    const { folder = 'INBOX' } = req.query
+    const folder = folderParam(req.query.folder)
+    if (folder === null) return res.status(400).json({ error: INVALID_FOLDER })
 
     const acct = resolveAccount(req)
     if (!acct) {
@@ -205,14 +209,7 @@ router.get('/folders', async (req, res) => {
 
     const folders = await pool.run(async (client) => {
       const mailboxes = await client.list()
-      return mailboxes.map(mb => ({
-        id: mb.path,
-        name: mb.name,
-        parentId: mb.parentPath ? mb.path.split(mb.name)[0].slice(0, -1) : null,
-        specialUse: mb.specialUse || undefined,
-        exists: mb.exists,
-        unseen: mb.unseen
-      }))
+      return mailboxes.map(toFolderEntry)
     })
     res.json({ folders })
   } catch (err) {
@@ -224,7 +221,9 @@ router.get('/folders', async (req, res) => {
 // GET /api/search
 router.get('/search', async (req, res) => {
   try {
-    const { q, folder = 'INBOX', limit = 50 } = req.query
+    const { q, limit = 50 } = req.query
+    const folder = folderParam(req.query.folder)
+    if (folder === null) return res.status(400).json({ error: INVALID_FOLDER })
 
     const acct = resolveAccount(req)
     if (!acct || !q) {
@@ -324,7 +323,8 @@ router.delete('/message/:id', async (req, res) => {
   try {
     const uid = parseUid(req.params.id)
     if (uid === null) return res.status(400).json({ error: 'invalid message id' })
-    const { folder = 'INBOX' } = req.query
+    const folder = folderParam(req.query.folder)
+    if (folder === null) return res.status(400).json({ error: INVALID_FOLDER })
     const acct = resolveAccount(req)
     if (!acct) return res.status(400).json({ error: 'No account configured' })
     const pool = getPoolFor(acct)
@@ -357,9 +357,12 @@ router.post('/message/:id/move', async (req, res) => {
   try {
     const uid = parseUid(req.params.id)
     if (uid === null) return res.status(400).json({ error: 'invalid message id' })
-    const { from = 'INBOX', to } = req.body || {}
+    const body = req.body || {}
+    const from = folderParam(body.from)
+    const to = folderParam(body.to, null)
+    if (from === null || to === null) return res.status(400).json({ error: `from/to: ${INVALID_FOLDER}` })
     const acct = resolveAccount(req)
-    if (!acct || !to) return res.status(400).json({ error: 'from/to required' })
+    if (!acct) return res.status(400).json({ error: 'No account configured' })
     const pool = getPoolFor(acct)
 
     const outcome = await pool.run(async (client) => {
@@ -390,8 +393,16 @@ router.post('/folder', async (req, res) => {
     if (!acct || !name) return res.status(400).json({ error: 'name required' })
     const pool = getPoolFor(acct)
 
-    const folderPath = parentId ? `${parentId}/${name}` : name
-    await pool.run(async (client) => { await client.mailboxCreate(folderPath) })
+    const folderPath = await pool.run(async (client) => {
+      let p = name
+      if (parentId) {
+        // Join with the server's hierarchy delimiter ("." on many servers).
+        const parent = (await client.list()).find((mb) => mb.path === parentId)
+        p = `${parentId}${parent?.delimiter || '/'}${name}`
+      }
+      await client.mailboxCreate(p)
+      return p
+    })
     res.json({ success: true, path: folderPath })
   } catch (err) {
     console.error('Error creating folder:', err)
