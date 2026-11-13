@@ -50,15 +50,19 @@ export const AccountAPI = {
     api(`/accounts/${encodeURIComponent(email)}`, { method: 'DELETE' }),
 }
 
+const enc = encodeURIComponent
+
 export const MailAPI = {
   status: () => api('/status'),
   account: () => api('/account'),
-  messages: (folder: string, limit = 50) => api(`/messages?folder=${folder}&limit=${limit}`),
-  message: (id: string, folder: string) => api(`/message/${id}?folder=${folder}`),
+  // Mailbox paths are free text ("# Archive", "R&D"): always encode them, or a
+  // "#" turns the rest of the URL into a fragment and the server sees folder="".
+  messages: (folder: string, limit = 50) => api(`/messages?folder=${enc(folder)}&limit=${limit}`),
+  message: (id: string, folder: string) => api(`/message/${enc(id)}?folder=${enc(folder)}`),
   folders: () => api('/folders'),
-  search: (query: string, folder = 'INBOX') => api(`/search?q=${encodeURIComponent(query)}&folder=${folder}`),
+  search: (query: string, folder = 'INBOX') => api(`/search?q=${enc(query)}&folder=${enc(folder)}`),
   send: (data: any) => api('/send', { method: 'POST', body: JSON.stringify(data) }),
-  delete: (id: string, folder: string) => api(`/message/${id}?folder=${folder}`, { method: 'DELETE' }),
+  delete: (id: string, folder: string) => api(`/message/${enc(id)}?folder=${enc(folder)}`, { method: 'DELETE' }),
   move: (id: string, from: string, to: string) => api(`/message/${id}/move`, {
     method: 'POST', body: JSON.stringify({ from, to })
   }),
