@@ -35,7 +35,7 @@ function escIcs(v: string): string {
     .replace(/,/g, '\\,')
 }
 
-export function eventToICS(ev: CalEvent, uid: string): string {
+export function eventToICS(ev: Omit<CalEvent, 'uid'>, uid: string): string {
   const start = (ev.start || '').replace(/[-:]/g, '').split('T')[0].split('.')[0]
   const lines = [
     'BEGIN:VCALENDAR',
