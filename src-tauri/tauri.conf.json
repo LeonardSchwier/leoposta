@@ -9,26 +9,17 @@
     "beforeBuildCommand": "npm run bundle:backend"
   },
   "app": {
-    "windows": [
-      {
-        "label": "main",
-        "title": "Leoposta",
-        "width": 1180,
-        "height": 780,
-        "minWidth": 760,
-        "minHeight": 480,
-        "center": true,
-        "resizable": true,
-        "fullscreen": false
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: cid: https:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:3001; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"
     }
   },
   "bundle": {
     "active": true,
-    "targets": ["appimage", "rpm"],
+    "targets": [
+      "appimage",
+      "rpm"
+    ],
     "category": "Utility",
     "shortDescription": "Leoposta — a modern local-first mail client",
     "longDescription": "Local-first mail client with IMAP/SMTP, PGP, offline PWA. Bundles a node backend that runs on a random free localhost port — no conflict with other local apps.",
