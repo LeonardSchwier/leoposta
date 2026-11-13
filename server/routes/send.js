@@ -7,6 +7,11 @@ const router = Router()
 
 // POST /api/send
 router.post('/send', express.json({ limit: '35mb' }), async (req, res) => {
+  // express.json() leaves req.body undefined unless Content-Type is exactly a
+  // JSON type; say so instead of crashing on the destructuring below.
+  if (!req.body || typeof req.body !== 'object') {
+    return res.status(400).json({ success: false, error: 'Expected a JSON body (Content-Type: application/json)' })
+  }
   try {
     const { to, cc, bcc, subject, body, bodyHtml, scheduled, attachments } = req.body
     const acct = resolveAccount(req)

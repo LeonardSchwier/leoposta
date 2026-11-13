@@ -16,12 +16,14 @@ export function setActiveAccountEmail(email: string | null) {
 }
 
 function authHeaders(extra: HeadersInit = {}): Record<string, string> {
-  return {
-    'Content-Type': 'application/json',
-    'x-leoposta-token': API_TOKEN,
-    ...(activeAccountEmail ? { 'x-account': activeAccountEmail } : {}),
-    ...Object.fromEntries(new Headers(extra))
-  }
+  // Merge through Headers.set: header names are case-insensitive, and a plain
+  // object spread kept 'Content-Type' next to the caller's 'content-type', so
+  // fetch sent "application/json, application/json" and express.json() left
+  // req.body undefined.
+  const h = new Headers({ 'Content-Type': 'application/json', 'x-leoposta-token': API_TOKEN })
+  if (activeAccountEmail) h.set('x-account', activeAccountEmail)
+  new Headers(extra).forEach((value, key) => h.set(key, value))
+  return Object.fromEntries(h)
 }
 
 /** fetch() with the API token + account headers; use for raw stream calls. */
