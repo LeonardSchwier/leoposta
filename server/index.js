@@ -58,7 +58,11 @@ app.use('/api', idleRoutes)
 app.use('/api', goaRoutes)
 
 // Serve the pre-built PWA (dist/) when present — single-port deploy.
-const DIST_DIR = path.resolve(new URL('..', import.meta.url).pathname, 'dist')
+// LEOPOSTA_DIST_DIR lets the real-stack e2e suite serve the desktop build
+// (dist-desktop/) through the exact same single-port path production uses.
+const DIST_DIR = process.env.LEOPOSTA_DIST_DIR
+  ? path.resolve(process.env.LEOPOSTA_DIST_DIR)
+  : path.resolve(new URL('..', import.meta.url).pathname, 'dist')
 if (fs.existsSync(DIST_DIR)) {
   app.use(express.static(DIST_DIR, { maxAge: '1h' }))
   app.get(/^\/(?!api\/).*/, (req, res) => res.sendFile(path.join(DIST_DIR, 'index.html')))
