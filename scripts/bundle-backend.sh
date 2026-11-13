@@ -4,9 +4,8 @@
 #   src-tauri/resources/backend/
 #     node                  # distro node (dynamically linked; see deb deps)
 #     node_modules/         # production deps (express, imapflow, mailparser, ...)
-#     server/index.js
-#     server/pgp_private.asc / pgp_publics.asc / pgp_passphrase.txt
-#     dist/                 # static frontend (vite build output)
+#     server/index.js, server/lib/, server/routes/
+#     dist/                 # static frontend (`npm run build:desktop`)
 #
 # The Tauri shell spawns this backend on a random free loopback port, then
 # navigates the WebView to http://127.0.0.1:<port>. No port is ever
@@ -68,34 +67,47 @@ for name in "${NODE_LIBS[@]}"; do
 done
 echo "bundled engine libs: ${shipped[*]:-none} ("$(du -sh "$OUT/libs" 2>/dev/null | awk '{print $1}')")"
 
-# Copy runtime node_modules. Use `npm ls --omit=dev --parseable --all` to
-# only take the runtime closure, OR copy the whole node_modules (simpler,
-# the bundle is gitignored).
-cp -R "$SRC/node_modules" "$OUT/node_modules"
-# Strip any dev-only noise to keep the bundle tighter (best-effort, not fatal).
-rm -rf "$OUT/node_modules/.bin" 2>/dev/null || true
+# Install only the production dependency closure into the bundle, in a
+# scratch directory — NOT a copy of the dev node_modules. The dev tree also
+# holds devDependencies (vite, and everything it pulls in transitively,
+# including rollup), none of which server/index.js ever imports. It
+# previously got blindly `cp -R`'d in whole, which is how
+# @rollup/rollup-linux-x64-musl ended up in a desktop bundle on a glibc
+# machine: rollup ships one optional native binary per platform+libc, npm's
+# resolution for this lockfile pulled in both the glibc and musl variants
+# even though only the glibc one is ever used, and linuxdeploy's ELF
+# dependency scanner throws an unhandled exception when it tries to resolve
+# the musl build's foreign /lib/ld-musl-x86_64.so.1 interpreter — silently
+# aborting the whole AppImage bundle step. A clean `npm ci --omit=dev` never
+# installs vite/rollup at all, so the problem can't recur even if a future
+# optional-native package has the same glibc/musl split.
+SCRATCH="$(mktemp -d)"
+trap 'rm -rf "$SCRATCH"' EXIT
+cp "$SRC/package.json" "$SRC/package-lock.json" "$SCRATCH/"
+(cd "$SCRATCH" && npm ci --omit=dev --no-audit --no-fund --ignore-scripts >/dev/null)
+mv "$SCRATCH/node_modules" "$OUT/node_modules"
+echo "bundled production node_modules ($(du -sh "$OUT/node_modules" | awk '{print $1}'))"
 
-# Copy the server code.
-cp "$SRC/server/index.js" "$OUT/server/index.js"
+# Copy the server code. index.js imports from lib/ and routes/ (19 files
+# between them) -- copying index.js alone left those unresolved at runtime
+# (`ERR_MODULE_NOT_FOUND: .../server/lib/auth.js`), so the desktop bundle
+# could never have started. server/fixtures/ (test-only IMAP fixtures) is
+# a sibling of lib/ and routes/, not copied here, so it never needs
+# excluding; *.test.js files living inside lib/ and routes/ do.
+rsync -a --exclude='*.test.js' \
+  "$SRC/server/index.js" "$SRC/server/lib" "$SRC/server/routes" "$OUT/server/"
 
-# Copy PGP keys (optional at bundle time — the user can also add them via
-# Settings after first launch, but shipping them makes an already-set-up box
-# work out of the box).
-for f in pgp_private.asc pgp_publics.asc pgp_passphrase.txt; do
-  if [[ -f "$SRC/server/$f" ]]; then
-    cp "$SRC/server/$f" "$OUT/server/$f"
-  else
-    echo "warn: $SRC/server/$f not present; PGP will need to be configured after launch" >&2
-  fi
-done
-# Secret files must be 600; public keys are 644.
-[[ -f "$OUT/server/pgp_private.asc"    ]] && chmod 600 "$OUT/server/pgp_private.asc"
-[[ -f "$OUT/server/pgp_passphrase.txt" ]] && chmod 600 "$OUT/server/pgp_passphrase.txt"
-[[ -f "$OUT/server/pgp_publics.asc"   ]] && chmod 644 "$OUT/server/pgp_publics.asc"
+# Deliberately NOT shipped: server/.dev-token and the PGP key/passphrase
+# files. The desktop shell hands the backend a fresh per-launch token via
+# LEOPOSTA_TOKEN and points LEOPOSTA_DATA_DIR at the user's app-data dir,
+# where PGP keys are read from — so bundling them would only leak secrets
+# into every package built on this machine.
 
-# Static frontend.
-[[ -d "$SRC/dist" ]] || { echo "error: dist/ not present — run `npm run build` first (or rely on Tauri's beforeBuildCommand which runs `vite build`)" >&2; exit 1; }
-cp -R "$SRC/dist" "$OUT/dist"
+# Static frontend, built without a baked-in API token (see build:desktop in
+# package.json) into dist-desktop/, so it never clobbers the dist/ that the
+# browser/PWA server in the same checkout is serving.
+(cd "$SRC" && npm run build:desktop >/dev/null)
+cp -R "$SRC/dist-desktop" "$OUT/dist"
 
 echo
 echo "bundle size:"

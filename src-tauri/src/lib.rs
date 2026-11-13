@@ -4,7 +4,7 @@ use std::process::{Child, Command};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::{Manager, WebviewWindow};
+use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 /// Holds the spawned bundled-node child so we can kill it on exit.
 pub struct Backend {
@@ -36,7 +36,9 @@ fn find_free_port() -> Option<u16> {
 
 fn spawn_node(
     base: &Path,
+    data_dir: &Path,
     port: u16,
+    token: &str,
 ) -> Result<Backend, String> {
     let node = base.join("node");
     let server = base.join("server").join("index.js");
@@ -62,9 +64,21 @@ fn spawn_node(
         .env("PORT", port.to_string())
         .env("HOST", "127.0.0.1")
         .env("LD_LIBRARY_PATH", merged)
+        // The server's CORS allowlist defaults to ports 3000/3001. The webview
+        // loads from this random port, and Vite's `crossorigin` script/style
+        // tags send an Origin header, so without this the JS/CSS bundle gets a
+        // 403 and the window stays blank white.
+        // Accounts, rules, PGP keys etc. The server's fallback is its own
+        // directory, which is read-only once installed under /usr/lib.
+        .env("LEOPOSTA_DATA_DIR", data_dir)
+        // Fresh per launch; the window gets the same value injected (see run()).
+        .env("LEOPOSTA_TOKEN", token)
+        .env("ALLOWED_ORIGINS", format!("http://127.0.0.1:{port}"))
         .current_dir(base.join("server"))
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
+        // Inherit rather than pipe: nothing reads the pipes, and node writes to
+        // pipes synchronously on Linux, so a full 64 KB buffer would hang it.
+        .stdout(std::process::Stdio::inherit())
+        .stderr(std::process::Stdio::inherit())
         .spawn()
         .map_err(|e| format!("failed to spawn bundled node: {e}"))?;
     let pid = child.id();
@@ -104,18 +118,43 @@ fn wait_for_port(port: u16, timeout: Duration) -> bool {
     false
 }
 
+/// 32 random bytes from the kernel, hex-encoded: the per-launch API token.
+fn random_token() -> Result<String, String> {
+    use std::io::Read;
+    let mut buf = [0u8; 32];
+    std::fs::File::open("/dev/urandom")
+        .and_then(|mut f| f.read_exact(&mut buf))
+        .map_err(|e| format!("could not read /dev/urandom: {e}"))?;
+    Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+fn build_main_window(
+    app: &tauri::App,
+    url: WebviewUrl,
+    init_script: Option<String>,
+) -> tauri::Result<WebviewWindow> {
+    let mut b = WebviewWindowBuilder::new(app, "main", url)
+        .title("Leoposta")
+        .inner_size(1180.0, 780.0)
+        .min_inner_size(760.0, 480.0)
+        .center()
+        .resizable(true);
+    if let Some(js) = init_script {
+        b = b.initialization_script(&js);
+    }
+    b.build()
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .manage(Mutex::new(Option::<Backend>::None))
         .setup(move |app| {
             let handle = app.handle().clone();
-            let window: WebviewWindow = app
-                .get_webview_window("main")
-                .expect("main window exists");
 
             if cfg!(dev) {
                 eprintln!("[leoposta] dev mode: using devUrl, not spawning bundled backend");
+                build_main_window(app, WebviewUrl::default(), None)?;
                 return Ok(());
             }
 
@@ -123,8 +162,16 @@ pub fn run() {
             let rd = resource_resource_dir(&handle)?;
             let base = rd.join("backend");
             eprintln!("[leoposta] resource dir = {:?}", rd);
+            let data_dir = handle
+                .path()
+                .app_data_dir()
+                .map_err(|e| format!("app_data_dir failed: {e}"))?;
+            std::fs::create_dir_all(&data_dir)
+                .map_err(|e| format!("could not create {:?}: {e}", data_dir))?;
+            eprintln!("[leoposta] data dir = {:?}", data_dir);
             let port = find_free_port().ok_or("could not pick a free loopback port")?;
-            let mut backend = spawn_node(&base, port)
+            let token = random_token()?;
+            let mut backend = spawn_node(&base, &data_dir, port, &token)
                 .map_err(|e| format!("backend spawn failed: {e}"))?;
 
             if !wait_for_port(port, Duration::from_secs(30)) {
@@ -140,19 +187,30 @@ pub fn run() {
                 *g = Some(backend);
             }
 
-            // Navigate the window to the running backend.
-            let url = format!("http://127.0.0.1:{port}");
-            let win_clone = window.clone();
-            std::thread::spawn(move || {
-                std::thread::sleep(Duration::from_millis(120));
-                match win_clone.navigate(url.parse().expect("url")) {
-                    Ok(_) => eprintln!("[leoposta] window navigated to {url}"),
-                    Err(e) => eprintln!("[leoposta] navigate to {url} failed: {e}"),
-                }
-            });
+            // Open the window straight on the backend. The token is injected
+            // before any page script runs, and only for our own origin, so a
+            // page this webview ever navigates elsewhere never sees it.
+            let origin = format!("http://127.0.0.1:{port}");
+            let init = format!(
+                "if (location.origin === {origin:?}) {{ window.__LEOPOSTA_DESKTOP_TOKEN__ = {token:?}; }}"
+            );
+            let url = WebviewUrl::External(origin.parse().expect("loopback url"));
+            build_main_window(app, url, Some(init))?;
+            eprintln!("[leoposta] window opened on {origin}");
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("failed to run Leoposta")
+        .build(tauri::generate_context!())
+        .expect("failed to build Leoposta");
+
+    app.run(|handle, event| {
+        // Without this the node child outlives the window: one orphaned
+        // backend (with live IMAP connections) per launch.
+        if let tauri::RunEvent::Exit = event {
+            if let Some(b) = handle.state::<Mutex<Option<Backend>>>().lock().unwrap().as_mut() {
+                b.kill();
+                eprintln!("[leoposta] backend stopped");
+            }
+        }
+    });
 }
