@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { apiFetch, AccountAPI, setActiveAccountEmail } from '../api'
+  import { apiFetch, AccountAPI, GoaAPI, setActiveAccountEmail } from '../api'
   import {
     store, getState, setAccounts, setActiveAccount, setRefreshInterval
   } from '../store'
@@ -122,6 +122,35 @@
     } catch { /* backend not running or no accounts */ }
   }
   $effect(() => { loadAccounts().catch(() => {}) })
+
+  // ---- Import from GNOME Online Accounts ----
+  // Hidden entirely when unavailable (container build, non-Linux, no GOA
+  // accounts) rather than shown disabled — most installs will never see it.
+  let goaAvailable = $state(false)
+  let goaAccounts = $state<any[]>([])
+  let goaImporting = $state<string | null>(null)
+  let goaError = $state('')
+
+  async function loadGoaAccounts() {
+    try {
+      const { available, accounts: list } = await GoaAPI.accounts()
+      goaAvailable = available
+      goaAccounts = Array.isArray(list) ? list : []
+    } catch { goaAvailable = false; goaAccounts = [] }
+  }
+  $effect(() => { if (activeTab === 'account') loadGoaAccounts().catch(() => {}) })
+
+  async function handleGoaImport(goaId: string) {
+    goaImporting = goaId; goaError = ''
+    try {
+      await GoaAPI.import(goaId)
+      const saved = await AccountAPI.list()
+      setAccounts(Array.isArray(saved) ? saved : [])
+    } catch (e: any) {
+      goaError = e.message
+    }
+    goaImporting = null
+  }
 
   async function pgpStatus() {
     const r = await apiFetch('/api/pgp/status')
@@ -307,6 +336,28 @@
          </div>
        {:else}
          <p class="hint">No accounts configured yet. Add one below.</p>
+       {/if}
+
+       {#if goaAvailable && goaAccounts.length && !editingId}
+         <div class="acct-list-sec goa-import-sec">
+           <h3>Import from GNOME Online Accounts</h3>
+           <div class="acct-list">
+             {#each goaAccounts as g (g.goaId)}
+               <div class="acct-row">
+                 <div class="acct-info">
+                   <div class="acct-name">{g.identity}</div>
+                   <div class="acct-email">{g.providerName || g.providerType}{g.hasMail ? ' · Mail' : ''}{g.hasDav ? ' · Calendar/Contacts/Files' : ''}</div>
+                 </div>
+                 <div class="acct-actions">
+                   <button class="btn-tiny" disabled={goaImporting === g.goaId} onclick={() => handleGoaImport(g.goaId)}>
+                     {goaImporting === g.goaId ? 'Importing…' : 'Import'}
+                   </button>
+                 </div>
+               </div>
+             {/each}
+           </div>
+           {#if goaError}<div class="error-banner">{goaError}</div>{/if}
+         </div>
        {/if}
 
        <div class="form-section">

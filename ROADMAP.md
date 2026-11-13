@@ -334,6 +334,16 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
   - Steps: (1) copy the install form from `LeonardSchwier/leotheca` `package.json` (a codeload tarball URL for `refs/tags/v0.1.1` with the integrity hash in `package-lock.json`); do not use a `github:` dependency, its `prepare` step builds on install and breaks offline builds. (2) In `src/main.ts` add `import '@leonardschwier/leoforma/fonts.css'` and `import '@leonardschwier/leoforma/tokens.css'`. (3) In `src/app.css` map each existing CSS custom property to the matching `--ds-*` token (list them with `grep -o "\-\-ds-[a-z0-9-]*" node_modules/@leonardschwier/leoforma/dist/tokens.css | sort -u`). (4) Keep dark mode working. (5) Update the Standing rule to say tokens are adopted and components are not.
   - Accept: `npx vite build` passes; `npm test` passes; a screenshot comparison in light and dark shows the same layout.
 
+## Feature run 2026-11-13 (user-requested)
+
+- [x] **Import mail + WebDAV accounts from GNOME Online Accounts** — done 2026-11-13. Design: `docs/design/goa-import.md`.
+  - `server/lib/goa.js`: reads GOA accounts via `busctl --user --json=short` (`org.gnome.OnlineAccounts`, `ObjectManager.GetManagedObjects`), filters to the two provider types that matter here (`imap_smtp`, `webdav`), and fetches each password through GOA's own `org.gnome.OnlineAccounts.PasswordBased.GetPassword(id)` — no keyring-attribute guessing. Linux + native (non-container) only; fails soft (`[]`/`null`/`false`) everywhere else, including the Docker image and non-Linux Tauri builds.
+  - `server/routes/goa.js`: `GET /api/goa/accounts` (sanitized list, no passwords), `POST /api/goa/import` (`{goaId, importMail, importDav}`) feeding the existing `addAccount`/`updateAccount`. Both answer `503 {available:false}` when GOA isn't reachable, not a 500.
+  - Settings UI: an "Import from GNOME Online Accounts" box, hidden entirely (not shown disabled) when unavailable or empty.
+  - **Found and fixed a pre-existing bug this feature was the first to trigger**: `lib/state.js` `updateAccount` blanked every field a partial update didn't mention (because `accountPayloadFrom(body)` defaults missing fields to `undefined`, then the merge spread that over the current record) — importing the `webdav` account right after `imap_smtp` (same email → update, not add) silently wiped `imapHost`/`imapUser`/`smtpHost`/`smtpUser`/`signature`. Fixed by computing the fresh payload from `{...cur, ...body}` instead of `body` alone.
+  - Verified against a real `leonard@schwier.org` account (mailbox.org, both GOA provider types) added through GNOME Settings: `GET /api/messages` and `GET /api/calendar/calendars` both succeed against the real servers using the imported passwords, importing both accounts in the order that previously broke it.
+  - Tests: `server/lib/goa.test.js`, `server/goaroutes.test.js`, `server/lib/state.test.js` (the regression for the merge bug) — 24 new, all against mocked `busctl` output built from the real introspection, not live D-Bus (CI has no session bus/GOA daemon).
+
 ## Standing rules
 
 - security-audit guidance, B5: `POST /api/pgp/unlock` is throttled since 2026-11-11 (5 attempts per 60 s). Frontend still needs an unlock prompt; `pgp_locked` is returned as `error` inside the message's pgp status, there is no sign route yet.
