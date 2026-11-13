@@ -16,6 +16,7 @@ import carddavRoutes from './routes/carddav.js'
 import pgpRoutes from './routes/pgp.js'
 import sendRoutes, { processScheduledMessages } from './routes/send.js'
 import idleRoutes from './routes/idle.js'
+import goaRoutes from './routes/goa.js'
 
 import { processPgp } from './lib/pgp.js'
 
@@ -54,6 +55,7 @@ app.use('/api', carddavRoutes)
 app.use('/api', pgpRoutes)
 app.use('/api', sendRoutes)
 app.use('/api', idleRoutes)
+app.use('/api', goaRoutes)
 
 // Serve the pre-built PWA (dist/) when present — single-port deploy.
 const DIST_DIR = path.resolve(new URL('..', import.meta.url).pathname, 'dist')

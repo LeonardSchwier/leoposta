@@ -22,6 +22,12 @@ All notable changes. No tagged release has been published yet.
 - Upgraded `nodemailer` to 10.4.0 and `vitest` to 5.1.0 to clear audit findings.
 
 ### Added
+- Import mail (IMAP/SMTP) and WebDAV (calendar/contacts) accounts from GNOME Online Accounts: a "Import from GNOME Online Accounts" box in Settings, hidden when unavailable. Linux + native (non-container) only. See [docs/design/goa-import.md](docs/design/goa-import.md).
+
+### Fixed
+- `updateAccount` (`PUT /api/accounts/:email`, and `POST /api/account` on an existing email) silently blanked any field a partial request body didn't mention — found by the GOA import above, which updates an existing account with DAV-only or mail-only fields. Omitted fields now keep their current value; a field sent explicitly (including `''`/`false`, to clear it) still overrides.
+
+### Added
 - Container image (`Dockerfile`, multi-arch CI workflow, release tarballs), smoke test script, `ARCHITECTURE.md`, `docs/` index, decision records, glossary, `.editorconfig`, `npm run setup` and `npm run check`.
 - `npm run typecheck`, `npm run screenshots`, README screenshots (light and dark), `SECURITY.md`, `CONTRIBUTING.md`, issue and pull request templates, monthly Dependabot, pinned workflow actions.
 
