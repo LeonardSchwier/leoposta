@@ -19,6 +19,10 @@ export default defineConfig({
     svelte(),
     tailwindcss(),
     VitePWA({
+      // The desktop shell serves the app from a new random loopback port on
+      // every launch: each one is a fresh origin, so a service worker would
+      // precache the whole app again per launch and never be reused.
+      disable: !!process.env.LEOPOSTA_DESKTOP,
       registerType: 'prompt',
       includeAssets: ['favicon.svg', 'icons.svg'],
       manifest: {

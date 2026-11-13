@@ -1,7 +1,12 @@
 import { attachmentPath } from '../lib/attachmentDownload'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
-const API_TOKEN: string = import.meta.env.VITE_LEOPOSTA_TOKEN || ''
+// The desktop shell generates a fresh token per launch and injects it before
+// any page script runs; the browser/PWA build uses the build-time token.
+const API_TOKEN: string =
+  (globalThis as { __LEOPOSTA_DESKTOP_TOKEN__?: string }).__LEOPOSTA_DESKTOP_TOKEN__ ||
+  import.meta.env.VITE_LEOPOSTA_TOKEN ||
+  ''
 const withToken = (url: string) => (API_TOKEN ? `${url}?token=${encodeURIComponent(API_TOKEN)}` : url)
 
 /** Active account email; when set, every request is scoped to it via x-account. */
