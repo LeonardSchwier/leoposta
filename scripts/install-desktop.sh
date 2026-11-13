@@ -2,9 +2,12 @@
 # Builds the Leoposta desktop app from this checkout and installs it for the
 # current user only — no root, no package manager:
 #
-#   ~/.local/lib/leoposta/<commit>/        leoposta binary + backend/ resources
+#   ~/.local/lib/leoposta/<commit>/bin/leoposta
+#   ~/.local/lib/leoposta/<commit>/lib/Leoposta/backend/   bundled node + server
+#     (Tauri resolves resources at <exe dir>/../lib/<productName>, so each
+#      version is a tiny prefix of its own)
 #   ~/.local/lib/leoposta/current          -> <commit>   (atomic symlink swap)
-#   ~/.local/bin/leoposta                  -> current/leoposta
+#   ~/.local/bin/leoposta                  -> current/bin/leoposta
 #   ~/.local/share/applications/org.schwier.leoposta.desktop
 #   ~/.local/share/icons/hicolor/<N>x<N>/apps/org.schwier.leoposta.png
 #
@@ -41,14 +44,16 @@ REL="$ROOT/src-tauri/target/release"
 DEST="$LIB/$REV"
 rm -rf "$DEST.tmp"
 mkdir -p "$DEST.tmp"
-cp "$REL/leoposta" "$DEST.tmp/"
-cp -R "$REL/backend" "$DEST.tmp/backend"
+PRODUCT="$(node -p "require('./src-tauri/tauri.conf.json').productName")"
+mkdir -p "$DEST.tmp/bin" "$DEST.tmp/lib/$PRODUCT"
+cp "$REL/leoposta" "$DEST.tmp/bin/"
+cp -R "$REL/backend" "$DEST.tmp/lib/$PRODUCT/backend"
 rm -rf "$DEST"
 mv "$DEST.tmp" "$DEST"
 
 ln -sfn "$REV" "$LIB/current.new" && mv -T "$LIB/current.new" "$LIB/current"
 mkdir -p "$BIN"
-ln -sfn "$LIB/current/leoposta" "$BIN/leoposta"
+ln -sfn "$LIB/current/bin/leoposta" "$BIN/leoposta"
 
 # Icons: one padded master (tile fills 422/512, same footprint as the other
 # GNOME tile icons), downscaled per size so small sizes stay crisp.
@@ -69,8 +74,8 @@ Type=Application
 Name=Leoposta
 GenericName=Mail Client
 Comment=Local-first mail client
-Exec=$LIB/current/leoposta
-TryExec=$LIB/current/leoposta
+Exec=$LIB/current/bin/leoposta
+TryExec=$LIB/current/bin/leoposta
 Icon=$APP_ID
 Terminal=false
 Categories=Network;Email;

@@ -59,7 +59,22 @@ fn spawn_node(
         format!("{}:{}", libs.display(), existing)
     };
 
-    let child = Command::new(&node)
+    let mut cmd = Command::new(&node);
+    // Have the kernel SIGTERM node when this process dies for any reason
+    // (crash, SIGKILL, logout) — the RunEvent::Exit handler only covers a
+    // normal quit. setup() runs on the main thread, which lives as long as
+    // the app, so the "parent thread exited" caveat of PDEATHSIG is moot.
+    #[cfg(target_os = "linux")]
+    unsafe {
+        use std::os::unix::process::CommandExt;
+        cmd.pre_exec(|| {
+            if libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM) != 0 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    let child = cmd
         .arg(&server)
         .env("PORT", port.to_string())
         .env("HOST", "127.0.0.1")
