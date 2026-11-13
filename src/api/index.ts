@@ -96,6 +96,17 @@ export const CalendarAPI = {
     api('/calendar/import', { method: 'POST', body: JSON.stringify({ calendar, ics }) }),
 }
 
+export const GoaAPI = {
+  /** Always 200: "not available on this platform/build" is a normal
+   *  `{available: false, accounts: []}` body, not an error toast. */
+  accounts: async (): Promise<{ available: boolean, accounts: any[] }> => {
+    const res = await apiFetch(`${API_BASE}/api/goa/accounts`)
+    return res.json()
+  },
+  import: (goaId: string, opts: { importMail?: boolean, importDav?: boolean } = {}) =>
+    api('/goa/import', { method: 'POST', body: JSON.stringify({ goaId, ...opts }) }),
+}
+
 export const ContactsAPI = {
   addressBooks: () => api('/contacts/calendars').then((r: any) => ({
     addressBooks: (r.addressBooks || r.calendars || []).map(toCal)
