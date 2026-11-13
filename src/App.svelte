@@ -14,6 +14,7 @@
   import { startRefresh, stopRefresh } from './refresh'
   import { MailAPI } from './api'
   import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
+  import { computeStartWidth, clampWidth } from './lib/splitHandle'
 
   let activeView = $state('inbox')
   let appMode = $state<'mail' | 'calendar' | 'contacts'>('mail')
@@ -34,10 +35,9 @@
     if (!contentEl) return
     const contentRect = contentEl.getBoundingClientRect()
     const handleRect = (e.target as HTMLElement).getBoundingClientRect()
-    const startW = handleRect.left - contentRect.left - 3
-    const clampW = (w: number) => Math.round(Math.min(contentRect.width * SPLIT_MAX_FRAC, Math.max(SPLIT_MIN, w)))
+    const startW = computeStartWidth(handleRect.left, contentRect.left)
     const onMove = (ev: PointerEvent) => {
-      listWidth = clampW(startW + (ev.clientX - startX)) + 'px'
+      listWidth = clampWidth(startW + (ev.clientX - startX), contentRect.width, SPLIT_MIN, SPLIT_MAX_FRAC) + 'px'
     }
     const onUp = () => {
       splitActive = false
@@ -574,11 +574,16 @@
   }
 
   .split-handle {
+    /* No negative margin: it used to straddle the list/preview boundary
+       (`margin: 0 -3px`), which put its hit area right on top of the list's
+       own vertical scrollbar (both sit flush against the same edge) — a
+       click meant for the scrollbar thumb could resize the column instead
+       of scrolling. It now sits entirely in its own flex slot, after the
+       list, never overlapping the list's scrollable content. */
     width: 6px;
     min-width: 6px;
     cursor: col-resize;
     background: var(--color-border);
-    margin: 0 -3px;
     z-index: 10;
     transition: background 150ms ease;
   }
