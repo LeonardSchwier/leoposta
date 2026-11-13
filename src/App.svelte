@@ -14,7 +14,7 @@
   import { startRefresh, stopRefresh } from './refresh'
   import { MailAPI } from './api'
   import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
-  import { computeStartWidth, clampWidth } from './lib/splitHandle'
+  import { beginSplitDrag } from './lib/splitHandle'
 
   let activeView = $state('inbox')
   let appMode = $state<'mail' | 'calendar' | 'contacts'>('mail')
@@ -29,28 +29,41 @@
   let listWidth = $state(localStorage.getItem('leoposta.listW') || '')
 
   function startSplitDrag(e: PointerEvent) {
-    e.preventDefault()
-    const startX = e.clientX
-    const contentEl = (e.target as HTMLElement).closest('.content') as HTMLElement
-    if (!contentEl) return
-    const contentRect = contentEl.getBoundingClientRect()
-    const handleRect = (e.target as HTMLElement).getBoundingClientRect()
-    const startW = computeStartWidth(handleRect.left, contentRect.left)
-    const onMove = (ev: PointerEvent) => {
-      listWidth = clampWidth(startW + (ev.clientX - startX), contentRect.width, SPLIT_MIN, SPLIT_MAX_FRAC) + 'px'
-    }
-    const onUp = () => {
-      splitActive = false
-      window.removeEventListener('pointermove', onMove)
-      window.removeEventListener('pointerup', onUp)
-      document.body.style.cursor = ''
-      document.body.style.userSelect = ''
-      try { localStorage.setItem('leoposta.listW', listWidth) } catch {}
-    }
-    window.addEventListener('pointermove', onMove)
-    window.addEventListener('pointerup', onUp)
-    document.body.style.cursor = 'col-resize'
-    document.body.style.userSelect = 'none'
+    const handle = e.currentTarget as HTMLElement
+    const container = handle.closest('.content') as HTMLElement | null
+    if (!container) return
+    // All drag bookkeeping lives in beginSplitDrag (src/lib/splitHandle.ts),
+    // which ends the drag on pointerup / pointercancel / lostpointercapture /
+    // window blur / a buttonless pointermove, so a release we never see
+    // (e.g. over a native scrollbar) can't leave the column stuck to the
+    // pointer.
+    beginSplitDrag(e, {
+      handle,
+      container,
+      min: SPLIT_MIN,
+      maxFraction: SPLIT_MAX_FRAC,
+      onResize: (w) => { listWidth = w + 'px' },
+      onEnd: () => { try { localStorage.setItem('leoposta.listW', listWidth) } catch {} },
+    })
+  }
+
+  const SIDEBAR_MIN = 180
+  const SIDEBAR_MAX_FRAC = 0.4
+  let sidebarWidth = $state(localStorage.getItem('leoposta.sidebarW') || '')
+
+  // Same drag mechanics as the list/preview split, for the folder sidebar.
+  function startSidebarDrag(e: PointerEvent) {
+    const handle = e.currentTarget as HTMLElement
+    const container = handle.closest('.app') as HTMLElement | null
+    if (!container) return
+    beginSplitDrag(e, {
+      handle,
+      container,
+      min: SIDEBAR_MIN,
+      maxFraction: SIDEBAR_MAX_FRAC,
+      onResize: (w) => { sidebarWidth = w + 'px' },
+      onEnd: () => { try { localStorage.setItem('leoposta.sidebarW', sidebarWidth) } catch {} },
+    })
   }
 
   function togglePalette() {
@@ -481,7 +494,7 @@
   })
 </script>
 
-<div class="app">
+<div class="app" style:--sidebar-w={sidebarWidth}>
         <Sidebar
         activeFolder={activeView}
         onFolderSelect={handleFolderSelect}
@@ -491,6 +504,13 @@
         folders={$store.folders}
         activeView={activeView}
       />
+      <div
+        class="split-handle sidebar-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize folder column"
+        onpointerdown={startSidebarDrag}
+      ></div>
   
   <main class="main">
     {#if $store.isComposing}
@@ -583,6 +603,9 @@
     width: 6px;
     min-width: 6px;
     cursor: col-resize;
+    /* Without this, touch/pen presses get a pointercancel as soon as the
+       browser decides to pan. */
+    touch-action: none;
     background: var(--color-border);
     z-index: 10;
     transition: background 150ms ease;
@@ -591,6 +614,11 @@
   .split-handle:active {
     background: var(--color-accent);
     opacity: 0.55;
+  }
+
+  /* Below 768px the sidebar collapses to a fixed 56px icon rail. */
+  @media (max-width: 768px) {
+    .sidebar-handle { display: none; }
   }
 
   .toast {
