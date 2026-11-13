@@ -47,6 +47,25 @@
     })
   }
 
+  const SIDEBAR_MIN = 180
+  const SIDEBAR_MAX_FRAC = 0.4
+  let sidebarWidth = $state(localStorage.getItem('leoposta.sidebarW') || '')
+
+  // Same drag mechanics as the list/preview split, for the folder sidebar.
+  function startSidebarDrag(e: PointerEvent) {
+    const handle = e.currentTarget as HTMLElement
+    const container = handle.closest('.app') as HTMLElement | null
+    if (!container) return
+    beginSplitDrag(e, {
+      handle,
+      container,
+      min: SIDEBAR_MIN,
+      maxFraction: SIDEBAR_MAX_FRAC,
+      onResize: (w) => { sidebarWidth = w + 'px' },
+      onEnd: () => { try { localStorage.setItem('leoposta.sidebarW', sidebarWidth) } catch {} },
+    })
+  }
+
   function togglePalette() {
     showPalette = !showPalette
   }
@@ -475,7 +494,7 @@
   })
 </script>
 
-<div class="app">
+<div class="app" style:--sidebar-w={sidebarWidth}>
         <Sidebar
         activeFolder={activeView}
         onFolderSelect={handleFolderSelect}
@@ -485,6 +504,13 @@
         folders={$store.folders}
         activeView={activeView}
       />
+      <div
+        class="split-handle sidebar-handle"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="Resize folder column"
+        onpointerdown={startSidebarDrag}
+      ></div>
   
   <main class="main">
     {#if $store.isComposing}
@@ -588,6 +614,11 @@
   .split-handle:active {
     background: var(--color-accent);
     opacity: 0.55;
+  }
+
+  /* Below 768px the sidebar collapses to a fixed 56px icon rail. */
+  @media (max-width: 768px) {
+    .sidebar-handle { display: none; }
   }
 
   .toast {
