@@ -183,11 +183,19 @@ export function addAccount(body) {
 export function updateAccount(email, body) {
   const idx = state.accounts.findIndex(a => (a.email || '').toLowerCase() === String(email).toLowerCase())
   if (idx === -1) return null
-  const fresh = accountPayloadFrom(body)
-  // Merge: fresh wins on email/name/etc. Password only comes from body (never
-  // from the inherited in-memory first-slot env override, so we don't persist
-  // a stale env secret to a non-first account).
   const cur = state.accounts[idx]
+  // accountPayloadFrom always returns every field (defaulting/undefined-ing
+  // whatever body doesn't set), so running it on `body` alone turns any
+  // partial update (e.g. GOA import sending only davUrl/davUser/davPass)
+  // into one that blanks every field body didn't mention — imapHost,
+  // imapUser, smtpHost, smtpUser, signature included. Compute it from
+  // `cur` overlaid with `body` instead, so an omitted field keeps its
+  // current value and only a field actually present in body (including
+  // explicitly sent as '' / false, to clear it) changes.
+  const fresh = accountPayloadFrom({ ...cur, ...body })
+  // Password only comes from body (never from the inherited in-memory
+  // first-slot env override, so we don't persist a stale env secret to a
+  // non-first account).
   const merged = {
     ...cur,
     ...fresh,
