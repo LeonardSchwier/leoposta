@@ -18,7 +18,7 @@
   "GET /folders",
   "GET /idle",
   "GET /message/:id",
-  "GET /message/:id/attachment/:partId",
+  "GET /message/:id/attachment/:attachmentId",
   "GET /messages",
   "GET /pgp/status",
   "GET /rules",

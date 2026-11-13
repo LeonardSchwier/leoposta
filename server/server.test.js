@@ -97,11 +97,15 @@ test('GET /api/health is open without a header', async () => {
   assert.deepEqual(await res.json(), { ok: true })
 })
 
-test('?token= works only for idle and attachment GETs', async () => {
+test('?token= works only for the idle stream (EventSource cannot set headers)', async () => {
   const bad = await fetch(`${base}/api/account?token=${TOKEN}`)
   assert.equal(bad.status, 401)
+  // Attachments are fetched with the header now; a token in their URL is refused.
   const att = await fetch(`${base}/api/message/1/attachment/2?token=${TOKEN}`)
-  assert.notEqual(att.status, 401)
+  assert.equal(att.status, 401)
+  const idle = await fetch(`${base}/api/idle?token=${TOKEN}`, { signal: AbortSignal.timeout(500) }).catch((e) => e)
+  // Not rejected by the token check: it either answered or was still streaming when we gave up.
+  assert.ok(idle instanceof Error || idle.status !== 401)
 })
 
 test('body limits: 2 MB JSON to /api/account gives 413, 1 KB does not', async () => {

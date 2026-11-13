@@ -1,6 +1,8 @@
 <script lang="ts">
   import { store, getState, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, deleteMessage, updateMessage, selectMessage } from '../store'
   import { sanitizeHtml, hasRemoteImages } from '../lib/sanitizeHtml'
+  import { MailAPI } from '../api'
+  import { downloadAttachment } from '../lib/attachmentDownload'
 
   let {
     onDelete: propDelete,
@@ -73,16 +75,26 @@
     updateMessage(msg.id, { flags: newFlags })
   }
 
-  function downloadAttachment(att: any) {
+  // The last failed download, keyed by message so it does not follow the user
+  // to the next message.
+  let attachmentError = $state<{ messageId: string; text: string } | null>(null)
+  let downloadingId = $state<string | null>(null)
+
+  async function handleDownloadAttachment(att: { id?: string; filename?: string }) {
     const msg = getCurrentMessage()
-    if (!msg) return
-    const a = document.createElement('a')
-    a.href = `/api/attachment/${msg.id}?name=${encodeURIComponent(att.filename)}`
-    a.download = att.filename || 'attachment'
-    a.target = '_blank'
-    document.body.appendChild(a)
-    a.click()
-    document.body.removeChild(a)
+    if (!msg || !att.id || downloadingId) return
+    attachmentError = null
+    downloadingId = att.id
+    try {
+      await downloadAttachment(
+        () => MailAPI.attachment(msg.id, att.id as string, msg.folder || getState().activeFolder),
+        att.filename || 'attachment'
+      )
+    } catch (e) {
+      attachmentError = { messageId: msg.id, text: e instanceof Error ? e.message : String(e) }
+    } finally {
+      downloadingId = null
+    }
   }
 
   function formatSize(bytes: number) {
@@ -177,7 +189,12 @@
           <h3>📎 {msg.attachments.length} Attachment{msg.attachments.length !== 1 ? 's' : ''}</h3>
           <div class="attachment-list">
             {#each msg.attachments as att, i (i)}
-              <button class="attachment-item" onclick={() => downloadAttachment(att)}>
+              <button
+                class="attachment-item"
+                disabled={!att.id || downloadingId !== null}
+                title={att.id ? undefined : 'Download is not available for this attachment yet'}
+                onclick={() => handleDownloadAttachment(att)}
+              >
                 <span class="att-icon">📄</span>
                 <div class="att-info">
                   <span class="att-name">{att.filename}</span>
@@ -187,6 +204,9 @@
               </button>
             {/each}
           </div>
+          {#if attachmentError && attachmentError.messageId === msg.id}
+            <p class="att-error" role="alert">{attachmentError.text}</p>
+          {/if}
         </div>
       {/if}
     </div>
@@ -260,6 +280,9 @@
   .attachment-list { display: flex; flex-direction: column; gap: 8px; }
   .attachment-item { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--color-surface); border: 1px solid var(--color-border); border-radius: var(--radius-sm); cursor: pointer; transition: all var(--transition); text-align: left; }
   .attachment-item:hover { border-color: var(--color-accent); background: var(--color-hover); }
+  .attachment-item:disabled { opacity: 0.6; cursor: not-allowed; }
+  .attachment-item:disabled:hover { border-color: var(--color-border); background: var(--color-surface); }
+  .att-error { margin-top: 10px; font-size: 13px; color: var(--color-danger); }
   .att-icon { font-size: 20px; }
   .att-info { display: flex; flex-direction: column; min-width: 0; }
   .att-name { font-size: 13px; font-weight: 500; color: var(--color-text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -1,3 +1,5 @@
+import { attachmentPath } from '../lib/attachmentDownload'
+
 const API_BASE = import.meta.env.VITE_API_URL || ''
 const API_TOKEN: string = import.meta.env.VITE_LEOPOSTA_TOKEN || ''
 const withToken = (url: string) => (API_TOKEN ? `${url}?token=${encodeURIComponent(API_TOKEN)}` : url)
@@ -66,8 +68,9 @@ export const MailAPI = {
   renameFolder: (from: string, to: string) => api('/folder/rename', {
     method: 'POST', body: JSON.stringify({ from, to })
   }),
-  attachmentUrl: (id: string, partId: string) =>
-    withToken(`${API_BASE}/api/message/${id}/attachment/${partId}`),
+  /** Authenticated download of one received attachment (see lib/attachmentDownload). */
+  attachment: (id: string, attachmentId: string, folder: string) =>
+    apiFetch(`${API_BASE}${attachmentPath(id, attachmentId, folder)}`),
   scheduled: () => api('/scheduled'),
   cancelScheduled: (id: string) => api(`/scheduled/${id}`, { method: 'DELETE' }),
   idle: () => {

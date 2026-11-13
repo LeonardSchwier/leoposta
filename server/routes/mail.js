@@ -1,5 +1,4 @@
 import { Router } from 'express'
-import { simpleParser } from 'mailparser'
 import { state, resolveAccount } from '../lib/state.js'
 import { getPoolFor } from '../lib/imap.js'
 import { normalizeFlags, parseFromAddr, toISO, messageDate } from '../lib/address.js'
@@ -8,6 +7,15 @@ import { processPgp } from '../lib/pgp.js'
 import { applyRules } from '../lib/rules.js'
 import { MailActionError, moveChecked, parseUid, removeMessage } from '../lib/removal.js'
 import { changeFlags, parseFlagList } from '../lib/flags.js'
+import {
+  attachmentAt,
+  bodyStructureAttachments,
+  contentDispositionHeader,
+  listAttachments,
+  mergePgpAttachments,
+  parseMessageSource,
+  safeContentType
+} from '../lib/attachments.js'
 
 const router = Router()
 
@@ -57,21 +65,7 @@ router.get('/messages', async (req, res) => {
           const cc = (msg.cc || msg.envelope?.cc || []).map(c => c.address)
           const bcc = (msg.bcc || []).map(b => b.address)
 
-          const attachments = []
-          function walkStruct(struct) {
-            if (!struct) return
-            if (struct.filename) {
-              attachments.push({
-                id: struct.partSequence?.join('.') || '',
-                filename: struct.filename,
-                contentType: struct.contentType || struct.type || '',
-                size: struct.size || 0,
-                contentId: struct.contentId || undefined
-              })
-            }
-            if (struct.parts) struct.parts.forEach(walkStruct)
-          }
-          walkStruct(msg.bodyStructure)
+          const attachments = bodyStructureAttachments(msg.bodyStructure)
 
           const inReplyTo = msg['in-reply-to'] || msg['In-Reply-To'] || ''
           const references = msg['references'] || msg['References'] || ''
@@ -149,20 +143,10 @@ router.get('/message/:id', async (req, res) => {
 
         if (msg.source) {
           try {
-            const parsed = await simpleParser(msg.source.toString('utf-8'))
+            const parsed = await parseMessageSource(msg.source)
             if (parsed.html) bodyHtml = parsed.html
             if (parsed.text) body = parsed.text
-            if (parsed.attachments) {
-              for (const att of parsed.attachments) {
-                attachments.push({
-                  id: att.filename || 'attachment',
-                  filename: att.filename,
-                  contentType: att.contentType || att.mimeType || '',
-                  size: att.content?.length || 0,
-                  contentId: att.contentId || undefined
-                })
-              }
-            }
+            attachments.push(...listAttachments(parsed.attachments))
           } catch (parseErr) {
             const raw = msg.source.toString('utf-8')
             if (raw.includes('<html') || raw.includes('<div') || raw.includes('<p')) {
@@ -185,7 +169,7 @@ router.get('/message/:id', async (req, res) => {
         const finalBody = pgp?.decrypted ? pgp.text : body
         const finalHtml = pgp?.decrypted ? (pgp.html || '') : bodyHtml
         const finalAttachments = pgp?.decrypted && pgp.attachments?.length
-          ? [...attachments, ...pgp.attachments.filter(p => !attachments.some(a => a.filename === p.filename))]
+          ? mergePgpAttachments(attachments, pgp.attachments)
           : attachments
         res.json({
           id: msg.uid?.toString() || id,
@@ -447,27 +431,50 @@ router.delete('/folder', async (req, res) => {
   }
 })
 
-// GET /api/message/:id/attachment/:partId
-router.get('/message/:id/attachment/:partId', async (req, res) => {
+// GET /api/message/:id/attachment/:attachmentId?folder=F
+// The attachment id is its index among the parsed message's attachments (see
+// lib/attachments.js). The message source is fetched by UID and parsed with the
+// same helper the message view uses, so the ids match what the user was shown.
+router.get('/message/:id/attachment/:attachmentId', async (req, res) => {
   try {
-    const { id, partId } = req.params
-    const { folder = 'INBOX' } = req.query
+    const uid = parseUid(req.params.id)
+    const folder = req.query.folder === undefined ? 'INBOX' : req.query.folder
+    if (uid === null || typeof folder !== 'string' || !folder) {
+      return res.status(400).json({ error: 'invalid message id or folder' })
+    }
     const acct = resolveAccount(req)
     if (!acct) return res.status(404).json({ error: 'No account configured' })
     const pool = getPoolFor(acct)
 
-    await pool.run(async (client) => {
+    // "Not found" is returned as a value, not thrown: an error thrown inside
+    // pool.run makes the pool log the shared IMAP client out.
+    const outcome = await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
       try {
-        const part = await client.download(id, partId, { op: 'FETCH' })
-        res.setHeader('Content-Type', part.contentType || 'application/octet-stream')
-        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(part.filename || 'attachment')}"`)
-        res.setHeader('Content-Length', part.size || 0)
-        part.pipe(res)
+        const msg = await client.fetchOne(uid, { source: true }, { uid: true })
+        if (!msg || !msg.source) return { status: 404, error: 'message_not_found' }
+        const parsed = await parseMessageSource(msg.source)
+        const att = attachmentAt(parsed.attachments, req.params.attachmentId)
+        if (!att) return { status: 404, error: 'attachment_not_found' }
+        return { att }
       } finally {
         lock.release()
       }
     })
+    if (outcome.error) return res.status(outcome.status).json({ error: outcome.error })
+
+    const { att } = outcome
+    // The bytes come from whoever sent the mail: always a download, never
+    // sniffed, and sandboxed if someone opens the URL directly.
+    res.set({
+      'Content-Type': safeContentType(att.contentType),
+      'Content-Disposition': contentDispositionHeader(att.filename),
+      'Content-Length': String(att.content.length),
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "sandbox; default-src 'none'",
+      'Cache-Control': 'private, no-store'
+    })
+    res.end(att.content)
   } catch (err) {
     console.error('Error downloading attachment:', err)
     if (!res.headersSent) {
