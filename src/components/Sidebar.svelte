@@ -215,7 +215,9 @@
 
 <style>
   .sidebar {
-    width: 240px;
+    /* --sidebar-w is set by App.svelte's resize handle. */
+    width: var(--sidebar-w, 240px);
+    flex-shrink: 0;
     background: var(--color-sidebar);
     border-right: 1px solid var(--color-border);
     display: flex;
