@@ -1,5 +1,7 @@
 // Minimal iCalendar (ICS) + vCard (VCF) helpers shared by Calendar/Contacts views.
 
+import { buildVTimezone } from './tz'
+
 export interface CalEvent {
   uid: string
   summary: string
@@ -11,7 +13,9 @@ export interface CalEvent {
   href?: string
   ics?: string
   attendees?: string[] // email addresses; emitted as ATTENDEE;CN=... mailto:addr
-  rrule?: string // kept when an existing series is edited
+  rrule?: string // RRULE value of a series
+  /** Timed only: start/end are wall-clock "YYYYMMDDTHHMMSS" in this zone (written with TZID + VTIMEZONE). */
+  tzid?: string
 }
 
 function foldLine(line: string): string {
@@ -38,17 +42,20 @@ function escIcs(v: string): string {
 
 export function eventToICS(ev: Omit<CalEvent, 'uid'>, uid: string): string {
   const start = (ev.start || '').replace(/[-:]/g, '').split('T')[0].split('.')[0]
+  const zoned = !ev.allDay && ev.tzid ? ev.tzid : null
+  const tzp = zoned ? `;TZID=${zoned}` : ''
   const lines = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
     'PRODID:-//leoposta//EN',
     'CALSCALE:GREGORIAN',
+    ...(zoned ? buildVTimezone(zoned, Number(start.slice(0, 4)) || new Date().getFullYear()) : []),
     'BEGIN:VEVENT',
     `UID:${uid}`,
     `DTSTAMP:${new Date().toISOString().replace(/[-:]/g, '').split('.')[0]}Z`,
   ]
-  if (start) lines.push(ev.allDay ? `DTSTART;VALUE=DATE:${start}` : `DTSTART:${ev.start}`)
-  if (ev.end) lines.push(ev.allDay ? `DTEND;VALUE=DATE:${ev.end.replace(/[-:]/g, '')}` : `DTEND:${ev.end}`)
+  if (start) lines.push(ev.allDay ? `DTSTART;VALUE=DATE:${start}` : `DTSTART${tzp}:${ev.start}`)
+  if (ev.end) lines.push(ev.allDay ? `DTEND;VALUE=DATE:${ev.end.replace(/[-:]/g, '')}` : `DTEND${tzp}:${ev.end}`)
   if (ev.summary) lines.push(`SUMMARY:${escIcs(ev.summary)}`)
   if (ev.location) lines.push(`LOCATION:${escIcs(ev.location)}`)
   if (ev.description) lines.push(`DESCRIPTION:${escIcs(ev.description)}`)
