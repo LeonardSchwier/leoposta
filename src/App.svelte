@@ -12,6 +12,7 @@
   import Contacts from './components/Contacts.svelte'
   import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward, bootstrapRefreshMode } from './store'
   import { startRefresh, stopRefresh } from './refresh'
+  import { loadMessageBody, keepLoadedBodies } from './lib/openMessage'
   import { MailAPI } from './api'
   import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
   import { beginSplitDrag } from './lib/splitHandle'
@@ -163,12 +164,19 @@
 
   let offlineServing = $state(false)
 
+  // Only the newest list request may write the list: an older answer (another
+  // folder, or a refresh overtaken by a folder switch) is dropped.
+  let listRequest = 0
+
   async function loadMessages(folder: string) {
+    const request = ++listRequest
     setIsLoading(true)
     try {
       const data = await MailAPI.messages(folder)
+      if (request !== listRequest || getState().activeFolder !== folder) return
       if (data.messages) {
-        setMessages(data.messages)
+        // Bodies already opened are kept: the list response has none.
+        setMessages(keepLoadedBodies(getState().messages, data.messages))
         setUnreadCount(data.messages.filter((m: any) =>
           !m.flags?.includes('\\Seen') && !m.flags?.includes('Seen')
         ).length)
@@ -177,6 +185,7 @@
       offlineServing = false
       setError(null)
     } catch (e: any) {
+      if (request !== listRequest) return
       // Offline / server down: fall back to the local cache for this folder.
       const cached = await cachedMessagesForFolder(folder).catch(() => [] as any[])
       if (cached.length) {
@@ -189,7 +198,7 @@
         offlineServing = false
       }
     } finally {
-      setIsLoading(false)
+      if (request === listRequest) setIsLoading(false)
     }
   }
 
@@ -262,33 +271,12 @@
 
   function handleSelectMessage(id: string) {
     selectMessage(id)
-    const folder = getState().activeFolder
-    MailAPI.message(id, folder).then(data => {
-      if (data) {
-        putMessageCache({ key: `${folder}:${id}`, folder, id, message: data, full: true }).catch(() => {})
-        updateMessage(id, {
-          body: data.body,
-          bodyHtml: data.bodyHtml,
-          pgp: data.pgp,
-          attachments: data.attachments,
-          cc: data.cc,
-          bcc: data.bcc
-        })
-      }
-    }).catch(e => {
-      // Offline: load the full message from the local cache (if it was ever opened).
-      getMessageCache(folder, id).then(c => {
-        if (c?.full && c.message) {
-          updateMessage(id, {
-            body: c.message.body,
-            bodyHtml: c.message.bodyHtml,
-            pgp: c.message.pgp,
-            attachments: c.message.attachments,
-            cc: c.message.cc,
-            bcc: c.message.bcc
-          })
-        }
-      }).catch(() => console.error('Failed to load message:', e))
+    loadMessageBody(id, {
+      fetchMessage: (mid, folder) => MailAPI.message(mid, folder),
+      context: () => getState(),
+      update: updateMessage,
+      cachePut: (folder, mid, message) => putMessageCache({ key: `${folder}:${mid}`, folder, id: mid, message, full: true }),
+      cacheGet: (folder, mid) => getMessageCache(folder, mid)
     })
   }
 

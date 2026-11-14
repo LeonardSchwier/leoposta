@@ -38,7 +38,8 @@ async function api(path: string, options: RequestInit = {}): Promise<any> {
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || `API error ${res.status}`)
+    // The status lets callers tell "gone" (404) from a failure.
+    throw Object.assign(new Error(err.error || `API error ${res.status}`), { status: res.status })
   }
   return res.json()
 }
