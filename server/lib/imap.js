@@ -8,6 +8,19 @@ import nodemailer from 'nodemailer'
 
 const pools = new Map()
 
+/** Plain-text mail transport is only acceptable to this machine itself. */
+export function isLoopbackHost(host) {
+  const h = String(host || '').trim().toLowerCase().replace(/^\[|\]$/g, '')
+  return h === 'localhost' || h === '::1' || /^127(?:\.\d{1,3}){3}$/.test(h)
+}
+
+/** With implicit TLS off, STARTTLS is mandatory for a remote server: an
+ * opportunistic upgrade is removed by anyone on the path, who then reads
+ * the password from AUTH PLAIN/LOGIN. */
+export function mustStartTls(secure, host) {
+  return !secure && !isLoopbackHost(host)
+}
+
 function safeLogout(c) {
   const p = c && typeof c.logout === 'function' ? c.logout() : null
   if (p && typeof p.catch === 'function') p.catch(() => {})
@@ -20,6 +33,7 @@ export function createImapClient(acct) {
     host: acct.imapHost,
     port: acct.imapPort,
     secure: acct.imapTls,
+    doSTARTTLS: mustStartTls(acct.imapTls, acct.imapHost) ? true : undefined,
     tls: { servername },
     auth: {
       user: acct.imapUser || acct.email,
@@ -123,6 +137,7 @@ export function createSmtpTransporter(acct) {
     host: acct.smtpHost,
     port: acct.smtpPort,
     secure: acct.smtpTls,
+    requireTLS: mustStartTls(acct.smtpTls, acct.smtpHost),
     auth: {
       user: acct.smtpUser || acct.email,
       pass: acct.smtpPass
