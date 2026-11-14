@@ -7,7 +7,15 @@ import { processPgp } from '../lib/pgp.js'
 import { applyRules } from '../lib/rules.js'
 import { MailActionError, moveChecked, parseUid, removeMessage } from '../lib/removal.js'
 import { changeFlags, parseFlagList } from '../lib/flags.js'
-import { folderParam, INVALID_FOLDER, toFolderEntry } from '../lib/folders.js'
+import {
+  childPath,
+  descendantsDeepestFirst,
+  folderParam,
+  imapErrorText,
+  INVALID_FOLDER,
+  isImapRefusal,
+  toFolderEntry
+} from '../lib/folders.js'
 import {
   attachmentAt,
   bodyStructureAttachments,
@@ -385,56 +393,105 @@ router.post('/message/:id/move', async (req, res) => {
   }
 })
 
-// POST /api/folder
+// Folder management. A NO/BAD from the server (name taken, not allowed, ...) is
+// returned as a value with the server's own text: thrown inside pool.run, the
+// bare "Command failed" counts as transient, so the pool would log the shared
+// client out and resend the command four times.
+async function folderOp(pool, fn) {
+  return pool.run(async (client) => {
+    try {
+      return { result: await fn(client) }
+    } catch (err) {
+      if (isImapRefusal(err)) return { error: imapErrorText(err) }
+      throw err
+    }
+  })
+}
+
+const nonBlank = (v) => typeof v === 'string' && v.trim() !== ''
+
+// POST /api/folder { name, parentId? }
 router.post('/folder', async (req, res) => {
   try {
-    const { name, parentId } = req.body
+    const { name, parentId } = req.body || {}
     const acct = resolveAccount(req)
-    if (!acct || !name) return res.status(400).json({ error: 'name required' })
+    if (!acct) return res.status(400).json({ error: 'No account configured' })
+    if (!nonBlank(name) || (parentId != null && parentId !== '' && !nonBlank(parentId))) {
+      return res.status(400).json({ error: 'name required' })
+    }
     const pool = getPoolFor(acct)
 
-    const folderPath = await pool.run(async (client) => {
-      let p = name
+    const out = await folderOp(pool, async (client) => {
+      let p = name.trim()
       if (parentId) {
         // Join with the server's hierarchy delimiter ("." on many servers).
         const parent = (await client.list()).find((mb) => mb.path === parentId)
-        p = `${parentId}${parent?.delimiter || '/'}${name}`
+        p = childPath(parentId, parent?.delimiter, p)
       }
-      await client.mailboxCreate(p)
-      return p
+      const created = await client.mailboxCreate(p)
+      return (created && created.path) || p
     })
-    res.json({ success: true, path: folderPath })
+    if (out.error) return res.status(500).json({ error: out.error })
+    res.json({ success: true, path: out.result })
   } catch (err) {
     console.error('Error creating folder:', err)
     res.status(500).json({ error: err.message })
   }
 })
 
-// POST /api/folder/rename
+// POST /api/folder/rename { from, name } renames in place (same parent);
+// { from, to } moves to a full mailbox path. Children move with their parent.
 router.post('/folder/rename', async (req, res) => {
   try {
-    const { from, to } = req.body || {}
+    const { from, to, name } = req.body || {}
     const acct = resolveAccount(req)
-    if (!acct || !from || !to) return res.status(400).json({ error: 'from and to required' })
+    if (!acct) return res.status(400).json({ error: 'No account configured' })
+    if (!nonBlank(from) || !(nonBlank(to) || nonBlank(name))) {
+      return res.status(400).json({ error: 'from and name (or to) required' })
+    }
     const pool = getPoolFor(acct)
 
-    await pool.run(async (client) => { await client.mailboxRename(from, to) })
-    res.json({ success: true, path: to })
+    const out = await folderOp(pool, async (client) => {
+      let target = nonBlank(to) ? to : null
+      if (!target) {
+        const mb = (await client.list()).find((m) => m.path === from)
+        target = childPath(mb?.parentPath || '', mb?.delimiter, name.trim())
+      }
+      const renamed = await client.mailboxRename(from, target)
+      return (renamed && renamed.newPath) || target
+    })
+    if (out.error) return res.status(500).json({ error: out.error })
+    res.json({ success: true, path: out.result })
   } catch (err) {
     console.error('Error renaming folder:', err)
     res.status(500).json({ error: err.message })
   }
 })
 
-// DELETE /api/folder
+// DELETE /api/folder?path=P deletes P and everything below it.
 router.delete('/folder', async (req, res) => {
   try {
-    const { path: folderPath } = req.query
+    const folderPath = folderParam(req.query.path, null)
     const acct = resolveAccount(req)
-    if (!acct || !folderPath) return res.status(400).json({ error: 'path required' })
+    if (!acct) return res.status(400).json({ error: 'No account configured' })
+    if (!folderPath) return res.status(400).json({ error: 'path required' })
+    if (folderPath.toUpperCase() === 'INBOX') return res.status(400).json({ error: 'INBOX cannot be deleted' })
     const pool = getPoolFor(acct)
 
-    await pool.run(async (client) => { await client.mailboxDelete(folderPath) })
+    const out = await folderOp(pool, async (client) => {
+      const list = await client.list()
+      // Children first: a plain DELETE of a parent leaves its subfolders behind.
+      for (const p of descendantsDeepestFirst(list, folderPath)) await client.mailboxDelete(p)
+      try {
+        await client.mailboxDelete(folderPath)
+      } catch (err) {
+        // A \Noselect parent disappears by itself once its last child is gone.
+        const still = (await client.list()).some((m) => m.path === folderPath)
+        if (still) throw err
+      }
+      return true
+    })
+    if (out.error) return res.status(500).json({ error: out.error })
     res.json({ success: true })
   } catch (err) {
     console.error('Error deleting folder:', err)
