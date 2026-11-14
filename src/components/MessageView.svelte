@@ -193,6 +193,19 @@
               {/if}
             {/if}
           </div>
+        {:else if msg.pgp && msg.pgp.signed}
+          <!-- Signed, not encrypted (RFC 3156 multipart/signed or clearsigned). -->
+          <div class="pgp-banner" class:pgp-banner-decrypted={msg.pgp.verified === true} data-testid="pgp-signed">
+            <div class="pgp-banner-row">
+              <span class="pgp-ico">🔏</span>
+              <span class="pgp-title">Signed message</span>
+              <span class="pgp-chip" class:verified={!!msg.pgp.verified}>
+                {#if msg.pgp.verified === true}✓ signature verified
+                {:else if msg.pgp.verified === false}✕ signature invalid
+                {:else}signed (not verified: the signer's public key is unknown){/if}
+              </span>
+            </div>
+          </div>
         {/if}
 
         {#if msg.loadError}

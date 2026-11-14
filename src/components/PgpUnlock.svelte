@@ -53,7 +53,7 @@
     {#if error}<p class="pgp-unlock-err" role="alert">{error}</p>{/if}
   </form>
 {:else if noKey}
-  <p class="pgp-help">No OpenPGP private key is set up. Add your private key in <b>Settings → PGP</b> to read this message.</p>
+  <p class="pgp-help">No OpenPGP private key is set up for this account. Add its private key in <b>Settings → PGP</b> to read this message.</p>
 {:else if msg.pgp && !msg.pgp.decrypted}
   <p class="pgp-help">This message could not be decrypted with your key: {msg.pgp.error}</p>
 {/if}
