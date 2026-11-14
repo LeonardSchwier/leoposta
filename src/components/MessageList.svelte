@@ -2,6 +2,7 @@
   import { store, getState, selectMessage, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, updateMessage, setComposeCc } from '../store'
   import ContextMenu from './ContextMenu.svelte'
   import { computeVirtualRange } from '../lib/virtualList'
+  import { formatListDate } from '../lib/listDate'
 
   let { onCompose, onSelectMessage, onDelete, onArchive, onStar, onSearch, searchQuery = '', isLoading = false, error = null } = $props()
 
@@ -77,17 +78,7 @@
     ]
   }
   
-  function formatDate(dateStr: string) {
-    if (!dateStr) return ''
-    const date = new Date(dateStr)
-    const now = new Date()
-    const diff = now.getTime() - date.getTime()
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-    if (days === 0) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    if (days === 1) return 'Yesterday'
-    if (days < 7) return date.toLocaleDateString([], { weekday: 'short' })
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
-  }
+  const formatDate = (dateStr: string) => formatListDate(dateStr)
   
   function isRead(message: any) {
     return message.flags?.includes('\\Seen') || message.flags?.includes('Seen')
@@ -96,6 +87,7 @@
     return message.flags?.includes('\\Flagged') || message.flags?.includes('Flagged')
   }
   function getPreview(message: any): string {
+    if (message.snippet) return message.snippet
     if (message.body) return message.body.substring(0, 100)
     if (message.bodyHtml) return message.bodyHtml.replace(/<[^>]*>/g, '').substring(0, 100)
     if (message.attachments?.length) return '📎 ' + message.attachments.length + ' attachment(s)'
@@ -187,7 +179,10 @@
           </div>
           <div class="message-info">
             <div class="message-top">
-              <span class="sender-name">{message.from}</span>
+              <span class="sender-name">{message.from || message.fromAddress || '(no sender)'}</span>
+              {#if message.hasAttachment || message.attachments?.length}
+                <span class="attachment-flag" role="img" aria-label="Has attachments" title="Has attachments">📎</span>
+              {/if}
               <span class="message-date">{formatDate(message.date)}</span>
             </div>
             <div class="message-subject">{message.subject || '(no subject)'}</div>
@@ -425,6 +420,13 @@
     max-width: 65%;
   }
   
+  .attachment-flag {
+    margin-left: auto;
+    padding: 0 4px;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
   .message-date {
     font-size: 11px;
     color: var(--color-text-secondary);
