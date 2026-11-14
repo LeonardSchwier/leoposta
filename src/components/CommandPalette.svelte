@@ -87,8 +87,9 @@
   })
 </script>
 
-<div class="palette-backdrop" onclick={onClose} onkeydown={(e) => e.stopPropagation()}>
-  <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette" onclick={e => e.stopPropagation()}>
+<!-- Backdrop click is a mouse shortcut; keyboard users close with Escape (handleKey). -->
+<div class="palette-backdrop" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onClose() }} onkeydown={(e) => e.stopPropagation()}>
+  <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette" tabindex="-1">
     <div class="palette-input-row">
       <span class="palette-glyph" aria-hidden="true">⌘</span>
       <input

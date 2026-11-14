@@ -276,6 +276,10 @@
   onMount(() => { reload() })
 </script>
 
+<!-- Escape closes the editor dialog (unless an inner control, e.g. the
+     autocomplete list, already used that Escape). -->
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && showEditor && !e.defaultPrevented) { e.preventDefault(); showEditor = false } }} />
+
 <section class="calendar">
   <aside class="cal-side">
     <div class="cal-side-head">
@@ -339,19 +343,22 @@
     <div class="weekdays">
       {#each weekdayNames as wd, i}<div class="wd">{wd}</div>{/each}
     </div>
-    <div class="grid" class:week={viewMode === 'week'} role="grid">
+    <div class="grid" class:week={viewMode === 'week'}>
       {#each cells() as cell (cell.dateStr)}
         {@const dayEvents = eventsForDay(cell.dateStr)}
         {@const max = viewMode === 'week' ? 12 : 3}
+        <!-- Clicking anywhere in a day is a mouse shortcut; the day number is the keyboard-reachable button. -->
         <div
           class="cell"
+          role="presentation"
           class:out={cell.inMonth === false}
           class:today={cell.dateStr === fmtISODate(new Date())}
           data-date={cell.dateStr}
           onclick={() => { if (calendars.length) openCreate(cell.dateStr) }}
         >
           <div class="cell-head">
-            <span class="daynum">{cell.date.getDate()}</span>
+            <button type="button" class="daynum" aria-label={`New event on ${cell.dateStr}`}
+              onclick={(e) => { e.stopPropagation(); if (calendars.length) openCreate(cell.dateStr) }}>{cell.date.getDate()}</button>
           </div>
           {#if dayEvents.length > 0}
             <div class="chips">
@@ -375,8 +382,9 @@
     {/if}
   </div>
   {#if showEditor}
-    <div class="modal-back" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }} role="dialog">
-      <div class="modal">
+    <!-- Backdrop click is a mouse shortcut; Escape closes for keyboard users (svelte:window above). -->
+    <div class="modal-back" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }}>
+      <div class="modal" role="dialog" aria-modal="true" aria-label={editing ? 'Edit event' : 'New event'} tabindex="-1">
         <h4>{editing ? 'Edit event' : 'New event'}</h4>
         {#if editing?.recurring}<p class="cal-target">This is a repeating event: changes apply to every repetition.</p>{/if}
         {#if calendars.length}
@@ -426,7 +434,7 @@
   .cal-side { width: 220px; background: var(--color-sidebar); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; }
   .cal-side-head { padding: 12px 12px 8px; display: flex; flex-direction: column; gap: 8px; }
   .cal-side-head h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--color-text-secondary); margin: 0 0 4px; font-weight: 700; }
-  .add-evt { background: var(--color-accent); color: #fff; border: none; padding: 7px 12px; border-radius: var(--radius-sm); font-weight: 600; font-size: 12px; cursor: pointer; }
+  .add-evt { background: var(--color-accent); color: var(--color-on-accent); border: none; padding: 7px 12px; border-radius: var(--radius-sm); font-weight: 600; font-size: 12px; cursor: pointer; }
   .add-evt:hover { background: var(--color-accent-hover); }
   .cal-actions { display: flex; gap: 6px; padding: 4px 8px; }
   .cal-act { flex: 1; padding: 5px 8px; border: 1px solid var(--color-border); background: var(--color-bg-secondary); color: var(--color-text); border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; }
@@ -437,7 +445,6 @@
   .cal-item input[type="checkbox"] { width: 14px; height: 14px; flex: 0 0 auto; margin: 0; accent-color: var(--color-accent); }
   .cal-item.checked { font-weight: 500; }
   .cal-warn { background: var(--color-bg-secondary); color: var(--color-text-secondary); border-left: 3px solid var(--color-warn, #b58900); padding: 8px 18px; font-size: 12px; }
-  .cal-target { font-size: 11px; color: var(--color-text-secondary); margin: -6px 0 10px; }
   .cal-item:hover { background: var(--color-hover); }
   .cal-dot { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
   .cal-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -455,20 +462,24 @@
   .cal-nav button:nth-child(2) { width: auto; padding: 0 12px; font-size: 12px; font-weight: 500; }
   .cal-nav h3 { font-size: 15px; font-weight: 600; margin-left: 10px; }
   .cal-err { background: var(--danger-bg); color: var(--color-danger); padding: 10px 18px; font-size: 13px; display: flex; gap: 12px; align-items: center; justify-content: space-between; }
-  .cal-err button { background: var(--color-danger); color: #fff; border: none; padding: 5px 10px; border-radius: 4px; font-size: 12px; }
+  .cal-err button { background: var(--color-danger); color: var(--color-on-danger); border: none; padding: 5px 10px; border-radius: 4px; font-size: 12px; }
   .weekdays { display: grid; grid-template-columns: repeat(7, 1fr); padding: 6px 12px 4px; border-bottom: 1px solid var(--color-border); }
   .wd { font-size: 11px; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.4px; }
   .grid { flex: 1; overflow-y: auto; padding: 10px 12px 12px; display: grid; grid-template-columns: repeat(7, 1fr); grid-auto-rows: minmax(82px, 1fr); gap: 6px; }
   .cell { border: 1px solid var(--color-border); border-radius: 6px; padding: 6px 7px; cursor: pointer; transition: border-color .1s, background .1s; overflow: hidden; background: var(--color-bg); }
   .cell:hover { border-color: var(--color-accent); background: var(--color-hover); }
-  .cell.out { opacity: 0.55; background: transparent; }
+  /* Days of the neighbouring months: set apart by a lighter weight and no
+     fill, not by fading the whole cell (that put the clickable day number
+     at ~2.5:1). */
+  .cell.out { background: transparent; }
+  .cell.out .daynum { font-weight: 400; color: var(--color-text-muted); }
   .cell.today { border-color: var(--color-accent); background: var(--color-selected); }
   .cell-head { display: flex; justify-content: flex-end; }
-  .daynum { font-size: 11px; font-weight: 600; color: var(--color-text-secondary); padding: 2px 6px; border-radius: 5px; }
-  .cell.today .daynum { background: var(--color-accent); color: #fff; }
+  .daynum { font: inherit; font-size: 11px; font-weight: 600; color: var(--color-text-secondary); padding: 2px 6px; border-radius: 5px; border: none; background: transparent; cursor: pointer; }
+  .cell.today .daynum { background: var(--color-accent); color: var(--color-on-accent); }
   .chips { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
   .chip { text-align: left; font-size: 11px; border: none; background: var(--color-selected); color: var(--color-text); padding: 3px 5px; border-radius: 4px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .chip:hover { background: var(--color-accent); color: #fff; }
+  .chip:hover { background: var(--color-accent); color: var(--color-on-accent); }
   .chip.sel { outline: 2px solid var(--color-accent); }
   .more { font-size: 10px; color: var(--color-text-secondary); }
   .chip-time { font-variant-numeric: tabular-nums; opacity: .75; margin-right: 3px; }
@@ -476,7 +487,7 @@
   .cal-mode button { background: var(--color-bg-secondary); border: 1px solid var(--color-border); color: var(--color-text); padding: 4px 12px; font-size: 12px; cursor: pointer; }
   .cal-mode button:first-child { border-radius: 6px 0 0 6px; }
   .cal-mode button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
-  .cal-mode button.active { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
+  .cal-mode button.active { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); }
   .grid.week { grid-auto-rows: minmax(260px, 1fr); }
   .not-configured { margin: 40px auto; max-width: 420px; text-align: center; color: var(--color-text-secondary); font-size: 14px; line-height: 1.5; }
   .not-configured h3 { color: var(--color-text); font-size: 16px; margin-bottom: 8px; }
@@ -494,7 +505,7 @@
   .actions { display: flex; gap: 8px; margin-top: 6px; }
   .actions .spacer { flex: 1; }
   .actions button { padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--color-border); background: var(--color-bg-secondary); color: var(--color-text); }
-  .actions .primary { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
+  .actions .primary { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); }
   .actions .primary:hover { background: var(--color-accent-hover); }
   .actions .danger { background: transparent; color: var(--color-danger); border-color: var(--color-danger); }
   .actions .ghost { background: transparent; }

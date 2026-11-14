@@ -249,8 +249,11 @@
   /* contain: paint makes this pane the containing block of position:fixed/absolute
      sender content and clips it, so a message cannot overlay the app (UI redress). */
   .message-content { flex: 1; overflow-y: auto; padding: 24px; font-size: 14px; line-height: 1.7; color: var(--color-text); contain: paint; isolation: isolate; }
-  .message-content img { max-width: 100%; height: auto; }
-  .message-content a { color: var(--color-accent); text-decoration: underline; }
+  /* The mail body is {@html}: its elements carry no Svelte scope class, so
+     these must be :global (scoped, they matched nothing and a wide image
+     pushed the reading pane into horizontal scrolling). */
+  .message-content :global(img) { max-width: 100%; height: auto; }
+  .message-content :global(a) { color: var(--color-accent); text-decoration: underline; }
   .message-content pre { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; font-size: 13px; }
   .plain-body { white-space: pre-wrap; word-wrap: break-word; }
   .empty-body { color: var(--color-text-secondary); font-style: italic; padding: 40px; text-align: center; }
