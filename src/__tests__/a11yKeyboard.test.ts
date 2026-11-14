@@ -52,7 +52,10 @@ describe('MessageList rows', () => {
     setMessages(msgs)
     selectMessage(null)
     const opened: string[] = []
-    const c = mount(MessageList, { target, props: { onSelectMessage: (id: string) => opened.push(id) } })
+    const c = mount(MessageList, { target, props: {
+      onSelectMessage: (id: string) => { opened.push(id) },
+      onCompose: () => {}, onDelete: () => {}, onArchive: () => {}, onStar: () => {}, onSearch: () => {}
+    } })
     flushSync()
     const rows = () => [...target.querySelectorAll<HTMLElement>('.message-row')]
     expect(rows().map((r) => r.tabIndex)).toEqual([0, -1, -1])
