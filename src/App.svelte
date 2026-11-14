@@ -10,10 +10,10 @@
   import Settings from './components/Settings.svelte'
   import Calendar from './components/Calendar.svelte'
   import Contacts from './components/Contacts.svelte'
-  import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward, bootstrapRefreshMode } from './store'
+  import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward, bootstrapRefreshMode, setAccounts } from './store'
   import { startRefresh, stopRefresh } from './refresh'
   import { loadMessageBody, keepLoadedBodies } from './lib/openMessage'
-  import { MailAPI } from './api'
+  import { AccountAPI, MailAPI } from './api'
   import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
   import { beginSplitDrag } from './lib/splitHandle'
   import { specialFolderPath } from './lib/specialFolders'
@@ -456,8 +456,22 @@
     loadMessages('INBOX')
   })
 
+  // The accounts used to be loaded only by the Settings dialog, so after every
+  // start activeAccountId stayed null and the refresh controller below never
+  // ran: no IDLE stream, no periodic refresh, new mail only after a reload.
+  // The startup INBOX load is already running; adopting the account here must
+  // not count as an account switch (that would reload INBOX a second time).
+  async function loadAccounts() {
+    try {
+      const saved = await AccountAPI.list()
+      setAccounts(Array.isArray(saved) ? saved : [])
+      if (prevAccountId == null) prevAccountId = getState().activeAccountId
+    } catch { /* no backend / no accounts yet */ }
+  }
+
   onMount(() => {
     bootstrapRefreshMode()
+    loadAccounts()
     loadFolders()
     loadMessages('INBOX')
     refreshQueueCount()
