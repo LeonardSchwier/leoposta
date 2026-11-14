@@ -150,6 +150,32 @@ describe('Sidebar folder tree', () => {
     expect(names()).toEqual(['New', 'Child'])
   })
 
+  it('shows each folder\'s own unread count from the folder list', () => {
+    unmount(app)
+    target.innerHTML = ''
+    app = mount(Sidebar, {
+      target,
+      props: {
+        ...handlers, onFolderSelect: () => {},
+        folders: [
+          { id: 'INBOX', name: 'INBOX', unseen: 3 },
+          { id: 'Sent', name: 'Sent', specialUse: '\\Sent', unseen: 0 },
+          { id: 'Trash', name: 'Trash', specialUse: '\\Trash', unseen: 1 },
+          { id: 'Work', name: 'Work', unseen: 7 }
+        ]
+      }
+    })
+    flushSync()
+    const badge = (label: string) =>
+      [...target.querySelectorAll('.folder-item, .folder-open')]
+        .find((e) => e.querySelector('.folder-name')!.textContent!.trim() === label)!
+        .querySelector('.badge')?.textContent?.trim() ?? null
+    expect(badge('Inbox')).toBe('3')
+    expect(badge('Sent')).toBe(null)
+    expect(badge('Trash')).toBe('1')
+    expect(badge('Work')).toBe('7')
+  })
+
   it('persists expansion state to localStorage', () => {
     toggleFor('Projects').click(); flushSync()
     unmount(app)

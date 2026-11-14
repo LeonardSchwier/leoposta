@@ -73,6 +73,9 @@ export interface Folder {
   /** The server's hierarchy delimiter ("/", "."), from /api/folders. */
   delimiter?: string | null
   noselect?: boolean
+  /** Unread / total messages (LIST-STATUS), when the server reported them. */
+  unseen?: number
+  exists?: number
 }
 
 export interface State {
@@ -177,6 +180,16 @@ export function getActiveAccount(): MailAccount | null {
 }
 export function setFolders(folders: Folder[]) {
   store.update(s => ({ ...s, folders }))
+}
+/** Change a folder's unread count right away (e.g. a message was just read);
+ * the next folder list from the server replaces it with the real number. */
+export function adjustUnseen(folderId: string, delta: number) {
+  store.update(s => ({
+    ...s,
+    folders: s.folders.map(f => (f.id === folderId && typeof f.unseen === 'number'
+      ? { ...f, unseen: Math.max(0, f.unseen + delta) }
+      : f))
+  }))
 }
 export function setActiveFolder(folder: string) {
   store.update(s => ({ ...s, activeFolder: folder, messages: [], selectedMessageId: null }))
