@@ -656,7 +656,7 @@
   .modal .repeat label.day { display: inline-flex; align-items: center; margin: 0; position: relative; }
   .repeat .day input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; inset: 0; cursor: pointer; }
   .repeat .day span { display: inline-block; min-width: 40px; text-align: center; padding: 5px 0; border: 1px solid var(--color-border); border-radius: 6px; font-size: 12px; font-weight: 500; color: var(--color-text); background: var(--color-bg-secondary); }
-  .repeat .day.on span { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+  .repeat .day.on span { background: var(--color-accent); border-color: var(--color-accent); color: var(--color-on-accent); }
   .repeat .day input:focus-visible + span { outline: 2px solid var(--color-accent); outline-offset: 1px; }
   .custom-rule { font-size: 12px; color: var(--color-text-secondary); margin: -4px 0 10px; }
   .custom-rule code { font-size: 11px; background: var(--color-bg-secondary); padding: 1px 4px; border-radius: 4px; word-break: break-all; color: var(--color-text); }
