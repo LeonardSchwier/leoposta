@@ -57,6 +57,7 @@ function makeFakeClient({ mailboxes = DEFAULT_MAILBOXES, appendError, appendResu
   const calls = []
   return {
     user: 'tester',
+    usable: true,
     calls,
     capabilities: new Map(),
     async list() {
