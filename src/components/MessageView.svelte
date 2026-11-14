@@ -28,6 +28,8 @@
   const safeHtml = $derived(currentHtml ? sanitizeHtml(currentHtml, { allowRemoteImages: allowRemote }) : '')
   const remoteBlocked = $derived(!!currentHtml && !allowRemote && hasRemoteImages(currentHtml))
   const plainSegments = $derived(current && !currentHtml && current.body ? linkify(current.body) : [])
+  // An S/MIME message body is one application/pkcs7-mime part; it cannot be shown.
+  const smime = $derived((current?.attachments || []).some(a => /^application\/(x-)?pkcs7-mime$/i.test(a.contentType) || /\.p7m$/i.test(a.filename)))
   const files = $derived((current?.attachments || []).filter(a => !a.inline))
 
   function formatFullDate(dateStr: string) {
@@ -192,6 +194,8 @@
           <div class="html-body">{@html safeHtml}</div>
         {:else if msg.body}
           <div class="plain-body">{#each plainSegments as seg, i (i)}{#if seg.href}<a href={seg.href} target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}</div>
+        {:else if smime}
+          <p class="empty-body">This message is S/MIME encrypted or signed in a form Leoposta cannot open. The protected part is attached below as {(msg.attachments || []).find(a => /p7m$/i.test(a.filename))?.filename || 'smime.p7m'}.</p>
         {:else if !msg.bodyLoaded}
           <p class="loading-body" aria-busy="true">Loading…</p>
         {:else}
@@ -224,6 +228,11 @@
           {/if}
         </div>
       {/if}
+    </div>
+  {:else}
+    <div class="no-message">
+      <div class="empty-icon">📭</div>
+      <p>This message is no longer in this folder.</p>
     </div>
   {/if}
 {:else}
