@@ -27,7 +27,8 @@ fail() { echo "FAIL: $*" >&2; exit 1; }
 # launch <log> -> sets APP, NODE, PORT
 launch() {
   XDG_DATA_HOME="$T/data" XDG_CONFIG_HOME="$T/config" XDG_CACHE_HOME="$T/cache" \
-    WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11 "$BIN" >"$T/$1" 2>&1 &
+    WEBKIT_DISABLE_DMABUF_RENDERER=1 GDK_BACKEND=x11 \
+    LEOPOSTA_GOA=off "$BIN" >"$T/$1" 2>&1 & # node inherits it: never the host's GNOME Online Accounts
   APP=$!
   for _ in $(seq 1 60); do grep -q 'window opened' "$T/$1" && break; sleep 0.5; done
   grep -q 'window opened' "$T/$1" || { cat "$T/$1"; fail "window never opened"; }
