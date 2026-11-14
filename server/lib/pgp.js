@@ -181,7 +181,7 @@ export async function savePgp(acct, { privateAsc, publicAsc, passphrase }) {
   let pubs = null
   if (publicAsc) {
     try {
-      pubs = await openpgp.readKeys({ armoredKeys: publicAsc })
+      pubs = await readArmoredKeys(publicAsc)
     } catch (e) {
       throw new Error(`Not a valid OpenPGP public key (${e.message})`)
     }
@@ -354,9 +354,31 @@ async function verifyDetached({ data, signature }) {
   }
 }
 
+const PUBLIC_BLOCK_RE = /-----BEGIN PGP PUBLIC KEY BLOCK-----[\s\S]*?-----END PGP PUBLIC KEY BLOCK-----/g
+
+/** Every key in a text with one or more armored public key blocks (one
+ * armor block may hold several keys; openpgp reads one block per call). */
+async function readArmoredKeys(text, { lenient = false } = {}) {
+  const blocks = String(text).match(PUBLIC_BLOCK_RE)
+  if (!blocks) {
+    if (lenient) return []
+    throw new Error('no -----BEGIN PGP PUBLIC KEY BLOCK----- found')
+  }
+  const keys = []
+  for (const b of blocks) {
+    try {
+      keys.push(...await openpgp.readKeys({ armoredKeys: b }))
+    } catch (e) {
+      // One damaged entry in the stored keyring must not hide the others.
+      if (!lenient) throw e
+    }
+  }
+  return keys
+}
+
 function readPublicKeys() {
   if (!fs.existsSync(PGP_PUBLIC_FILE)) return Promise.resolve([])
-  return openpgp.readKeys({ armoredKeys: fs.readFileSync(PGP_PUBLIC_FILE, 'utf-8') }).catch(() => [])
+  return readArmoredKeys(fs.readFileSync(PGP_PUBLIC_FILE, 'utf-8'), { lenient: true }).catch(() => [])
 }
 
 // RFC 3156 decrypted payload is a MIME entity; an inline message is just text.
