@@ -32,6 +32,11 @@ export interface MailMessage {
   attachments?: Attachment[]
   folder: string
   headers: Record<string, string>
+  /** Message-ID and References of the opened message (for reply threading). */
+  messageId?: string
+  references?: string[]
+  /** Reply-To addresses ("Name <addr>"), when the message has that header. */
+  replyTo?: string[]
 }
 
 export interface Attachment {

@@ -144,10 +144,17 @@ router.get('/message/:id', async (req, res) => {
         let body = ''
         let bodyHtml = ''
         const attachments = []
+        // Threading ids, for replies (In-Reply-To / References).
+        let messageId = msg.envelope?.messageId || ''
+        let references = []
+        let replyTo = []
 
         if (msg.source) {
           try {
             const parsed = await parseMessageSource(msg.source)
+            if (parsed.messageId) messageId = parsed.messageId
+            if (parsed.references) references = [].concat(parsed.references)
+            if (parsed.replyTo) replyTo = parsed.replyTo.value.filter(a => a.address).map(a => (a.name ? `"${a.name.replace(/(["\\])/g, '\\$1')}" <${a.address}>` : a.address))
             if (parsed.html) bodyHtml = parsed.html
             if (parsed.text) body = parsed.text
             attachments.push(...listAttachments(parsed.attachments))
@@ -186,6 +193,7 @@ router.get('/message/:id', async (req, res) => {
           date: messageDate(msg),
           flags: normalizeFlags(msg.flags),
           attachments: finalAttachments,
+          messageId, references, replyTo,
           folder, headers: {}
         })
       } finally {

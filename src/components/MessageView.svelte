@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { store, getState, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, deleteMessage, updateMessage, selectMessage } from '../store'
+  import { store, getState, deleteMessage, updateMessage, selectMessage } from '../store'
+  import { startReply } from '../lib/reply'
   import { sanitizeHtml, hasRemoteImages } from '../lib/sanitizeHtml'
   import { MailAPI } from '../api'
   import { downloadAttachment } from '../lib/attachmentDownload'
@@ -32,21 +33,19 @@
     const msg = getCurrentMessage()
     if (!msg) return
     if (propReply) { propReply(); return }
-    setComposeTo([msg.from])
-    setComposeSubject(`Re: ${msg.subject}`)
-    setComposeReplyTo(msg.id)
-    setComposeOriginalMessage(msg)
-    setComposing(true)
+    void startReply(msg, 'reply')
+  }
+
+  function handleReplyAll() {
+    const msg = getCurrentMessage()
+    if (!msg) return
+    void startReply(msg, 'replyAll')
   }
 
   function handleForward() {
     const msg = getCurrentMessage()
     if (!msg) return
-    setComposeTo([])
-    setComposeSubject(`Fwd: ${msg.subject}`)
-    setComposeForward(true)
-    setComposeOriginalMessage(msg)
-    setComposing(true)
+    void startReply(msg, 'forward')
   }
 
   function handleDelete() {
@@ -119,6 +118,7 @@
           {#if hasFlag(msg.flags || [], 'Flagged')}⭐{:else}☆{/if}
         </button>
         <button class="action-btn" onclick={handleReply} title="Reply" aria-label="Reply">↩ Reply</button>
+        <button class="action-btn" onclick={handleReplyAll} title="Reply all" aria-label="Reply all">↩↩ Reply all</button>
         <button class="action-btn" onclick={handleForward} title="Forward" aria-label="Forward">↪ Forward</button>
         <button class="action-btn icon" onclick={handleArchive} title="Archive" aria-label="Archive">📦</button>
         <button class="action-btn icon danger" onclick={handleDelete} title="Delete" aria-label="Delete">🗑</button>
