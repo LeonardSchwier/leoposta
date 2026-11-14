@@ -81,3 +81,16 @@ describe('remote image blocking cannot be bypassed by URL spelling', () => {
     expect(el('<img src="https://img.example/a.png">', { allowRemoteImages: true }).querySelector('img')!.getAttribute('src')).toBe('https://img.example/a.png')
   })
 })
+
+describe('sanitizeHtml links', () => {
+  it('forces target=_blank on every link, overriding _self and _top', () => {
+    const d = el('<a href="https://a.test/" target="_self">a</a><a href="https://b.test/" target="_top">b</a><a href="https://c.test/">c</a>')
+    for (const a of Array.from(d.querySelectorAll('a'))) {
+      expect(a.getAttribute('target')).toBe('_blank')
+      expect(a.getAttribute('rel')).toBe('noopener noreferrer')
+    }
+  })
+  it('drops a target on an anchor without href', () => {
+    expect(el('<a target="_top">x</a>').querySelector('a')!.hasAttribute('target')).toBe(false)
+  })
+})

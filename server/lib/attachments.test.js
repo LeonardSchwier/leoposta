@@ -210,3 +210,79 @@ test('contentDispositionHeader survives a lone surrogate and drops bidi controls
   const bidi = contentDispositionHeader('invoice\u202Efdp.exe')
   assert.equal(bidi, 'attachment; filename="invoicefdp.exe"')
 })
+
+const RELATED = crlf([
+  'From: a@example.test',
+  'Subject: logo',
+  'MIME-Version: 1.0',
+  'Content-Type: multipart/mixed; boundary="m"',
+  '',
+  '--m',
+  'Content-Type: multipart/related; boundary="r"',
+  '',
+  '--r',
+  'Content-Type: text/html; charset=utf-8',
+  '',
+  '<p><img src="cid:logo@x"></p>',
+  '--r',
+  'Content-Type: image/png; name="logo.png"',
+  'Content-ID: <logo@x>',
+  'Content-Disposition: inline; filename="logo.png"',
+  'Content-Transfer-Encoding: base64',
+  '',
+  Buffer.from('png').toString('base64'),
+  '--r--',
+  '--m',
+  'Content-Type: application/pdf; name="real.pdf"',
+  'Content-Disposition: attachment; filename="real.pdf"',
+  'Content-Transfer-Encoding: base64',
+  '',
+  Buffer.from('%PDF').toString('base64'),
+  '--m--',
+  ''
+])
+
+test('an image embedded in the HTML body is marked inline; a real attachment is not', async () => {
+  const parsed = await parseMessageSource(RELATED)
+  assert.ok(parsed.html.includes('data:image/png;base64,'), 'mailparser inlines the cid image')
+  const list = listAttachments(parsed.attachments)
+  assert.deepEqual(list.map((a) => [a.id, a.filename, a.inline ?? false]), [['0', 'logo.png', true], ['1', 'real.pdf', false]])
+})
+
+test('bodyStructureAttachments does not count an image embedded in multipart/related', () => {
+  const root = {
+    type: 'multipart/mixed',
+    childNodes: [
+      { type: 'multipart/related', childNodes: [
+        { part: '1.1', type: 'text/html' },
+        { part: '1.2', type: 'image/png', id: '<logo@x>', disposition: 'inline', dispositionParameters: { filename: 'logo.png' } }
+      ] },
+      { part: '2', type: 'application/pdf', disposition: 'attachment', dispositionParameters: { filename: 'real.pdf' } }
+    ]
+  }
+  assert.deepEqual(bodyStructureAttachments(root).map((a) => a.filename), ['real.pdf'])
+})
+
+// ── a multipart whose parts use another boundary than declared ──────────────
+
+const WRONG_BOUNDARY = crlf([
+  'From: a@example.test', 'Subject: wrong boundary', 'MIME-Version: 1.0',
+  'Content-Type: multipart/mixed;', '\tboundary="declared"', '',
+  '--other', 'Content-Type: text/plain', '', 'Visible despite the wrong boundary.',
+  '--other', 'Content-Type: application/octet-stream', 'Content-Disposition: attachment; filename="f.bin"', '', 'xyz',
+  '--other--', ''
+])
+
+test('a multipart whose parts use an undeclared boundary still shows its text and attachments', async () => {
+  const parsed = await parseMessageSource(WRONG_BOUNDARY)
+  assert.equal(parsed.text.trim(), 'Visible despite the wrong boundary.')
+  assert.deepEqual(parsed.attachments.map((a) => a.filename), ['f.bin'])
+  // The download route parses the same way, so ids match.
+  assert.equal(listAttachments((await parseMessageSource(WRONG_BOUNDARY)).attachments)[0].id, '0')
+})
+
+test('a well-formed multipart with only a preamble is not rewritten', async () => {
+  const raw = crlf(['Content-Type: multipart/mixed; boundary="b"', '', 'just a preamble', '--b--', ''])
+  const parsed = await parseMessageSource(raw)
+  assert.ok(!parsed.text)
+})

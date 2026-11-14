@@ -18,6 +18,13 @@ export interface MailMessage {
   subject: string
   body: string
   bodyHtml?: string
+  /** List preview text (server: lib/snippet.js); the full body comes on open. */
+  snippet?: string
+  hasAttachment?: boolean
+  /** Set once the full message has been fetched (lib/openMessage.ts). */
+  bodyLoaded?: boolean
+  /** Why the full message could not be shown (deleted on the server, ...). */
+  loadError?: string
   pgp?: {
     encrypted?: boolean
     decrypted?: boolean
@@ -49,6 +56,8 @@ export interface Attachment {
   contentType: string
   size: number
   contentId?: string
+  /** An image embedded in the HTML body; shown there, not as a download. */
+  inline?: boolean
 }
 
 export interface MailAccount {

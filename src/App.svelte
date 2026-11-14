@@ -14,6 +14,7 @@
   import { startReply } from './lib/reply'
   import { startRefresh, stopRefresh } from './refresh'
   import { loadAccounts } from './lib/accountsBootstrap'
+  import { loadMessageBody, keepLoadedBodies } from './lib/openMessage'
   import { ApiError, MailAPI } from './api'
   import MovePicker from './components/MovePicker.svelte'
   import { runMessageAction, hasFlag, type MessageAction } from './lib/messageActions'
@@ -197,13 +198,14 @@
     if (!background) setIsLoading(true)
     try {
       const data = await MailAPI.messages(folder, PAGE)
-      if (!current()) return
+      if (!current() || getState().activeFolder !== folder) return
       if (data.messages) {
         // Rules moved or flagged new mail on the server: other folders' counts changed.
         if (data.ruleActions > 0) loadFolders()
         const total = typeof data.total === 'number' ? data.total : data.messages.length
         const prev = getState().messages
-        setMessages(background ? mergeRefreshed(prev, keepOlderPages(prev, data.messages, total)) : data.messages)
+        // Bodies already opened are kept either way: the list response has none.
+        setMessages(background ? mergeRefreshed(prev, keepOlderPages(prev, data.messages, total)) : keepLoadedBodies(prev, data.messages))
         listTotal = total
         setUnreadCount(data.messages.filter((m: any) =>
           !m.flags?.includes('\\Seen') && !m.flags?.includes('Seen')
@@ -430,37 +432,21 @@
       updateMessage(id, { flags: [...(opened.flags || []), '\\Seen'] })
       adjustUnseen(folder, -1)
     }
-    MailAPI.message(id, folder).then(data => {
-      if (data) {
-        // Decrypted PGP plaintext must not outlive the unlocked key: it is never
-        // written to the offline cache.
-        if (!data.pgp?.decrypted) putMessageCache({ key: `${folder}:${id}`, folder, id, message: data, full: true }).catch(() => {})
-        updateMessage(id, {
-          body: data.body,
-          bodyHtml: data.bodyHtml,
-          pgp: data.pgp,
-          attachments: data.attachments,
-          cc: data.cc,
-          bcc: data.bcc
-        })
-        // Opening marked it \Seen on the server: the folder's unread count changed.
-        if (wasUnread) loadFolders()
-      }
-    }).catch(e => {
-      if (e instanceof ApiError && e.status === 404) { messageGone(id); return }
-      // Offline: load the full message from the local cache (if it was ever opened).
-      getMessageCache(folder, id).then(c => {
-        if (c?.full && c.message) {
-          updateMessage(id, {
-            body: c.message.body,
-            bodyHtml: c.message.bodyHtml,
-            pgp: c.message.pgp,
-            attachments: c.message.attachments,
-            cc: c.message.cc,
-            bcc: c.message.bcc
-          })
-        }
-      }).catch(() => console.error('Failed to load message:', e))
+    loadMessageBody(id, {
+      fetchMessage: (mid, f) => MailAPI.message(mid, f),
+      context: () => getState(),
+      update: updateMessage,
+      // Decrypted PGP plaintext must not outlive the unlocked key: it is never
+      // written to the offline cache.
+      cachePut: (f, mid, message) => message?.pgp?.decrypted
+        ? Promise.resolve()
+        : putMessageCache({ key: `${f}:${mid}`, folder: f, id: mid, message, full: true }),
+      cacheGet: (f, mid) => getMessageCache(f, mid),
+      // Deleted on the server (another client): drop the row and say so.
+      onGone: messageGone
+    }).then(() => {
+      // Opening marked it \Seen on the server: the folder's unread count changed.
+      if (wasUnread) loadFolders()
     })
   }
 

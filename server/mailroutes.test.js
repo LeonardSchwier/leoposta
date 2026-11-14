@@ -290,6 +290,53 @@ test('the message and list responses carry the flags the server reported (a Set)
   assert.deepEqual(byId['6'], [])
 })
 
+test('opening a message that was deleted on the server is a 404 that keeps the connection', async () => {
+  const c = useClient({ messages: [message(5)] })
+  const res = await getMessage(9)
+  assert.equal(res.status, 404)
+  assert.equal(res.body.error, 'message_not_found')
+  assert.ok(!names(c).includes('logout'), 'a missing message must not drop the shared IMAP connection')
+  assert.ok(names(c).includes('release'), 'the mailbox lock is released')
+})
+
+test('a message is fetched by UID without listing every UID in the mailbox', async () => {
+  const c = useClient({ messages: [message(5), message(6)] })
+  const res = await getMessage(6)
+  assert.equal(res.status, 200)
+  assert.equal(res.body.subject, 'Subject 6')
+  assert.ok(!names(c).includes('fetch'), 'no FETCH 1:* to map UIDs to sequence numbers')
+  assert.equal(find(c, 'fetchOne')[3]?.uid, true)
+})
+
+test('a bad message id is rejected with 400 before the server is touched', async () => {
+  const c = useClient({ messages: [message(5)] })
+  for (const id of ['abc', '0', '5.5']) assert.equal((await getMessage(id)).status, 400, id)
+  assert.deepEqual(names(c), [])
+})
+
+test('the opened message reports \\Seen once it has been marked read', async () => {
+  useClient({ messages: [message(5, { flags: [] })] })
+  const res = await getMessage(5)
+  assert.deepEqual(res.body.flags, ['\\Seen'])
+})
+
+test('a read-only mailbox that refuses \\Seen still opens the message, reported unread', async () => {
+  useClient({ messages: [message(5, { flags: [] })], addResult: false })
+  const res = await getMessage(5)
+  assert.equal(res.status, 200)
+  assert.equal(res.body.subject, 'Subject 5')
+  assert.deepEqual(res.body.flags, [])
+})
+
+test('a STORE that throws (NO [READ-ONLY]) does not fail opening the message', async () => {
+  const c = useClient({ messages: [message(5, { flags: [] })] })
+  c.messageFlagsAdd = async () => { throw new Error('NO [READ-ONLY] Mailbox is read-only') }
+  const res = await getMessage(5)
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.body.flags, [])
+  assert.ok(!names(c).includes('logout'))
+})
+
 // ── received attachments ────────────────────────────────────────────────────
 
 const MIXED = crlf([
