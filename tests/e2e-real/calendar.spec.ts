@@ -67,8 +67,9 @@ test.describe('calendar', () => {
     await cell(app, day).locator('.chip', { hasText: 'Dentist moved' }).click()
     await app.getByLabel('Target calendar').selectOption({ label: 'Work' })
     await app.getByRole('button', { name: 'Save changes' }).click()
+    // Written to Work, then removed from Personal.
+    await expect.poll(async () => Object.values(await dav.list(cal)).length).toBe(0)
     await expect(cell(app, day).locator('.chip', { hasText: 'Dentist moved' })).toHaveCount(1)
-    expect(Object.values(await dav.list(cal))).toHaveLength(0)
     expect(Object.values(await dav.list(`${dav.base}work/`))).toHaveLength(1)
 
     // Delete
@@ -179,6 +180,7 @@ test.describe('calendar', () => {
       'BEGIN:VEVENT', 'UID:imp-b', 'DTSTAMP:20260101T000000Z', `DTSTART:${d(13)}T120000Z`, `DTEND:${d(13)}T130000Z`, 'SUMMARY:Imported B – ünïcode', 'END:VEVENT',
       'END:VCALENDAR', ''].join('\r\n')
     await openCalendar(app)
+    await expect(app.locator('.cal-item', { hasText: 'Personal' })).toBeVisible()
     await app.locator('input[type=file][accept*=".ics"]').setInputFiles({ name: 'events.ics', mimeType: 'text/calendar', buffer: Buffer.from(file, 'utf8') })
     await expect(app.getByTestId('toast')).toContainText('Imported 2 of 2')
     await expect(app.locator('.chip', { hasText: 'Imported A' })).toBeVisible()

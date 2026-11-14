@@ -101,3 +101,13 @@ test('parseCard: vCard 3.0 with only N gets a display name', async () => {
   const { parseCard } = await import('./vcf.js')
   assert.equal(parseCard('BEGIN:VCARD\r\nVERSION:3.0\r\nN:Doe;Jane;;;\r\nEND:VCARD').name, 'Jane Doe')
 })
+
+test('parseVcf: a card without FN gets one from N (servers reject cards without FN)', async () => {
+  const { parseVcf, parseCard } = await import('./vcf.js')
+  const { cards, errors } = parseVcf('BEGIN:VCARD\r\nVERSION:3.0\r\nUID:x1\r\nN:Suzuki;Hanako;;;\r\nEMAIL:h@example.test\r\nEND:VCARD\r\n')
+  assert.deepEqual(errors, [])
+  assert.match(cards[0].raw, /\r\nFN:Hanako Suzuki\r\nEND:VCARD\r\n$/)
+  assert.equal(parseCard(cards[0].raw).name, 'Hanako Suzuki')
+  const withFn = parseVcf('BEGIN:VCARD\r\nVERSION:4.0\r\nUID:x2\r\nFN:Kept\r\nEND:VCARD\r\n').cards[0].raw
+  assert.equal(withFn.match(/FN:/g).length, 1)
+})
