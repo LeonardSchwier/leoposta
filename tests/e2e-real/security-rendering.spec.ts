@@ -25,6 +25,13 @@ const PAYLOADS: Record<string, string> = {
 }
 
 test.describe('XSS payloads in HTML mail', () => {
+  // With the app's CSP (qa/security 8378ceb), Chromium reports the payload's
+  // inline handlers and <base> as CSP violations already while DOMPurify
+  // parses the mail into its inert document (that document inherits the
+  // page's policy; verified for DOMParser, createHTMLDocument and <template>).
+  // Those reports are the CSP refusing the payload, not app errors; the
+  // tests below still require that nothing ran and nothing reached the page.
+  test.use({ allowApiErrors: [[/Executing inline event handler violates the following Content Security Policy/, /Setting the document's base URI to '[^']*' violates the following Content Security Policy directive: "base-uri 'none'"/], { scope: 'test' }] })
   for (const [name, html] of Object.entries(PAYLOADS)) {
     test(`does not execute: ${name}`, async ({ mailbox, app }) => {
       const external: string[] = []
