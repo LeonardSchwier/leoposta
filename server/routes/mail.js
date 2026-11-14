@@ -1,11 +1,14 @@
 import { Router } from 'express'
-import { state, resolveAccount } from '../lib/state.js'
+import { state, resolveAccount, saveRuleCursors } from '../lib/state.js'
 import { getPoolFor } from '../lib/imap.js'
 import { normalizeFlags, parseFromAddr, toISO, messageDate } from '../lib/address.js'
 import { messageRange } from '../lib/mailRange.js'
 import { processPgp, findPgpPayload } from '../lib/pgp.js'
-import { applyRules } from '../lib/rules.js'
-import { MailActionError, moveChecked, parseUid, removeMessage } from '../lib/removal.js'
+import { runRulesOnNewMail } from '../lib/rules.js'
+import {
+  MailActionError, MessageNotFoundError, MOVE_TARGETS, ensureSpecialUsePath, moveChecked, parseUid,
+  removeMessage, requireMessage
+} from '../lib/removal.js'
 import { changeFlags, parseFlagList } from '../lib/flags.js'
 import { folderParam, INVALID_FOLDER, toFolderEntry } from '../lib/folders.js'
 import {
@@ -19,6 +22,17 @@ import {
 } from '../lib/attachments.js'
 
 const router = Router()
+
+// A refusal by the server is returned as a value, not thrown: an error thrown
+// inside pool.run makes the pool log the shared IMAP client out. A message that
+// is gone (deleted by another client) is a 404.
+function asOutcome(err) {
+  if (err instanceof MessageNotFoundError) return { status: 404, error: 'message_not_found' }
+  if (err instanceof MailActionError) return { status: 500, error: err.message }
+  throw err
+}
+const answer = (res, outcome, ok) =>
+  outcome.error ? res.status(outcome.status || 500).json({ error: outcome.error }) : res.json(ok)
 
 // GET /api/messages
 router.get('/messages', async (req, res) => {
@@ -38,6 +52,15 @@ router.get('/messages', async (req, res) => {
     await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
       try {
+        // Rules act on new Inbox mail on the server (lib/rules.js) before it is listed.
+        let ruleActions = 0
+        if (String(lock.path || folder).toUpperCase() === 'INBOX') {
+          const done = await runRulesOnNewMail(client, {
+            key: String(acct.email).toLowerCase(), rules: state.rules,
+            cursors: state.ruleCursors, save: saveRuleCursors
+          })
+          ruleActions = done.length
+        }
         const mailbox = client.mailbox
         const exists = mailbox.exists || 0
         const unreadCount = (mailbox.unseen != null) ? mailbox.unseen
@@ -45,7 +68,7 @@ router.get('/messages', async (req, res) => {
                         : (mailbox.recent || 0)
         const range = messageRange(exists, limitN, offsetN)
         if (range.empty) {
-          res.json({ messages: applyRules([], state.rules), unreadCount })
+          res.json({ messages: [], unreadCount, ruleActions })
           return
         }
         const end = range.end
@@ -92,7 +115,7 @@ router.get('/messages', async (req, res) => {
         }
 
         messages.sort((a, b) => new Date(b.date) - new Date(a.date))
-        res.json({ messages: applyRules(messages, state.rules), unreadCount })
+        res.json({ messages, unreadCount, ruleActions })
       } finally {
         lock.release()
       }
@@ -116,30 +139,28 @@ router.get('/message/:id', async (req, res) => {
     }
     const pool = getPoolFor(acct)
 
+    const uid = parseUid(id)
+    if (uid === null) return res.status(400).json({ error: 'invalid message id' })
+
+    // "Not found" is returned as a value, not thrown: an error thrown inside
+    // pool.run makes the pool log the shared IMAP client out (see asOutcome).
     await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
       try {
-        const msg = await (async () => {
-          const uidResult = client.fetch('1:*', { uid: true }, { op: 'FETCH' })
-          const uidMap = new Map()
-          let seq = 0
-          for await (const m of uidResult) {
-            if (m.uid) uidMap.set(m.uid.toString(), ++seq)
-          }
-          const seqNum = uidMap.get(id)
-          if (!seqNum) throw new Error('Message UID not found in mailbox')
-
-          return client.fetchOne(seqNum.toString(), {
-            uid: true, internalDate: true, from: true, to: true, cc: true,
-            bcc: true, subject: true, flags: true, envelope: true,
-            bodyStructure: true, source: true
-          })
-        })()
+        const msg = await client.fetchOne(String(uid), {
+          uid: true, internalDate: true, flags: true, envelope: true,
+          bodyStructure: true, source: true
+        }, { uid: true })
+        if (!msg) {
+          res.status(404).json({ error: 'message_not_found' })
+          return
+        }
 
         const from = parseFromAddr(msg.from?.[0] || msg.envelope?.from?.[0])
         const to = (msg.to || msg.envelope?.to || []).map(t => t.address)
         const cc = (msg.cc || msg.envelope?.cc || []).map(c => c.address)
-        const bcc = (msg.bcc || []).map(b => b.address)
+        // IMAP envelopes carry Bcc only for messages that kept the header (drafts, sent copies).
+        const bcc = (msg.envelope?.bcc || []).map(b => b.address)
 
         let body = ''
         let bodyHtml = ''
@@ -219,7 +240,9 @@ router.get('/folders', async (req, res) => {
     const pool = getPoolFor(acct)
 
     const folders = await pool.run(async (client) => {
-      const mailboxes = await client.list()
+      // STATUS per mailbox (LIST-STATUS where the server has it): the sidebar
+      // shows each folder's real unread count, not the count of the open list.
+      const mailboxes = await client.list({ statusQuery: { messages: true, unseen: true } })
       return mailboxes.map(toFolderEntry)
     })
     res.json({ folders })
@@ -278,7 +301,7 @@ router.get('/search', async (req, res) => {
           })
         }
 
-        res.json({ messages: applyRules(messages, state.rules), total: searchUids.length })
+        res.json({ messages, total: searchUids.length })
       } finally {
         lock.release()
       }
@@ -305,22 +328,19 @@ router.post('/message/:id/flags', async (req, res) => {
     if (add.length === 0 && remove.length === 0) return res.json({ success: true })
     const pool = getPoolFor(acct)
 
-    // A refusal by the server is returned as a value, not thrown: an error thrown
-    // inside pool.run makes the pool log the shared IMAP client out.
     const outcome = await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
       try {
+        await requireMessage(client, uid)
         await changeFlags(client, uid, { add, remove })
         return {}
       } catch (err) {
-        if (err instanceof MailActionError) return { error: err.message }
-        throw err
+        return asOutcome(err)
       } finally {
         lock.release()
       }
     })
-    if (outcome.error) return res.status(500).json({ error: outcome.error })
-    res.json({ success: true })
+    answer(res, outcome, { success: true })
   } catch (err) {
     console.error('Error updating flags:', err)
     res.status(500).json({ error: err.message })
@@ -340,37 +360,42 @@ router.delete('/message/:id', async (req, res) => {
     if (!acct) return res.status(400).json({ error: 'No account configured' })
     const pool = getPoolFor(acct)
 
-    // A refusal by the server is returned as a value, not thrown: an error thrown
-    // inside pool.run makes the pool log the shared IMAP client out.
     const outcome = await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
       try {
+        await requireMessage(client, uid)
         // lock.path is the mailbox the server selected (namespace prefix applied);
         // `folder` is only what the client called it.
         return await removeMessage(client, lock.path || folder, uid)
       } catch (err) {
-        if (err instanceof MailActionError) return { error: err.message }
-        throw err
+        return asOutcome(err)
       } finally {
         lock.release()
       }
     })
-    if (outcome.error) return res.status(500).json({ error: outcome.error })
-    res.json({ success: true, ...outcome })
+    answer(res, outcome, { success: true, ...outcome })
   } catch (err) {
     console.error('Error deleting message:', err)
     res.status(500).json({ error: err.message })
   }
 })
 
-// POST /api/message/:id/move
+// POST /api/message/:id/move  { from, to }  or  { from, toSpecialUse: "\\Archive" }
+// `toSpecialUse` (\Archive, \Junk, \Trash, \Inbox) moves to the server's
+// mailbox with that RFC 6154 flag, whatever it is called ("Archive",
+// "INBOX.Archive", "[Gmail]/All Mail"), creating it when there is none.
+// Answers { success, folder } with the real destination path.
 router.post('/message/:id/move', async (req, res) => {
   try {
     const uid = parseUid(req.params.id)
     if (uid === null) return res.status(400).json({ error: 'invalid message id' })
     const body = req.body || {}
     const from = folderParam(body.from)
-    const to = folderParam(body.to, null)
+    const special = body.toSpecialUse
+    if (special !== undefined && !Object.hasOwn(MOVE_TARGETS, special)) {
+      return res.status(400).json({ error: `toSpecialUse must be one of ${Object.keys(MOVE_TARGETS).join(', ')}` })
+    }
+    const to = special !== undefined ? '' : folderParam(body.to, null)
     if (from === null || to === null) return res.status(400).json({ error: `from/to: ${INVALID_FOLDER}` })
     const acct = resolveAccount(req)
     if (!acct) return res.status(400).json({ error: 'No account configured' })
@@ -379,17 +404,22 @@ router.post('/message/:id/move', async (req, res) => {
     const outcome = await pool.run(async (client) => {
       const lock = await client.getMailboxLock(from)
       try {
-        await moveChecked(client, uid, to)
-        return {}
+        await requireMessage(client, uid)
+        const target = special === '\\Inbox' ? 'INBOX'
+          : special !== undefined ? await ensureSpecialUsePath(client, special, MOVE_TARGETS[special])
+          : to
+        if (target === (lock.path || from)) {
+          throw new MailActionError(`The message is already in ${target}`)
+        }
+        await moveChecked(client, uid, target)
+        return { folder: target }
       } catch (err) {
-        if (err instanceof MailActionError) return { error: err.message }
-        throw err
+        return asOutcome(err)
       } finally {
         lock.release()
       }
     })
-    if (outcome.error) return res.status(500).json({ error: outcome.error })
-    res.json({ success: true })
+    answer(res, outcome, { success: true, folder: outcome.folder })
   } catch (err) {
     console.error('Error moving message:', err)
     res.status(500).json({ error: err.message })

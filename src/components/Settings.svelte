@@ -5,9 +5,10 @@
   } from '../store'
   import type { MailAccount } from '../store'
   import type { RefreshMode } from '../refresh'
-  import { RULE_FIELDS, RULE_OPERATORS, RULE_ACTIONS } from '../lib/rules'
   import { pgpUnlock, pgpLock } from '../lib/pgp'
   import { accountSavePayload } from '../lib/accountForm'
+  import { RULE_FIELDS, RULE_OPERATORS, RULE_ACTIONS, ruleProblem } from '../lib/rules'
+  import { moveTargets } from '../lib/moveTargets'
   import type { Rule } from '../lib/rules'
 
   let { onClose } = $props()
@@ -94,9 +95,11 @@
   }
 
   async function saveRules() {
-    rulesLoading = true
     rulesMsg = ''
     rulesErr = ''
+    const problem = rules.map((r, i) => ruleProblem(r, i)).find(Boolean)
+    if (problem) { rulesErr = problem; return }
+    rulesLoading = true
     try {
       const r = await apiFetch('/api/rules', {
         method: 'PUT',
@@ -280,7 +283,7 @@
     
     <div class="modal-body">
       {#if activeTab === 'rules'}
-        <p class="hint">Rules run on every message fetch. The first matching rule wins.</p>
+        <p class="hint">Rules run on the server for new mail arriving in the Inbox. The first matching rule wins.</p>
         {#if rulesMsg}<div class="error-banner" style="background:rgba(52,199,89,0.1);border-color:var(--color-success);color:var(--color-success)">{rulesMsg}</div>{/if}
         {#if rulesErr}<div class="error-banner">{rulesErr}</div>{/if}
 
@@ -295,24 +298,34 @@
             </div>
             {#each rule.conditions as cond, ci (ci)}
               <div class="rule-cond">
-                <select bind:value={cond.field}>
+                <select bind:value={cond.field} aria-label="Condition field">
                   {#each RULE_FIELDS as f (f.value)}<option value={f.value}>{f.label}</option>{/each}
                 </select>
-                <select bind:value={cond.operator}>
+                <select bind:value={cond.operator} aria-label="Condition operator">
                   {#each RULE_OPERATORS as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
                 </select>
-                <input type="text" bind:value={cond.value} placeholder="value" />
+                <input type="text" bind:value={cond.value} placeholder="value" aria-label="Condition value" />
                 <button class="btn-tiny" onclick={() => rule.conditions = rule.conditions.filter((_, j) => j !== ci)} title="Remove condition" aria-label="Remove condition">✕</button>
               </div>
             {/each}
             <button class="btn-secondary btn-tiny" onclick={() => rule.conditions = [...rule.conditions, { field: 'subject', operator: 'contains', value: '' }]}>+ Add condition</button>
             <div class="rule-action">
               <span class="rule-arrow">→</span>
-              <select bind:value={rule.action.type}>
+              <select bind:value={rule.action.type} aria-label="Rule action">
                 {#each RULE_ACTIONS as a (a.value)}<option value={a.value}>{a.label}</option>{/each}
               </select>
-              {#if rule.action.type !== 'flag'}
-                <input type="text" bind:value={rule.action.value} placeholder={rule.action.type === 'move' ? 'folder path' : 'label name'} />
+              {#if rule.action.type === 'move'}
+                <select bind:value={rule.action.value} aria-label="Move to folder">
+                  <option value={undefined} disabled>Choose a folder…</option>
+                  {#if rule.action.value && !moveTargets($store.folders, '').some(t => t.path === rule.action.value)}
+                    <option value={rule.action.value}>{rule.action.value}</option>
+                  {/if}
+                  {#each moveTargets($store.folders, 'INBOX') as t (t.path)}
+                    <option value={t.path}>{'\u00a0\u00a0'.repeat(t.depth)}{t.label}</option>
+                  {/each}
+                </select>
+              {:else if rule.action.type === 'label'}
+                <input type="text" bind:value={rule.action.value} placeholder="label (one word)" aria-label="Label" />
               {/if}
             </div>
           </div>

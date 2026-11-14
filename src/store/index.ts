@@ -4,6 +4,7 @@ import { setActiveAccountEmail } from '../api'
 import { loadPersistedRefreshMode, saveRefreshMode } from '../refresh'
 import type { Signature } from '../lib/signature'
 import type { RefreshMode } from '../refresh'
+import type { OutboundAttachment } from '../lib/attachments'
 
 export interface MailMessage {
   id: string
@@ -68,8 +69,20 @@ export interface MailAccount {
 export interface Folder {
   id: string
   name: string
-  parentId?: string
+  parentId?: string | null
   specialUse?: string
+  delimiter?: string | null
+  noselect?: boolean
+  /** Unread / total messages, from the server's STATUS (absent when unknown). */
+  unseen?: number
+  exists?: number
+}
+
+/** A draft reopened from the Drafts mailbox: saving or sending it replaces /
+ * removes that server copy. */
+export interface ComposeDraft {
+  uid: string
+  attachments: OutboundAttachment[]
 }
 
 export interface State {
@@ -92,6 +105,7 @@ export interface State {
   composeReplyTo: string | null
   composeForward: boolean
   composeOriginalMessage: MailMessage | null
+  composeDraft: ComposeDraft | null
   isLoading: boolean
   error: string | null
   threadGrouping: boolean
@@ -118,6 +132,7 @@ const initialState: State = {
   composeReplyTo: null,
   composeForward: false,
   composeOriginalMessage: null,
+  composeDraft: null,
   isLoading: false,
   error: null,
   threadGrouping: true,
@@ -239,6 +254,18 @@ export function bootstrapRefreshMode() {
 export function setComposeOriginalMessage(message: MailMessage | null) {
   store.update(s => ({ ...s, composeOriginalMessage: message }))
 }
+export function setComposeDraft(draft: ComposeDraft | null) {
+  store.update(s => ({ ...s, composeDraft: draft }))
+}
+/** Put a message back into the list at `index` (an action on it failed). */
+export function restoreMessage(message: MailMessage, index: number) {
+  store.update(s => {
+    if (s.messages.some(m => m.id === message.id)) return s
+    const messages = [...s.messages]
+    messages.splice(Math.min(Math.max(0, index), messages.length), 0, message)
+    return { ...s, messages }
+  })
+}
 export function setUnreadCount(count: number) {
   store.update(s => ({ ...s, unreadCount: count }))
 }
@@ -260,7 +287,8 @@ export function clearCompose() {
     composeScheduled: null,
     composeReplyTo: null,
     composeForward: false,
-    composeOriginalMessage: null
+    composeOriginalMessage: null,
+    composeDraft: null
   }))
 }
 export function setThreadGrouping(enabled: boolean) {

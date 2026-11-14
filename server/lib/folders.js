@@ -36,7 +36,9 @@ export function toFolderEntry(mb) {
     delimiter: mb.delimiter || null,
     noselect: flags.has('\\Noselect') || flags.has('\\NonExistent'),
     specialUse: mb.specialUse || undefined,
-    exists: mb.exists,
-    unseen: mb.unseen
+    // From list({ statusQuery }); absent for \\Noselect mailboxes and when the
+    // server refused STATUS for that mailbox (status.error).
+    exists: typeof mb.status?.messages === 'number' ? mb.status.messages : undefined,
+    unseen: typeof mb.status?.unseen === 'number' ? mb.status.unseen : undefined
   }
 }

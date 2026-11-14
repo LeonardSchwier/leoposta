@@ -44,10 +44,12 @@
   }
   
   const activeFolder = $derived($store.activeFolder)
-  function isUnread(m: any) {
-    return !m.flags?.includes('\\Seen') && !m.flags?.includes('Seen')
+  // Each mailbox's unread count from the server (STATUS UNSEEN via
+  // /api/folders), not a count of whatever list happens to be open.
+  function unseenOf(path: string): number {
+    const f = (apiFolders || []).find((x: any) => x.id === path)
+    return typeof f?.unseen === 'number' ? f.unseen : 0
   }
-  const unreadCount = $derived($store.messages.filter(m => isUnread(m)).length)
   
   // Build folder tree
   const specialFolders = $derived([
@@ -144,6 +146,9 @@
       >
         <span class="folder-icon" aria-hidden="true">{isExpanded ? '📂' : '📁'}</span>
         <span class="folder-name">{displayName(node)}</span>
+        {#if !node.folder.noselect && unseenOf(node.id) > 0}
+          <span class="badge" aria-label="{unseenOf(node.id)} unread">{unseenOf(node.id)}</span>
+        {/if}
       </button>
     </div>
     {#if isExpanded}
@@ -188,8 +193,8 @@
       >
         <span class="folder-icon">{folder.icon}</span>
         <span class="folder-name">{folder.name}</span>
-        {#if folder.id === 'INBOX' && unreadCount > 0}
-          <span class="badge">{unreadCount}</span>
+        {#if unseenOf(folder.id) > 0}
+          <span class="badge" aria-label="{unseenOf(folder.id)} unread">{unseenOf(folder.id)}</span>
         {/if}
       </button>
     {/each}
@@ -412,6 +417,7 @@
     flex-shrink: 0;
   }
 
+  .folder-open .badge { margin-left: auto; margin-right: 6px; }
   .folder-open {
     display: flex;
     align-items: center;
