@@ -54,3 +54,16 @@ export function describeRule(rule: Rule): string {
   if (rule.action.type === 'label') return `When ${conds} → label "${rule.action.value}"`
   return `When ${conds}`
 }
+
+/** An IMAP keyword: what the server stores for a label (server/lib/rules.js). */
+export const LABEL_KEYWORD = /^[A-Za-z0-9$_.-]{1,64}$/
+
+/** Why a rule cannot be saved as it is, or null when it can. */
+export function ruleProblem(rule: Rule, index: number): string | null {
+  const n = `Rule ${index + 1}`
+  if (rule.action.type === 'move' && !rule.action.value) return `${n}: choose the folder to move to`
+  if (rule.action.type === 'label' && !LABEL_KEYWORD.test(rule.action.value || '')) {
+    return `${n}: a label is one word of letters, digits, "$", "_", "." or "-"`
+  }
+  return null
+}
