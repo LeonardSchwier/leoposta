@@ -223,6 +223,11 @@ router.get('/folders', async (req, res) => {
     const folders = await pool.run(async (client) => {
       // Unread counts per folder for the sidebar badges (LIST-STATUS, or one
       // STATUS per folder on servers without it).
+      // The server answers LIST-STATUS for the mailbox this pooled connection
+      // has selected from the session's own view, which misses mail delivered
+      // since (Dovecot reports 0 unseen for an INBOX that just got mail). NOOP
+      // first so that view is current.
+      if (client.mailbox) await client.noop()
       const mailboxes = await client.list({ statusQuery: { messages: true, unseen: true } })
       return mailboxes.map(toFolderEntry)
     })

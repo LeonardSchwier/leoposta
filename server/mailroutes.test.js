@@ -631,3 +631,11 @@ test('the list pages through a large folder: offset skips what is already shown,
   assert.deepEqual((await res.json()).messages, [])
   assert.equal(find(c, 'fetch'), undefined)
 })
+
+test('the folder list refreshes the selected mailbox (NOOP) before LIST-STATUS, so new mail is counted', async () => {
+  const c = useClient({ mailboxes: [{ ...mailbox('INBOX', '/'), status: { path: 'INBOX', messages: 1, unseen: 1 } }] })
+  const res = await fetch(`${base}/api/folders`, { headers: authed })
+  assert.equal(res.status, 200)
+  assert.ok(names(c).includes('noop'), 'NOOP sent')
+  assert.ok(names(c).indexOf('noop') < names(c).indexOf('list'), 'NOOP before LIST')
+})
