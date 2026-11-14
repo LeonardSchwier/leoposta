@@ -241,8 +241,11 @@ function describeError(e) {
  * server that failed (never the password). Seams for tests: `deps`.
  */
 export async function verifyAccount(acct, deps = {}) {
+  // Same TLS rules as the real connections: with implicit TLS off, a remote
+  // server must do STARTTLS before it gets the password (mustStartTls).
   const makeImap = deps.makeImap || ((a) => new ImapFlow({
     host: a.imapHost, port: a.imapPort, secure: a.imapTls,
+    doSTARTTLS: mustStartTls(a.imapTls, a.imapHost) ? true : undefined,
     tls: { servername: /^[0-9.]+$/.test(a.imapHost || '') ? undefined : a.imapHost },
     auth: { user: a.imapUser || a.email, pass: a.imapPass || '' },
     logger: false,
@@ -250,6 +253,7 @@ export async function verifyAccount(acct, deps = {}) {
   }))
   const makeSmtp = deps.makeSmtp || ((a) => nodemailer.createTransport({
     host: a.smtpHost, port: a.smtpPort, secure: a.smtpTls,
+    requireTLS: mustStartTls(a.smtpTls, a.smtpHost),
     auth: { user: a.smtpUser || a.email, pass: a.smtpPass || '' },
     connectionTimeout: VERIFY_TIMEOUT_MS, greetingTimeout: VERIFY_TIMEOUT_MS, socketTimeout: VERIFY_TIMEOUT_MS
   }))
