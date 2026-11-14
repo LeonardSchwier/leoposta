@@ -50,6 +50,8 @@ export interface Attachment {
   contentType: string
   size: number
   contentId?: string
+  /** An image embedded in the HTML body; shown there, not as a download. */
+  inline?: boolean
 }
 
 export interface MailAccount {
