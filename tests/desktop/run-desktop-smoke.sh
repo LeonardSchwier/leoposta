@@ -30,6 +30,7 @@ log() { echo "[desktop-smoke] $*"; }
 
 if [[ -z "${SKIP_BUNDLE:-}" || ! -x "$BACKEND/node" ]]; then
   log "building the desktop bundle (npm run bundle:backend)"
+  # stdout is noisy; stderr stays visible so a failure says why.
   npm run --silent bundle:backend >/dev/null
 fi
 for f in node server/index.js dist/index.html; do
