@@ -106,7 +106,8 @@ test('sending a reopened draft delivers it and removes it from Drafts', async ({
   await rcptBox.waitFor('INBOX', (m) => m.some((x) => x.subject === 'Ship it'))
   await mailbox.waitFor('Drafts', (m) => m.length === 0)
   await expect(app.locator('.empty-state')).toBeVisible()
-  expect(smtpLog().filter((e) => e.raw.includes('Subject: Ship it'))).toHaveLength(1)
+  // The SMTP log is shared by both projects: count only this test's recipient.
+  expect(smtpLog().filter((e) => e.to.includes(rcpt) && e.raw.includes('Subject: Ship it'))).toHaveLength(1)
 })
 
 test('the reading pane offers Edit draft when moving through Drafts with the keyboard', async ({ mailbox, app }) => {
