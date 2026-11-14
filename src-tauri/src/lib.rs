@@ -134,6 +134,53 @@ fn wait_for_port(port: u16, timeout: Duration) -> bool {
     false
 }
 
+/// The port is chosen, released and then bound by node, so another local user
+/// could bind it first and be shown in the window, which then hands it the
+/// per-launch token. Only open the window if every socket that can answer on
+/// 127.0.0.1:port belongs to our node child.
+#[cfg(target_os = "linux")]
+fn listener_owned_by(pid: u32, port: u16) -> bool {
+    // /proc/net/tcp{,6}: "sl local_address rem_address st ... uid timeout inode";
+    // addresses are hex, st 0A is LISTEN.
+    let p = format!(":{port:04X}");
+    let serves_loopback = |addr: &str| {
+        matches!(
+            addr.strip_suffix(p.as_str()),
+            Some("0100007F")
+                | Some("00000000")
+                | Some("00000000000000000000000000000000")
+                | Some("0000000000000000FFFF00000100007F")
+        )
+    };
+    let mut inodes = Vec::new();
+    for table in ["/proc/net/tcp", "/proc/net/tcp6"] {
+        let Ok(text) = std::fs::read_to_string(table) else { continue };
+        for line in text.lines().skip(1) {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            if f.len() > 9 && f[3] == "0A" && serves_loopback(f[1]) {
+                inodes.push(format!("socket:[{}]", f[9]));
+            }
+        }
+    }
+    if inodes.is_empty() {
+        return false;
+    }
+    let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+        return false;
+    };
+    let owned: Vec<String> = fds
+        .flatten()
+        .filter_map(|e| std::fs::read_link(e.path()).ok())
+        .map(|l| l.to_string_lossy().into_owned())
+        .collect();
+    inodes.iter().all(|i| owned.contains(i))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn listener_owned_by(_pid: u32, _port: u16) -> bool {
+    true
+}
+
 /// 32 random bytes from the kernel, hex-encoded: the per-launch API token.
 fn random_token() -> Result<String, String> {
     use std::io::Read;
@@ -238,6 +285,10 @@ pub fn run() {
                 backend.kill();
                 return Err("bundled backend on port did not come up within 30s".into());
             }
+            if !backend.pid.is_some_and(|pid| listener_owned_by(pid, port)) {
+                backend.kill();
+                return Err(format!("127.0.0.1:{port} is not served by the bundled backend; not opening the window").into());
+            }
             eprintln!("[leoposta] backend up on 127.0.0.1:{port}");
 
             // Keep it in state so we can kill on exit.
@@ -300,5 +351,18 @@ mod tests {
         assert!(!ext("file:///home/user/.ssh/id_rsa"));
         assert!(!ext("javascript:alert(1)"));
         assert!(!ext("smb://host/share"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_window_opens_only_on_a_listener_owned_by_the_backend() {
+        let l = std::net::TcpListener::bind((IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+        let port = l.local_addr().unwrap().port();
+        assert!(listener_owned_by(std::process::id(), port));
+        // Another process (pid 1 stands in for another user's server) does not own it.
+        assert!(!listener_owned_by(1, port));
+        drop(l);
+        // Nothing listening: not ours either.
+        assert!(!listener_owned_by(std::process::id(), port));
     }
 }
