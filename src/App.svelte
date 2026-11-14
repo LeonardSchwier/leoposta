@@ -10,7 +10,7 @@
   import Settings from './components/Settings.svelte'
   import Calendar from './components/Calendar.svelte'
   import Contacts from './components/Contacts.svelte'
-  import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setComposeDraft, bootstrapRefreshMode } from './store'
+  import { type Folder, store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, adjustUnseen, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setComposeDraft, bootstrapRefreshMode } from './store'
   import { startReply } from './lib/reply'
   import { startRefresh, stopRefresh } from './refresh'
   import { loadAccountsIntoStore } from './lib/accountsBootstrap'
@@ -21,6 +21,8 @@
   import { flushQueue, queueCount, QUEUE_CHANGED, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
   import { beginSplitDrag } from './lib/splitHandle'
   import { specialFolderPath } from './lib/specialFolders'
+  import { isSameOrBelow, movedPath } from './lib/folderTree'
+  import { appendPage, createLatest, keepOlderPages, mergeRefreshed } from './lib/listSync'
 
   let activeView = $state('inbox')
   let appMode = $state<'mail' | 'calendar' | 'contacts'>('mail')
@@ -171,14 +173,30 @@
 
   let offlineServing = $state(false)
 
-  async function loadMessages(folder: string) {
-    setIsLoading(true)
+  // Folder loads, searches and refreshes all write the message list; only the
+  // newest may apply (see lib/listSync), so a slow answer for a folder the user
+  // already left never replaces the folder on screen.
+  const listLoads = createLatest()
+
+  const PAGE = 50
+  /** Messages in the folder on screen (server EXISTS); more than shown → "load more". */
+  let listTotal = $state(0)
+  let loadingMore = $state(false)
+
+  /** `background`: a refresh of the folder on screen (no spinner, keep loaded bodies). */
+  async function loadMessages(folder: string, { background = false } = {}) {
+    const current = listLoads.begin()
+    if (!background) setIsLoading(true)
     try {
-      const data = await MailAPI.messages(folder)
+      const data = await MailAPI.messages(folder, PAGE)
+      if (!current()) return
       if (data.messages) {
         // Rules moved or flagged new mail on the server: other folders' counts changed.
         if (data.ruleActions > 0) loadFolders()
-        setMessages(data.messages)
+        const total = typeof data.total === 'number' ? data.total : data.messages.length
+        const prev = getState().messages
+        setMessages(background ? mergeRefreshed(prev, keepOlderPages(prev, data.messages, total)) : data.messages)
+        listTotal = total
         setUnreadCount(data.messages.filter((m: any) =>
           !m.flags?.includes('\\Seen') && !m.flags?.includes('Seen')
         ).length)
@@ -187,8 +205,11 @@
       offlineServing = false
       setError(null)
     } catch (e: any) {
+      if (!current()) return
       // Offline / server down: fall back to the local cache for this folder.
       const cached = await cachedMessagesForFolder(folder).catch(() => [] as any[])
+      if (!current()) return
+      listTotal = 0
       if (cached.length) {
         setMessages(cached)
         setUnreadCount(0)
@@ -199,51 +220,118 @@
         offlineServing = false
       }
     } finally {
-      setIsLoading(false)
+      if (current()) setIsLoading(false)
     }
   }
 
-  async function handleSearch(query: string) {
+  /** "Load more": append the next older page of the folder on screen. */
+  async function loadMore() {
+    if (loadingMore || searchQuery) return
+    const folder = getState().activeFolder
+    const current = listLoads.begin()
+    loadingMore = true
+    try {
+      const data = await MailAPI.messages(folder, PAGE, getState().messages.length)
+      if (!current() || !data.messages) return
+      setMessages(appendPage(getState().messages, data.messages))
+      // An empty page means everything is shown (e.g. messages were removed meanwhile).
+      listTotal = data.messages.length === 0 ? getState().messages.length
+        : typeof data.total === 'number' ? data.total : listTotal
+    } catch (e) {
+      if (current()) setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      loadingMore = false
+    }
+  }
+
+  let searchTimer: ReturnType<typeof setTimeout> | undefined
+
+  function handleSearch(query: string) {
+    clearTimeout(searchTimer)
     if (!query.trim()) {
-      searchQuery = ''
+      // Clearing the search goes back to the folder's own list.
+      if (searchQuery) {
+        searchQuery = ''
+        loadMessages(getState().activeFolder)
+      }
       return
     }
     searchQuery = query
+    // One request once the user pauses typing, not one per keystroke.
+    searchTimer = setTimeout(() => runSearch(query), 250)
+  }
+
+  async function runSearch(query: string) {
+    const current = listLoads.begin()
     try {
       const data = await MailAPI.search(query, getState().activeFolder)
-      if (data.messages) setMessages(data.messages)
+      if (!current() || searchQuery !== query) return
+      if (data.messages) {
+        setMessages(data.messages)
+        if (getState().selectedMessageId && !data.messages.some((m: any) => m.id === getState().selectedMessageId)) selectMessage(null)
+      }
+      setError(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (current()) setError(e instanceof Error ? e.message : String(e))
     }
   }
 
+  /** New mail / periodic tick: refresh what is on screen and the unread counts. */
+  function refreshNow() {
+    loadFolders()
+    if (searchQuery) runSearch(searchQuery)
+    else loadMessages(getState().activeFolder, { background: true })
+  }
+
   function handleNewFolder() {
-    const name = prompt('Folder name:')
+    const name = prompt('New folder name:')
     if (name?.trim()) {
       MailAPI.addFolder(name.trim()).then(() => loadFolders()).catch(e => setError(e.message))
     }
   }
 
   function handleNewSubFolder(parentId: string) {
-    const name = prompt(`New subfolder under "${parentId}":`)
+    const parent = getState().folders.find(f => f.id === parentId)
+    const name = prompt(`New subfolder in "${parent?.name || parentId}":`)
     if (name?.trim()) {
       MailAPI.addFolder(name.trim(), parentId).then(() => loadFolders()).catch(e => setError(e.message))
     }
   }
 
-  function handleRenameFolder(folder: any) {
-    const newPath = prompt(`Rename folder "${folder.name || folder.id}" (new full IMAP path):`, folder.id)
-    if (!newPath?.trim() || newPath.trim() === folder.id) return
-    MailAPI.renameFolder(folder.id, newPath.trim()).then(() => loadFolders()).catch(e => setError(e.message))
+  /** Resolves to the folder's new path, or null when cancelled or refused. */
+  async function handleRenameFolder(folder: Folder): Promise<string | null> {
+    const current = folder.name || folder.id
+    const name = prompt(`Rename folder "${current}" to:`, current)
+    if (!name?.trim() || name.trim() === current) return null
+    try {
+      const { path } = await MailAPI.renameFolder(folder.id, name.trim())
+      // The open folder (or one inside the renamed one) moved with it.
+      const active = getState().activeFolder
+      if (isSameOrBelow(active, folder.id, folder.delimiter)) {
+        handleFolderSelect(movedPath(active, folder.id, path, folder.delimiter))
+      }
+      await loadFolders()
+      return path
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      return null
+    }
   }
 
-  function handleDeleteFolder(folder: any) {
-    if (!confirm(`Delete folder "${folder.name || folder.id}" and all its messages?`)) return
-    MailAPI.deleteFolder(folder.id).then(() => loadFolders()).catch(e => setError(e.message))
+  function handleDeleteFolder(folder: Folder) {
+    const hasChildren = getState().folders.some(f => f.id !== folder.id && isSameOrBelow(f.id, folder.id, folder.delimiter))
+    const what = hasChildren ? 'its subfolders and all their messages' : 'all its messages'
+    if (!confirm(`Delete folder "${folder.name || folder.id}" with ${what}? This cannot be undone.`)) return
+    MailAPI.deleteFolder(folder.id).then(() => {
+      // The open folder no longer exists: go back to the Inbox.
+      if (isSameOrBelow(getState().activeFolder, folder.id, folder.delimiter)) handleFolderSelect('inbox')
+      return loadFolders()
+    }).catch(e => setError(e.message))
   }
 
   function handleFolderSelect(folder: string) {
     activeView = folder
+    clearTimeout(searchTimer)
     searchQuery = ''
     if (folder === 'calendar') { appMode = 'calendar'; return }
     if (folder === 'contacts') { appMode = 'contacts'; return }
@@ -326,8 +414,14 @@
     const folder = getState().activeFolder
     if (open && isDraftsFolder(folder)) { void openDraft(id, folder); return }
     selectMessage(id)
-    const wasUnread = !hasFlag(getState().messages.find((m) => m.id === id), '\\Seen')
-    if (wasUnread) updateMessage(id, { flags: [...(getState().messages.find((m) => m.id === id)?.flags || []), '\\Seen'] })
+    // Opening a message marks it read on the server (GET /message/:id), so
+    // show it read right away, however it was opened (click, j/k, palette).
+    const opened = getState().messages.find((m) => m.id === id)
+    const wasUnread = !!opened && !hasFlag(opened, '\\Seen')
+    if (opened && wasUnread) {
+      updateMessage(id, { flags: [...(opened.flags || []), '\\Seen'] })
+      adjustUnseen(folder, -1)
+    }
     MailAPI.message(id, folder).then(data => {
       if (data) {
         // Decrypted PGP plaintext must not outlive the unlocked key: it is never
@@ -365,7 +459,10 @@
   // Message actions name the message they act on (lib/messageActions.ts); the
   // keyboard shortcuts act on the open message.
   function act(id: string, action: MessageAction) {
-    void runMessageAction(id, action, { notify: (t) => showToast(t), changed: () => { loadFolders() } })
+    void runMessageAction(id, action, { notify: (t) => showToast(t), changed: () => { loadFolders() } }).then(() => {
+      // Moved/deleted (and not rolled back): one message fewer in this folder.
+      if (!getState().messages.some((m) => m.id === id)) listTotal = Math.max(0, listTotal - 1)
+    })
   }
   function actOnSelected(action: MessageAction) {
     const id = getState().selectedMessageId
@@ -501,8 +598,14 @@
   // Skips the initial mount (tracker seeded from the same initial null),
   // so the onMount load below isn't double-fired.
   let prevAccountId = $store.activeAccountId
+  // false until the account list arrived: avoids flashing the first-run
+  // screen while it loads.
+  let accountsLoaded = $state(false)
   $effect(() => {
     const current = $store.activeAccountId
+    // The start-up account load adopts an account; that is not a switch (the
+    // onMount load below fetches INBOX once).
+    if (!accountsLoaded) { prevAccountId = current; return }
     if (current === prevAccountId) return
     const prev = prevAccountId
     prevAccountId = current
@@ -521,10 +624,6 @@
     loadFolders()
     loadMessages('INBOX')
   })
-
-  // false until the account list arrived: avoids flashing the first-run
-  // screen while it loads.
-  let accountsLoaded = $state(false)
 
   onMount(() => {
     bootstrapRefreshMode()
@@ -564,11 +663,7 @@
       stopRefresh()
       return
     }
-    startRefresh(mode, () => {
-      loadMessages(getState().activeFolder).catch(() => {})
-      // New mail changes the unread counts in the sidebar.
-      loadFolders()
-    })
+    startRefresh(mode, refreshNow)
   })
 </script>
 
@@ -618,6 +713,9 @@
           onMoveRequest={requestMove}
           onSearch={handleSearch}
           searchQuery={searchQuery}
+          hasMore={!searchQuery && $store.messages.length < listTotal}
+          {loadingMore}
+          onLoadMore={loadMore}
           isLoading={$store.isLoading}
           error={$store.error}
         />

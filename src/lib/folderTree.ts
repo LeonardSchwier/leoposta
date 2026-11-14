@@ -63,6 +63,23 @@ export function toggleExpanded(expanded: ReadonlySet<string>, id: string): Set<s
   return next
 }
 
+/** True when `path` is `ancestor` itself or lies below it. */
+export function isSameOrBelow(path: string, ancestor: string, delimiter?: string | null): boolean {
+  if (path === ancestor) return true
+  return path.startsWith(ancestor + (delimiter || '/'))
+}
+
+/** `path` with its `from` prefix replaced by `to` (a folder rename moves its children too). */
+export function movedPath(path: string, from: string, to: string, delimiter?: string | null): string {
+  if (path === from) return to
+  return path.startsWith(from + (delimiter || '/')) ? to + path.slice(from.length) : path
+}
+
+/** Expansion state after renaming `from` to `to`: the folder and its children stay expanded. */
+export function renameExpanded(expanded: ReadonlySet<string>, from: string, to: string, delimiter?: string | null): Set<string> {
+  return new Set([...expanded].map((p) => movedPath(p, from, to, delimiter)))
+}
+
 export const EXPANDED_STORAGE_KEY = 'leoposta.sidebar.expandedFolders'
 
 type StorageLike = Pick<Storage, 'getItem' | 'setItem'>

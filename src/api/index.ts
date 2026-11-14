@@ -67,7 +67,9 @@ export const MailAPI = {
   account: () => api('/account'),
   // Mailbox paths are free text ("# Archive", "R&D"): always encode them, or a
   // "#" turns the rest of the URL into a fragment and the server sees folder="".
-  messages: (folder: string, limit = 50) => api(`/messages?folder=${enc(folder)}&limit=${limit}`),
+  /** One page, newest first: the `limit` messages after the newest `offset`. */
+  messages: (folder: string, limit = 50, offset = 0) =>
+    api(`/messages?folder=${enc(folder)}&limit=${limit}${offset ? `&offset=${offset}` : ''}`),
   message: (id: string, folder: string) => api(`/message/${enc(id)}?folder=${enc(folder)}`),
   folders: () => api('/folders'),
   search: (query: string, folder = 'INBOX') => api(`/search?q=${enc(query)}&folder=${enc(folder)}`),
@@ -98,8 +100,9 @@ export const MailAPI = {
     method: 'POST', body: JSON.stringify({ name, parentId })
   }),
   deleteFolder: (name: string) => api(`/folder?path=${encodeURIComponent(name)}`, { method: 'DELETE' }),
-  renameFolder: (from: string, to: string) => api('/folder/rename', {
-    method: 'POST', body: JSON.stringify({ from, to })
+  /** Rename a folder in place (same parent); resolves { success, path } with its new path. */
+  renameFolder: (from: string, name: string): Promise<{ success: boolean, path: string }> => api('/folder/rename', {
+    method: 'POST', body: JSON.stringify({ from, name })
   }),
   /** Authenticated download of one received attachment (see lib/attachmentDownload). */
   attachment: (id: string, attachmentId: string, folder: string) =>

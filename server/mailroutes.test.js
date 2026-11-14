@@ -68,12 +68,11 @@ function message(uid, { flags = [], source, bodyStructure, subject = `Subject ${
   }
 }
 
-function makeFakeClient({ messages = [], addResult = true, removeResult = true, mailboxes = [] } = {}) {
+function makeFakeClient({ messages = [], addResult = true, removeResult = true, mailboxes = [], refuse = {}, arriving = [], searchResult = [] } = {}) {
   const calls = []
   const client = {
     usable: true,
     authenticated: 'tester',
-    async noop() {},
     calls,
     mailbox: { exists: messages.length, unseen: messages.filter((m) => !m.flags.has('\\Seen')).length },
     async getMailboxLock(p) {
@@ -85,6 +84,8 @@ function makeFakeClient({ messages = [], addResult = true, removeResult = true, 
       const onlyUids = Object.keys(query).length === 1 && query.uid
       return (async function* () {
         for (const m of messages) {
+          // A UID list (search results) fetches only those messages.
+          if (Array.isArray(range) && !range.includes(m.uid)) continue
           if (onlyUids) yield { uid: m.uid }
           else {
             const { source, ...rest } = m
@@ -101,7 +102,29 @@ function makeFakeClient({ messages = [], addResult = true, removeResult = true, 
     async messageFlagsAdd(range, flags, opts) { calls.push(['messageFlagsAdd', range, flags, opts]); return addResult },
     async messageFlagsRemove(range, flags, opts) { calls.push(['messageFlagsRemove', range, flags, opts]); return removeResult },
     async list(opts) { calls.push(['list', opts]); return mailboxes },
+    async search(query, opts) { calls.push(['search', query, opts]); return searchResult },
     async mailboxCreate(p) { calls.push(['mailboxCreate', p]); return { path: p, created: true } },
+    async mailboxRename(p, to) { calls.push(['mailboxRename', p, to]); return { path: p, newPath: to } },
+    async mailboxDelete(p) {
+      calls.push(['mailboxDelete', p])
+      if (refuse.delete) {
+        // ImapFlow 1.7.8 on a NO: message "Command failed", status + server text attached.
+        const err = new Error('Command failed')
+        err.responseStatus = 'NO'
+        err.responseText = refuse.delete
+        throw err
+      }
+      const i = mailboxes.findIndex((m) => m.path === p)
+      if (i >= 0) mailboxes.splice(i, 1)
+      return { path: p }
+    },
+    // Mail appended by another connection only shows up in EXISTS once the
+    // server answers a command (here: NOOP), as on a real IMAP server.
+    async noop() {
+      calls.push(['noop'])
+      messages.push(...arriving.splice(0))
+      client.mailbox.exists = messages.length
+    },
     logout() { calls.push(['logout']); return Promise.resolve() }
   }
   return client
@@ -536,4 +559,134 @@ test('a new subfolder is created with the parent\'s delimiter, not a hard-coded 
   assert.equal(res.status, 200)
   assert.deepEqual(find(c, 'mailboxCreate'), ['mailboxCreate', 'INBOX.Projects.2026'])
   assert.equal((await res.json()).path, 'INBOX.Projects.2026')
+})
+
+test('deleting a folder deletes its subfolders first, deepest first ("/" and ".")', async () => {
+  for (const d of ['/', '.']) {
+    const j = (...p) => p.join(d)
+    const c = useClient({
+      mailboxes: [
+        mailbox('INBOX', d), mailbox(j('Tree'), d), mailbox(j('Tree', 'A'), d),
+        mailbox(j('Tree', 'A', 'Deep'), d), mailbox(j('Tree', 'B'), d), mailbox(j('Treehouse'), d)
+      ]
+    })
+    const res = await fetch(`${base}/api/folder?path=${encodeURIComponent('Tree')}`, { method: 'DELETE', headers: authed })
+    assert.equal(res.status, 200, d)
+    const deleted = c.calls.filter((x) => x[0] === 'mailboxDelete').map((x) => x[1])
+    assert.deepEqual(deleted, [j('Tree', 'A', 'Deep'), j('Tree', 'B'), j('Tree', 'A'), 'Tree'], d)
+  }
+})
+
+test('a folder the server refuses to delete answers 500 with the server text, without dropping the connection', async () => {
+  const c = useClient({ mailboxes: [mailbox('INBOX', '/'), mailbox('Keep', '/')], refuse: { delete: 'Permission denied' } })
+  const res = await fetch(`${base}/api/folder?path=Keep`, { method: 'DELETE', headers: authed })
+  assert.equal(res.status, 500)
+  assert.match((await res.json()).error, /Permission denied/)
+  assert.equal(c.calls.filter((x) => x[0] === 'mailboxDelete').length, 1, 'a refusal is not retried')
+  assert.ok(!names(c).includes('logout'))
+})
+
+test('INBOX and a blank path cannot be deleted', async () => {
+  const c = useClient({ mailboxes: [mailbox('INBOX', '/')] })
+  for (const q of ['path=INBOX', 'path=', 'path=%20', '']) {
+    const res = await fetch(`${base}/api/folder?${q}`, { method: 'DELETE', headers: authed })
+    assert.equal(res.status, 400, q)
+  }
+  assert.deepEqual(names(c), [])
+})
+
+test('renaming by name keeps the folder under its parent with the server delimiter', async () => {
+  const c = useClient({ mailboxes: [mailbox('INBOX', '.'), mailbox('INBOX.Old', '.'), mailbox('INBOX.Old.Child', '.')] })
+  let res = await fetch(`${base}/api/folder/rename`, {
+    method: 'POST', headers: json, body: JSON.stringify({ from: 'INBOX.Old.Child', name: 'Kid' })
+  })
+  assert.equal(res.status, 200)
+  assert.deepEqual(find(c, 'mailboxRename'), ['mailboxRename', 'INBOX.Old.Child', 'INBOX.Old.Kid'])
+  assert.equal((await res.json()).path, 'INBOX.Old.Kid')
+
+  const c2 = useClient({ mailboxes: [mailbox('Old', '/'), mailbox('Old/Child', '/')] })
+  res = await fetch(`${base}/api/folder/rename`, {
+    method: 'POST', headers: json, body: JSON.stringify({ from: 'Old', name: 'New' })
+  })
+  assert.equal(res.status, 200)
+  assert.deepEqual(find(c2, 'mailboxRename'), ['mailboxRename', 'Old', 'New'])
+})
+
+test('listing a mailbox the pooled connection already had open still shows mail that arrived since', async () => {
+  const c = useClient({ messages: [message(1)], arriving: [message(2, { subject: 'Arrived later' })] })
+  const res = await fetch(`${base}/api/messages?folder=INBOX`, { headers: authed })
+  assert.equal(res.status, 200)
+  const { messages } = await res.json()
+  assert.deepEqual(messages.map((m) => m.subject).sort(), ['Arrived later', 'Subject 1'])
+  // The pool NOOPs a reused session that has a mailbox selected before each
+  // request (lib/imap.js makePool); the route does not add a second one.
+  assert.equal(names(c).filter((n) => n === 'noop').length, 1, 'one NOOP per request')
+  assert.ok(names(c).indexOf('noop') < names(c).indexOf('fetch'), 'NOOP before the FETCH range is computed')
+})
+
+test("the folder list carries each folder's unread and total count (LIST-STATUS)", async () => {
+  const inbox = { ...mailbox('INBOX', '/'), status: { path: 'INBOX', messages: 5, unseen: 2 } }
+  const work = { ...mailbox('Work', '/'), status: { path: 'Work', messages: 3, unseen: 0 } }
+  const c = useClient({ mailboxes: [inbox, work] })
+  const res = await fetch(`${base}/api/folders`, { headers: authed })
+  const { folders } = await res.json()
+  assert.deepEqual(find(c, 'list')[1], { statusQuery: { messages: true, unseen: true } })
+  assert.equal(folders[0].unseen, 2)
+  assert.equal(folders[0].exists, 5)
+  assert.equal(folders[1].unseen, 0)
+})
+
+// ── search & paging ─────────────────────────────────────────────────────────
+
+test('search looks in subject, sender, recipients and body, not only the subject', async () => {
+  const c = useClient({ messages: [message(3, { subject: 'Lunch?' })], searchResult: [3] })
+  const res = await fetch(`${base}/api/search?q=${encodeURIComponent('pineapple')}&folder=${encodeURIComponent('# Archive')}`, { headers: authed })
+  assert.equal(res.status, 200)
+  assert.deepEqual(find(c, 'lock'), ['lock', '# Archive'])
+  const [, query, opts] = find(c, 'search')
+  assert.deepEqual(query, { or: [{ subject: 'pineapple' }, { from: 'pineapple' }, { to: 'pineapple' }, { body: 'pineapple' }] })
+  assert.deepEqual(opts, { uid: true })
+  assert.deepEqual((await res.json()).messages.map((m) => m.subject), ['Lunch?'])
+})
+
+test('search returns the newest matches when there are more than the limit', async () => {
+  const msgs = [1, 2, 3, 4, 5].map((uid) => message(uid))
+  const c = useClient({ messages: msgs, searchResult: [5, 1, 3, 2, 4] })
+  const res = await fetch(`${base}/api/search?q=x&limit=2`, { headers: authed })
+  const body = await res.json()
+  assert.deepEqual(find(c, 'fetch')[1], [4, 5])
+  assert.equal(body.total, 5)
+})
+
+test('a failed search (ImapFlow answers false) is an empty result, not a fetch of UID "false"', async () => {
+  const c = useClient({ messages: [message(1)], searchResult: false })
+  const res = await fetch(`${base}/api/search?q=x`, { headers: authed })
+  assert.equal(res.status, 200)
+  assert.deepEqual((await res.json()).messages, [])
+  assert.equal(find(c, 'fetch'), undefined)
+})
+
+test('the list pages through a large folder: offset skips what is already shown, total tells the size', async () => {
+  // INBOX listings first let the server-side rules look at new mail
+  // ("<lastUid+1>:*" / "*" fetches, lib/rules.js); only the page fetch counts.
+  const listFetch = (cl) => cl.calls.find((x) => x[0] === 'fetch' && !String(x[1]).endsWith('*'))
+  const c = useClient({ messages: Array.from({ length: 300 }, (_, i) => message(i + 1)) })
+  let res = await fetch(`${base}/api/messages?folder=INBOX&limit=50`, { headers: authed })
+  assert.equal((await res.json()).total, 300)
+  assert.equal(listFetch(c)[1], '251:300')
+  c.calls.length = 0
+  res = await fetch(`${base}/api/messages?folder=INBOX&limit=50&offset=250`, { headers: authed })
+  assert.equal(listFetch(c)[1], '1:50')
+  c.calls.length = 0
+  res = await fetch(`${base}/api/messages?folder=INBOX&limit=50&offset=300`, { headers: authed })
+  assert.deepEqual((await res.json()).messages, [])
+  assert.equal(listFetch(c), undefined)
+})
+
+test('the folder list refreshes the selected mailbox (NOOP) before LIST-STATUS, so new mail is counted', async () => {
+  const c = useClient({ mailboxes: [{ ...mailbox('INBOX', '/'), status: { path: 'INBOX', messages: 1, unseen: 1 } }] })
+  const res = await fetch(`${base}/api/folders`, { headers: authed })
+  assert.equal(res.status, 200)
+  assert.equal(names(c).filter((n) => n === 'noop').length, 1, 'one NOOP (the pool\'s) per request')
+  assert.ok(names(c).indexOf('noop') < names(c).indexOf('list'), 'NOOP before LIST')
 })
