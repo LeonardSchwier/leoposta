@@ -542,7 +542,7 @@
       <h3 class="section-title">🔐 PGP — your key for this account, and other people's public keys</h3>
       {#if accounts.length > 1}
         <div class="form-group">
-          <label for="pgp-account">Account</label>
+          <label for="pgp-account">PGP key of account</label>
           <select id="pgp-account" value={pgpAccount} onchange={(e) => { pgpPicked = (e.currentTarget as HTMLSelectElement).value; pgpErr = ''; pgpMsg = '' }}>
             {#each accounts as a (a.id)}<option value={a.email}>{a.email}</option>{/each}
           </select>
