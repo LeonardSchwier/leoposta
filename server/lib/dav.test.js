@@ -510,3 +510,27 @@ test('multigetWithRetry: halving stops at minBatch and propagates', async () => 
     (e) => /times out/i.test(e.message)
   )
 })
+
+test('davRequest sends a body with a fixed Content-Length, never chunked (Radicale ignores chunked bodies)', async () => {
+  const http = await import('node:http')
+  const { davRequest } = await import('./dav.js')
+  const seen = []
+  const server = http.createServer((req, res) => {
+    const chunks = []
+    req.on('data', c => chunks.push(c))
+    req.on('end', () => {
+      seen.push({ method: req.method, te: req.headers['transfer-encoding'], cl: req.headers['content-length'], len: Buffer.concat(chunks).length })
+      res.writeHead(201); res.end()
+    })
+  })
+  await new Promise(r => server.listen(0, '127.0.0.1', r))
+  try {
+    const acct = { davUrl: `http://127.0.0.1:${server.address().port}/u/`, davUser: 'u', davPass: 'p' }
+    const body = 'BEGIN:VCARD\r\nFN:Zoë 😀\r\nEND:VCARD\r\n'
+    await davRequest('PUT', '/u/b/1.vcf', body, 'text/vcard', acct)
+    await davRequest('DELETE', '/u/b/1.vcf', null, null, acct)
+    assert.deepEqual(seen[0], { method: 'PUT', te: undefined, cl: String(Buffer.byteLength(body)), len: Buffer.byteLength(body) })
+    assert.equal(seen[1].te, undefined)
+    assert.equal(seen[1].cl, '0')
+  } finally { await new Promise(r => server.close(r)) }
+})
