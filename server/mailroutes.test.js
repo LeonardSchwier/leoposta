@@ -68,7 +68,7 @@ function message(uid, { flags = [], source, bodyStructure, subject = `Subject ${
   }
 }
 
-function makeFakeClient({ messages = [], addResult = true, removeResult = true, mailboxes = [], refuse = {} } = {}) {
+function makeFakeClient({ messages = [], addResult = true, removeResult = true, mailboxes = [], refuse = {}, arriving = [] } = {}) {
   const calls = []
   const client = {
     usable: true,
@@ -114,6 +114,13 @@ function makeFakeClient({ messages = [], addResult = true, removeResult = true, 
       const i = mailboxes.findIndex((m) => m.path === p)
       if (i >= 0) mailboxes.splice(i, 1)
       return { path: p }
+    },
+    // Mail appended by another connection only shows up in EXISTS once the
+    // server answers a command (here: NOOP), as on a real IMAP server.
+    async noop() {
+      calls.push(['noop'])
+      messages.push(...arriving.splice(0))
+      client.mailbox.exists = messages.length
     },
     logout() { calls.push(['logout']); return Promise.resolve() }
   }
@@ -554,4 +561,14 @@ test('renaming by name keeps the folder under its parent with the server delimit
   })
   assert.equal(res.status, 200)
   assert.deepEqual(find(c2, 'mailboxRename'), ['mailboxRename', 'Old', 'New'])
+})
+
+test('listing a mailbox the pooled connection already had open still shows mail that arrived since', async () => {
+  const c = useClient({ messages: [message(1)], arriving: [message(2, { subject: 'Arrived later' })] })
+  const res = await fetch(`${base}/api/messages?folder=INBOX`, { headers: authed })
+  assert.equal(res.status, 200)
+  const { messages } = await res.json()
+  assert.deepEqual(messages.map((m) => m.subject).sort(), ['Arrived later', 'Subject 1'])
+  assert.ok(names(c).indexOf('noop') > names(c).indexOf('lock'), 'NOOP after the lock')
+  assert.ok(names(c).indexOf('noop') < names(c).indexOf('fetch'), 'NOOP before the FETCH range is computed')
 })

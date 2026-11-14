@@ -46,6 +46,10 @@ router.get('/messages', async (req, res) => {
     await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
       try {
+        // The pooled connection may have had this mailbox selected for a while:
+        // getMailboxLock does not re-SELECT it, so EXISTS is only as fresh as
+        // the last server response. NOOP makes the server report new mail first.
+        await client.noop()
         const mailbox = client.mailbox
         const exists = mailbox.exists || 0
         const unreadCount = (mailbox.unseen != null) ? mailbox.unseen
