@@ -270,6 +270,23 @@ test('the opened message reports \\Seen once it has been marked read', async () 
   assert.deepEqual(res.body.flags, ['\\Seen'])
 })
 
+test('a read-only mailbox that refuses \\Seen still opens the message, reported unread', async () => {
+  useClient({ messages: [message(5, { flags: [] })], addResult: false })
+  const res = await getMessage(5)
+  assert.equal(res.status, 200)
+  assert.equal(res.body.subject, 'Subject 5')
+  assert.deepEqual(res.body.flags, [])
+})
+
+test('a STORE that throws (NO [READ-ONLY]) does not fail opening the message', async () => {
+  const c = useClient({ messages: [message(5, { flags: [] })] })
+  c.messageFlagsAdd = async () => { throw new Error('NO [READ-ONLY] Mailbox is read-only') }
+  const res = await getMessage(5)
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.body.flags, [])
+  assert.ok(!names(c).includes('logout'))
+})
+
 // ── received attachments ────────────────────────────────────────────────────
 
 const MIXED = crlf([
