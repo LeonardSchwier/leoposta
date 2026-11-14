@@ -69,6 +69,15 @@ export function startRefresh(
   if (mode === 'instant') {
     const es = new EventSource(idleUrl)
     es.addEventListener('mailbox-update', () => runRefreshTick(onTick))
+    // 'ready' arrives each time the server is watching the Inbox again. The
+    // first one is the initial connect (the app just loaded); a later one is
+    // EventSource's automatic reconnect after the stream or the IMAP server
+    // dropped, and mail may have arrived meanwhile without an event.
+    let connectedBefore = false
+    es.addEventListener('ready', () => {
+      if (connectedBefore) runRefreshTick(onTick)
+      connectedBefore = true
+    })
     eventSource = es
     return
   }

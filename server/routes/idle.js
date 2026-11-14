@@ -105,6 +105,9 @@ export function createIdleRouter({
 
     heartbeat = setInterval(() => send(': keepalive\n\n'), heartbeatMs)
     ready = true
+    // Watching from here on. After a reconnect the browser refreshes on this,
+    // which picks up mail that arrived while the stream was down.
+    send('event: ready\ndata: {"status":"idle"}\n\n')
 
     // client.idle() stays pending until broken by idle.stop() or an error.
     // ImapFlow's autoidle() keeps the connection idling on inactivity, so this
