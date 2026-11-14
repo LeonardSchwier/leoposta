@@ -47,6 +47,7 @@ router.get('/calendar/events', async (req, res) => {
     const startDav = toDavTime(req.query.start)
     const endDav = toDavTime(req.query.end, true)
     const timeRange = (startDav || endDav)
+      // nosemgrep: javascript.express.security.injection.raw-html-format.raw-html-format -- CalDAV XML, not HTML; toDavTime only returns '' or /^\d{8}T\d{6}Z$/ (server/lib/dav.test.js)
       ? `<c:time-range${startDav ? ` start="${startDav}"` : ''}${endDav ? ` end="${endDav}"` : ''}/>`
       : ''
     const report = `<?xml version="1.0" encoding="utf-8"?>
