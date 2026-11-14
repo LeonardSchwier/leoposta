@@ -93,3 +93,18 @@ test('by default a page on localhost:3000 is not a trusted origin', async () => 
   const own = await request('GET', '/api/accounts', { origin: 'http://127.0.0.1:3001', ...authed })
   assert.equal(own.status, 200)
 })
+
+// leoposta.desktop.csp-not-applied
+test('the app document and assets carry a strict CSP; API responses are untouched', async () => {
+  const doc = await request('GET', '/', { host: `127.0.0.1:${port}` })
+  assert.equal(doc.status, 200)
+  const csp = doc.headers['content-security-policy'] || ''
+  for (const d of ["script-src 'self'", "object-src 'none'", "frame-src 'none'", "base-uri 'none'", "form-action 'none'", "frame-ancestors 'none'", "connect-src 'self'"]) {
+    assert.ok(csp.includes(d), d)
+  }
+  assert.doesNotMatch(csp, /script-src[^;]*'unsafe-(inline|eval)'/)
+  const asset = await request('GET', '/assets/index.js', { host: `127.0.0.1:${port}` })
+  assert.ok(asset.headers['content-security-policy'])
+  const api = await request('GET', '/api/health', { host: `127.0.0.1:${port}` })
+  assert.equal(api.headers['content-security-policy'], undefined)
+})
