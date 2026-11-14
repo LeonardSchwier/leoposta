@@ -233,3 +233,29 @@ test('GOA import with no keyring password: 502, nothing created, an existing pas
   await fetch(`${base}/api/goa/import`, { method: 'POST', headers: json, body: JSON.stringify({ goaId: 'account_mail1' }) })
   assert.equal(state.accounts[0].imapPass, 'stored')
 })
+
+test('GOA: importing only the mail account also takes the WebDAV account of the same address (one Import -> working Calendar)', async () => {
+  const dav = await fakeDavRoot()
+  try {
+    const both = webdavObjects('Goa-Import@example.test', dav.port)
+    both.data[0] = { ...MAIL_ACCOUNT_OBJECTS.data[0], ...both.data[0] }
+    _setExecFileForTest(fakeExecAvailable({ busctlOut: both, password: 'pw' }))
+    const r = await fetch(`${base}/api/goa/import`, { method: 'POST', headers: json, body: JSON.stringify({ goaId: 'account_mail1' }) })
+    assert.equal(r.status, 200, await r.text())
+    assert.equal(state.accounts.length, 1)
+    assert.equal(state.accounts[0].davUrl, `http://127.0.0.1:${dav.port}/`)
+    assert.equal(state.accounts[0].davUser, 'Goa-Import@example.test')
+    const cal = await fetch(`${base}/api/calendar/calendars`, { headers: authed })
+    assert.equal(cal.status, 200)
+    assert.deepEqual((await cal.json()).calendars.map(c => c.displayname), ['Work'])
+  } finally { await dav.close() }
+})
+
+test('GOA: importDav:false leaves Calendar/Contacts alone', async () => {
+  const both = webdavObjects('goa-import@example.test', 1)
+  both.data[0] = { ...MAIL_ACCOUNT_OBJECTS.data[0], ...both.data[0] }
+  _setExecFileForTest(fakeExecAvailable({ busctlOut: both, password: 'pw' }))
+  const r = await fetch(`${base}/api/goa/import`, { method: 'POST', headers: json, body: JSON.stringify({ goaId: 'account_mail1', importDav: false }) })
+  assert.equal(r.status, 200)
+  assert.ok(!state.accounts[0].davUrl)
+})
