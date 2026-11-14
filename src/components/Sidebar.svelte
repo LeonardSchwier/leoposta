@@ -257,7 +257,7 @@
     width: 100%;
     padding: 8px 12px;
     background: var(--color-accent);
-    color: white;
+    color: var(--color-on-accent);
     border: none;
     border-radius: var(--radius-md);
     font-size: 13px;
@@ -349,7 +349,7 @@
   
   .badge {
     background: var(--color-accent);
-    color: white;
+    color: var(--color-on-accent);
     font-size: 10px;
     font-weight: 600;
     min-width: 18px;

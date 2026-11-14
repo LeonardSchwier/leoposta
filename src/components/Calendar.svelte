@@ -395,7 +395,7 @@
   .cal-side { width: 220px; background: var(--color-sidebar); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; }
   .cal-side-head { padding: 12px 12px 8px; display: flex; flex-direction: column; gap: 8px; }
   .cal-side-head h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--color-text-secondary); margin: 0 0 4px; font-weight: 700; }
-  .add-evt { background: var(--color-accent); color: #fff; border: none; padding: 7px 12px; border-radius: var(--radius-sm); font-weight: 600; font-size: 12px; cursor: pointer; }
+  .add-evt { background: var(--color-accent); color: var(--color-on-accent); border: none; padding: 7px 12px; border-radius: var(--radius-sm); font-weight: 600; font-size: 12px; cursor: pointer; }
   .add-evt:hover { background: var(--color-accent-hover); }
   .cal-actions { display: flex; gap: 6px; padding: 4px 8px; }
   .cal-act { flex: 1; padding: 5px 8px; border: 1px solid var(--color-border); background: var(--color-bg-secondary); color: var(--color-text); border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; }
@@ -423,20 +423,24 @@
   .cal-nav button:nth-child(2) { width: auto; padding: 0 12px; font-size: 12px; font-weight: 500; }
   .cal-nav h3 { font-size: 15px; font-weight: 600; margin-left: 10px; }
   .cal-err { background: var(--danger-bg); color: var(--color-danger); padding: 10px 18px; font-size: 13px; display: flex; gap: 12px; align-items: center; justify-content: space-between; }
-  .cal-err button { background: var(--color-danger); color: #fff; border: none; padding: 5px 10px; border-radius: 4px; font-size: 12px; }
+  .cal-err button { background: var(--color-danger); color: var(--color-on-danger); border: none; padding: 5px 10px; border-radius: 4px; font-size: 12px; }
   .weekdays { display: grid; grid-template-columns: repeat(7, 1fr); padding: 6px 12px 4px; border-bottom: 1px solid var(--color-border); }
   .wd { font-size: 11px; font-weight: 600; color: var(--color-text-secondary); text-transform: uppercase; letter-spacing: 0.4px; }
   .grid { flex: 1; overflow-y: auto; padding: 10px 12px 12px; display: grid; grid-template-columns: repeat(7, 1fr); grid-auto-rows: minmax(82px, 1fr); gap: 6px; }
   .cell { border: 1px solid var(--color-border); border-radius: 6px; padding: 6px 7px; cursor: pointer; transition: border-color .1s, background .1s; overflow: hidden; background: var(--color-bg); }
   .cell:hover { border-color: var(--color-accent); background: var(--color-hover); }
-  .cell.out { opacity: 0.55; background: transparent; }
+  /* Days of the neighbouring months: set apart by a lighter weight and no
+     fill, not by fading the whole cell (that put the clickable day number
+     at ~2.5:1). */
+  .cell.out { background: transparent; }
+  .cell.out .daynum { font-weight: 400; color: var(--color-text-muted); }
   .cell.today { border-color: var(--color-accent); background: var(--color-selected); }
   .cell-head { display: flex; justify-content: flex-end; }
   .daynum { font: inherit; font-size: 11px; font-weight: 600; color: var(--color-text-secondary); padding: 2px 6px; border-radius: 5px; border: none; background: transparent; cursor: pointer; }
-  .cell.today .daynum { background: var(--color-accent); color: #fff; }
+  .cell.today .daynum { background: var(--color-accent); color: var(--color-on-accent); }
   .chips { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
   .chip { text-align: left; font-size: 11px; border: none; background: var(--color-selected); color: var(--color-text); padding: 3px 5px; border-radius: 4px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .chip:hover { background: var(--color-accent); color: #fff; }
+  .chip:hover { background: var(--color-accent); color: var(--color-on-accent); }
   .chip.sel { outline: 2px solid var(--color-accent); }
   .more { font-size: 10px; color: var(--color-text-secondary); }
 
@@ -453,7 +457,7 @@
   .actions { display: flex; gap: 8px; margin-top: 6px; }
   .actions .spacer { flex: 1; }
   .actions button { padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--color-border); background: var(--color-bg-secondary); color: var(--color-text); }
-  .actions .primary { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
+  .actions .primary { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); }
   .actions .primary:hover { background: var(--color-accent-hover); }
   .actions .danger { background: transparent; color: var(--color-danger); border-color: var(--color-danger); }
   .actions .ghost { background: transparent; }
