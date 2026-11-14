@@ -94,7 +94,6 @@ export interface State {
   composeOriginalMessage: MailMessage | null
   isLoading: boolean
   error: string | null
-  threadGrouping: boolean
   refreshInterval: RefreshMode
 }
 
@@ -120,7 +119,6 @@ const initialState: State = {
   composeOriginalMessage: null,
   isLoading: false,
   error: null,
-  threadGrouping: true,
   refreshInterval: 'instant',
 }
 
@@ -262,9 +260,6 @@ export function clearCompose() {
     composeForward: false,
     composeOriginalMessage: null
   }))
-}
-export function setThreadGrouping(enabled: boolean) {
-  store.update(s => ({ ...s, threadGrouping: enabled }))
 }
 // Non-reactive getter for use in event handlers
 export function getState(): State {
