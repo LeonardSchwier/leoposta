@@ -71,7 +71,8 @@ function message(uid, { flags = [], source, bodyStructure, subject = `Subject ${
 function makeFakeClient({ messages = [], addResult = true, removeResult = true, mailboxes = [], refuse = {} } = {}) {
   const calls = []
   const client = {
-    user: 'tester',
+    usable: true,
+    authenticated: 'tester',
     calls,
     mailbox: { exists: messages.length, unseen: messages.filter((m) => !m.flags.has('\\Seen')).length },
     async getMailboxLock(p) {
