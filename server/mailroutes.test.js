@@ -68,7 +68,7 @@ function message(uid, { flags = [], source, bodyStructure, subject = `Subject ${
   }
 }
 
-function makeFakeClient({ messages = [], addResult = true, removeResult = true, mailboxes = [], refuse = {}, arriving = [] } = {}) {
+function makeFakeClient({ messages = [], addResult = true, removeResult = true, mailboxes = [], refuse = {}, arriving = [], searchResult = [] } = {}) {
   const calls = []
   const client = {
     usable: true,
@@ -84,6 +84,8 @@ function makeFakeClient({ messages = [], addResult = true, removeResult = true, 
       const onlyUids = Object.keys(query).length === 1 && query.uid
       return (async function* () {
         for (const m of messages) {
+          // A UID list (search results) fetches only those messages.
+          if (Array.isArray(range) && !range.includes(m.uid)) continue
           if (onlyUids) yield { uid: m.uid }
           else {
             const { source, ...rest } = m
@@ -100,6 +102,7 @@ function makeFakeClient({ messages = [], addResult = true, removeResult = true, 
     async messageFlagsAdd(range, flags, opts) { calls.push(['messageFlagsAdd', range, flags, opts]); return addResult },
     async messageFlagsRemove(range, flags, opts) { calls.push(['messageFlagsRemove', range, flags, opts]); return removeResult },
     async list(opts) { calls.push(['list', opts]); return mailboxes },
+    async search(query, opts) { calls.push(['search', query, opts]); return searchResult },
     async mailboxCreate(p) { calls.push(['mailboxCreate', p]); return { path: p, created: true } },
     async mailboxRename(p, to) { calls.push(['mailboxRename', p, to]); return { path: p, newPath: to } },
     async mailboxDelete(p) {
@@ -583,4 +586,48 @@ test("the folder list carries each folder's unread and total count (LIST-STATUS)
   assert.equal(folders[0].unseen, 2)
   assert.equal(folders[0].exists, 5)
   assert.equal(folders[1].unseen, 0)
+})
+
+// ── search & paging ─────────────────────────────────────────────────────────
+
+test('search looks in subject, sender, recipients and body, not only the subject', async () => {
+  const c = useClient({ messages: [message(3, { subject: 'Lunch?' })], searchResult: [3] })
+  const res = await fetch(`${base}/api/search?q=${encodeURIComponent('pineapple')}&folder=${encodeURIComponent('# Archive')}`, { headers: authed })
+  assert.equal(res.status, 200)
+  assert.deepEqual(find(c, 'lock'), ['lock', '# Archive'])
+  const [, query, opts] = find(c, 'search')
+  assert.deepEqual(query, { or: [{ subject: 'pineapple' }, { from: 'pineapple' }, { to: 'pineapple' }, { body: 'pineapple' }] })
+  assert.deepEqual(opts, { uid: true })
+  assert.deepEqual((await res.json()).messages.map((m) => m.subject), ['Lunch?'])
+})
+
+test('search returns the newest matches when there are more than the limit', async () => {
+  const msgs = [1, 2, 3, 4, 5].map((uid) => message(uid))
+  const c = useClient({ messages: msgs, searchResult: [5, 1, 3, 2, 4] })
+  const res = await fetch(`${base}/api/search?q=x&limit=2`, { headers: authed })
+  const body = await res.json()
+  assert.deepEqual(find(c, 'fetch')[1], [4, 5])
+  assert.equal(body.total, 5)
+})
+
+test('a failed search (ImapFlow answers false) is an empty result, not a fetch of UID "false"', async () => {
+  const c = useClient({ messages: [message(1)], searchResult: false })
+  const res = await fetch(`${base}/api/search?q=x`, { headers: authed })
+  assert.equal(res.status, 200)
+  assert.deepEqual((await res.json()).messages, [])
+  assert.equal(find(c, 'fetch'), undefined)
+})
+
+test('the list pages through a large folder: offset skips what is already shown, total tells the size', async () => {
+  const c = useClient({ messages: Array.from({ length: 300 }, (_, i) => message(i + 1)) })
+  let res = await fetch(`${base}/api/messages?folder=INBOX&limit=50`, { headers: authed })
+  assert.equal((await res.json()).total, 300)
+  assert.equal(find(c, 'fetch')[1], '251:300')
+  c.calls.length = 0
+  res = await fetch(`${base}/api/messages?folder=INBOX&limit=50&offset=250`, { headers: authed })
+  assert.equal(find(c, 'fetch')[1], '1:50')
+  c.calls.length = 0
+  res = await fetch(`${base}/api/messages?folder=INBOX&limit=50&offset=300`, { headers: authed })
+  assert.deepEqual((await res.json()).messages, [])
+  assert.equal(find(c, 'fetch'), undefined)
 })
