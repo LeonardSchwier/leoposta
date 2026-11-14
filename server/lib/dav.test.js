@@ -1,7 +1,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import http from 'node:http'
-import { resolveDavTarget, resolveDavBase, extractResponseSet, clearDavBaseCache, extractAddressData, extractDataBlocks, toDavTime, timeoutForMethod, multigetWithRetry, DAV_READ_TIMEOUT_MS, DAV_WRITE_TIMEOUT_MS, isCalendarResource } from './dav.js'
+import { davRequest, resolveDavTarget, resolveDavBase, extractResponseSet, clearDavBaseCache, extractAddressData, extractDataBlocks, toDavTime, timeoutForMethod, multigetWithRetry, DAV_READ_TIMEOUT_MS, DAV_WRITE_TIMEOUT_MS, isCalendarResource } from './dav.js'
 import { accountPayloadFrom } from './state.js'
 
 test('resolveDavTarget: davUrl with explicit port and path', () => {
@@ -38,15 +38,15 @@ test('resolveDavTarget: davUrl http (no TLS) defaults port to 80', () => {
   assert.equal(t.hostname, 'dav.example.com')
 })
 
-test('resolveDavTarget: no davUrl falls back to DAV_HOST env (default port 443)', () => {
-  // DAV_HOST defaults to 'dav.example.com'; DAV_TLS defaults to false
-  // (it only auto-enables when DAV_HOST is explicitly set via env)
-  const t = resolveDavTarget({ imapUser: 'j', imapPass: 'p' })
-  assert.equal(t.hostname, 'dav.example.com')
-  assert.equal(t.port, 443)
-  assert.equal(t.basePath, '/dav/j')
-  assert.equal(t.user, 'j')
-  assert.equal(t.pass, 'p')
+// leoposta.dav.default-host-cleartext-imap-creds (audit run-2): without a
+// davUrl and without DAV_HOST there is no DAV server, so no request (and no
+// IMAP password) goes anywhere.
+test('resolveDavTarget: no davUrl and no DAV_HOST means not configured', () => {
+  assert.equal(resolveDavTarget({ imapUser: 'j', imapPass: 'p' }), null)
+})
+
+test('davRequest: an account without a DAV server rejects without connecting', async () => {
+  await assert.rejects(davRequest('PROPFIND', '/', '', null, { imapUser: 'j', imapPass: 'p' }), { code: 'DAV_NOT_CONFIGURED' })
 })
 
 // ---- accountPayloadFrom threads davUrl/davUser/davPass through ----
