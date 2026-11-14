@@ -1,11 +1,5 @@
 import https from 'node:https'
 import http from 'node:http'
-import { state } from './state.js'
-
-export const DAV_HOST = process.env.DAV_HOST || 'dav.example.com'
-export const DAV_PORT = parseInt(process.env.DAV_PORT || '443', 10)
-export const DAV_TLS = (process.env.DAV_TLS || (process.env.DAV_HOST ? 'true' : 'false')) === 'true'
-export const DAV_PATH_PREFIX = (user) => (process.env.DAV_PREFIX || '/dav/' + user)
 
 // Read vs write timeouts. Reads (PROPFIND/REPORT) against a large book can take
 // well over the old hard 30s under load, so they get a longer ceiling; writes
@@ -19,34 +13,73 @@ export function timeoutForMethod(method) {
   return READ_METHODS.has(String(method || '').toUpperCase()) ? DAV_READ_TIMEOUT_MS : DAV_WRITE_TIMEOUT_MS
 }
 
+/** Thrown (before any network I/O) when the account has no usable DAV URL. */
+export class DavNotConfiguredError extends Error {
+  constructor() {
+    super('CalDAV/CardDAV is not configured for this account. Add a CalDAV/CardDAV URL in Settings.')
+    this.code = 'dav_not_configured'
+  }
+}
+
+/**
+ * The DAV server for one account, from its own `davUrl` — or null when the
+ * account has none (or it is not an http(s) URL). There is deliberately no
+ * global fallback host: an account without DAV settings has no calendar or
+ * address book, and asking some placeholder host with the IMAP password
+ * would leak that password to whoever answers there.
+ */
 export function resolveDavTarget(acct) {
   const a = acct || {}
-  const user = a.davUser || a.imapUser || ''
-  const pass = a.davPass || a.imapPass || ''
-  if (a.davUrl) {
-    try {
-      const u = new URL(a.davUrl)
-      const tls = u.protocol === 'https:'
-      const port = u.port
-        ? parseInt(u.port, 10)
-        : (tls ? 443 : 80)
-      return { hostname: u.hostname, port, tls, basePath: u.pathname || '/', user, pass }
-    } catch {}
-  }
+  if (!a.davUrl || typeof a.davUrl !== 'string') return null
+  let u
+  try { u = new URL(a.davUrl.trim()) } catch { return null }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return null
+  const tls = u.protocol === 'https:'
+  const port = u.port ? parseInt(u.port, 10) : (tls ? 443 : 80)
   return {
-    hostname: DAV_HOST,
-    port: DAV_PORT,
-    tls: DAV_TLS,
-    basePath: DAV_PATH_PREFIX(a.imapUser || ''),
-    user,
-    pass
+    hostname: u.hostname,
+    port,
+    tls,
+    basePath: u.pathname || '/',
+    user: a.davUser || a.imapUser || a.email || '',
+    pass: a.davPass || a.imapPass || ''
   }
+}
+
+/** True when DAV requests for this account would go anywhere. */
+export function isDavConfigured(acct) {
+  return resolveDavTarget(acct) !== null
+}
+
+// Network-level failures (refused, DNS, timeout, TLS) — the DAV server could
+// not be reached at all, as opposed to it answering with an error status.
+const UNREACHABLE_CODES = new Set(['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET', 'EHOSTUNREACH', 'ENETUNREACH', 'ETIMEDOUT', 'EPIPE'])
+
+/**
+ * Map a DAV failure to { status, error } for a route's JSON response, so the
+ * UI can show the user something they can act on instead of a raw socket
+ * error. `kind` is 'CalDAV' or 'CardDAV'.
+ */
+export function davErrorResponse(err, acct, kind = 'DAV') {
+  if (err instanceof DavNotConfiguredError) return { status: 409, error: err.message, code: err.code }
+  const t = resolveDavTarget(acct)
+  const where = t ? `${t.hostname}:${t.port}` : 'the server'
+  if (err && (UNREACHABLE_CODES.has(err.code) || /times out after/.test(String(err.message)))) {
+    return { status: 502, error: `Cannot reach the ${kind} server ${where} (${err.code || 'timeout'}). Check the CalDAV/CardDAV URL in Settings and your connection.`, code: 'dav_unreachable' }
+  }
+  if (err && (err.davStatus === 401 || err.davStatus === 403)) {
+    return { status: 502, error: `The ${kind} server ${where} rejected the login (HTTP ${err.davStatus}). Check the CalDAV/CardDAV user and password in Settings.`, code: 'dav_auth' }
+  }
+  if (err && err.davStatus) {
+    return { status: 502, error: String(err.message), code: 'dav_error' }
+  }
+  return { status: 500, error: String((err && err.message) || err), code: 'dav_error' }
 }
 
 export function davRequest(method, urlPath, body, contentType, acct, depth) {
   return new Promise((resolve, reject) => {
-    const account = acct || state.accounts[0] || {}
-    const t = resolveDavTarget(account)
+    const t = resolveDavTarget(acct)
+    if (!t) return reject(new DavNotConfiguredError())
     const token = Buffer.from(`${t.user}:${t.pass}`).toString('base64')
     const opts = {
       hostname: t.hostname,
@@ -70,7 +103,9 @@ export function davRequest(method, urlPath, body, contentType, acct, depth) {
         if (res.statusCode >= 200 && res.statusCode < 300) {
           resolve({ status: res.statusCode, body: data, headers: res.headers })
         } else {
-          reject(new Error(`DAV ${method} ${urlPath} → ${res.statusCode}: ${data.slice(0, 300)}`))
+          const e = new Error(`DAV ${method} ${urlPath} → ${res.statusCode}: ${data.slice(0, 300)}`)
+          e.davStatus = res.statusCode
+          reject(e)
         }
       })
     })
@@ -108,31 +143,32 @@ const HOME_SET_TTL = 10 * 60 * 1000
 //   PROPFIND / for current-user-principal → PROPFIND principal for home-set.
 export async function resolveDavBase(account, kind) {
   const t = resolveDavTarget(account)
-  const key = `${t.hostname}:${t.port}|${t.user}|${kind}`
+  if (!t) throw new DavNotConfiguredError()
+  if (t.basePath && t.basePath !== '/') return { ...t, basePath: t.basePath }
+  const key = `${t.tls ? 'https' : 'http'}://${t.hostname}:${t.port}|${t.user}|${kind}`
   const cached = homeSetCache.get(key)
   if (cached && Date.now() - cached.ts < HOME_SET_TTL) return { ...t, basePath: cached.href }
-  if (t.basePath && t.basePath !== '/') return { ...t, basePath: t.basePath }
 
   const p1Xml = `<?xml version="1.0" encoding="utf-8"?><d:propfind xmlns:d="DAV:"><d:prop><d:current-user-principal/></d:prop></d:propfind>`
-  const p1 = await davRequest('PROPFIND', '/', p1Xml, null, account)
-  const pm = p1.body.match(/<(?:\w+:)?current-user-principal[^>]*>\s*<\w*:href[^>]*>\s*([^<\s]+?)\s*</i)
+  const p1 = await davRequest('PROPFIND', '/', p1Xml, null, account, 0)
+  const pm = p1.body.match(/<(?:\w+:)?current-user-principal[^>]*(?<!\/)>\s*<(?:\w+:)?href[^>]*>\s*([^<\s]+?)\s*</i)
   if (!pm) throw new Error(`DAV discovery: no current-user-principal from ${t.hostname}:${t.port}`)
-  const principal = pm[1]
+  const principal = hrefPath(pm[1])
 
-  const homeProp = kind === 'calendar' ? 'calendar-home-set' : 'address-book-home-set'
+  // RFC 6352 §7.1.1 names it addressbook-home-set (one word). Asking for
+  // "address-book-home-set" gets a 404 propstat from every compliant server.
+  const homeProp = kind === 'calendar' ? 'calendar-home-set' : 'addressbook-home-set'
   const nsPrefix = kind === 'calendar' ? 'c' : 'crd'
   const p2Xml = `<?xml version="1.0" encoding="utf-8"?>
 <d:propfind xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav" xmlns:crd="urn:ietf:params:xml:ns:carddav">
 <d:prop><${nsPrefix}:${homeProp}/></d:prop>
 </d:propfind>`
-  const p2 = await davRequest('PROPFIND', principal, p2Xml, null, account)
-  const homeRe = new RegExp(`<(?:\\w+:)?(${homeProp})[^>]*>\\s*<\\w*:href[^>]*>\\s*([^<\\s]+?)\\s*<`, 'i')
+  const p2 = await davRequest('PROPFIND', principal, p2Xml, null, account, 0)
+  const homeRe = new RegExp(`<(?:\\w+:)?(${kind === 'calendar' ? homeProp : 'address-?book-home-set'})[^>]*(?<!/)>\\s*<(?:\\w+:)?href[^>]*>\\s*([^<\\s]+?)\\s*<`, 'i')
   let hm = p2.body.match(homeRe)
   if (!hm) {
-    // Open-Xchange (example.test) does not advertise address-book-home-set on the
-    // principal (returns 404 on the propstat) but still serves the home-set at
-    // the well-known /carddav/ path. Fall back to probing candidate well-known
-    // paths for a CardDAV collection.
+    // A server that does not advertise the home-set on the principal: probe
+    // the usual well-known collection paths instead.
     const candidates = kind === 'calendar'
       ? ['/caldav/', '/calendars/', '/dav/calendars/']
       : ['/carddav/', '/addressbook/', '/dav/addressbook/']
@@ -152,13 +188,34 @@ export async function resolveDavBase(account, kind) {
     }
   }
   if (!hm) throw new Error(`DAV discovery: no ${homeProp} on principal ${principal}`)
-  let href = hm[2] ?? hm[1]
-  try { href = decodeURIComponent(href) } catch {}
+  // Kept percent-encoded as the server sent it: it goes straight back into
+  // request paths (a decoded space or non-ASCII character would make the
+  // request invalid). Compare hrefs with sameHref().
+  const href = hrefPath(hm[2] ?? hm[1])
   homeSetCache.set(key, { href, ts: Date.now() })
   return { ...t, basePath: href }
 }
 
 export function clearDavBaseCache() { homeSetCache.clear() }
+
+/** The path of a DAV href, which may be an absolute URL (RFC 4918 §8.3). */
+export function hrefPath(href) {
+  const h = String(href || '').trim()
+  if (/^https?:\/\//i.test(h)) {
+    try { return new URL(h).pathname } catch { return h }
+  }
+  return h
+}
+
+/** Two hrefs name the same resource (ignoring percent-encoding and a trailing slash). */
+export function sameHref(a, b) {
+  const norm = (h) => {
+    let p = hrefPath(h)
+    try { p = decodeURIComponent(p) } catch {}
+    return p.replace(/\/+$/, '')
+  }
+  return norm(a) === norm(b)
+}
 
 // Join a DAV base path with a relative (or already-absolute) sub-path.
 // Returns a path WITHOUT a trailing slash. Sites that target a DAV collection
