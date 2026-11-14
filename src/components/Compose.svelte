@@ -1,12 +1,14 @@
 <script lang="ts">
   import { apiFetch, MailAPI } from '../api'
-  import { store, getState, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setIsLoading, setComposeScheduled, clearCompose, setComposing } from '../store'
+  import { store, getState, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setComposeScheduled, clearCompose, setComposing } from '../store'
   import { onMount } from 'svelte'
   import { addQueuedMessage } from '../lib/offlineQueue'
   import { buildMessageBody, normalizeAccount, type Signature } from '../lib/signature'
   import { fileToAttachment, type OutboundAttachment, AttachmentTooLargeError } from '../lib/attachments'
   import RecipientAutocomplete from './RecipientAutocomplete.svelte'
   import { splitRecipients } from '../lib/recipients'
+  import { quoteOriginal, threadHeaders, type ReplyMode } from '../lib/reply'
+  import type { MailMessage } from '../store'
 
   // onDraftSaved(folder): the draft is stored on the server in `folder` (the
   // real IMAP path of the Drafts mailbox), so the app can refresh that view.
@@ -21,39 +23,73 @@
   let subjectInput = $state(getState().composeSubject || '')
   let bodyInput    = $state(getState().composeBody || '')
 
-  // ---- Signature seeding ----
-  function quotedOriginal(): string | null {
-    const m = getState().composeOriginalMessage
-    if (!m) return null
-    return m.body || m.bodyHtml || null
-  }
-  function applySignature(sig: Signature, original: string | null): boolean {
-    if (!sig || !sig.enabled || !sig.text.trim()) {
-      if (original) { const q = '\n--\n' + original; bodyInput = q; setComposeBody(q) }
-      return false
-    }
-    const body = buildMessageBody(sig, '', original)
-    if (body) { bodyInput = body; setComposeBody(body) }
-    return true
-  }
-  async function seedBody() {
-    const s = getState()
-    const account = s.accounts.find(a => a.id === s.activeAccountId)
-    if (account && (account as any).signature) {
-      applySignature((account as any).signature, quotedOriginal())
-      return
-    }
+  // ---- Reply / forward: the full original ----
+  // The list row (or the store copy) may lack the body, Message-ID and
+  // attachment ids, so fetch the message itself; fall back to what we have.
+  const original = getState().composeOriginalMessage
+  const mode: ReplyMode | null = original ? (getState().composeForward ? 'forward' : 'reply') : null
+  let fullOriginal: MailMessage | null = original
+  async function loadOriginal(): Promise<MailMessage | null> {
+    if (!original) return null
     try {
-      const res = await apiFetch('/api/account')
-      if (!res.ok) return
-      const raw = await res.json()
-      if (!raw || raw.connected === false || !raw.signature) return
-      applySignature(normalizeAccount(raw as Record<string, unknown>).signature, quotedOriginal())
-    } catch { /* offline / no backend: seed with nothing */ }
+      const full = await MailAPI.message(original.id, original.folder || getState().activeFolder)
+      if (full) fullOriginal = { ...original, ...full }
+    } catch { /* offline: quote what the list had */ }
+    return fullOriginal
   }
 
-  let showCc = $state(false)
-  let showBcc = $state(false)
+  // ---- Signature seeding ----
+  function applySignature(sig: Signature, quoted: string | null): string {
+    if (!sig || !sig.enabled || !sig.text.trim()) return quoted ? '\n--\n' + quoted : ''
+    return buildMessageBody(sig, '', quoted)
+  }
+  async function loadSignature(): Promise<Signature | null> {
+    const s = getState()
+    const account = s.accounts.find(a => a.id === s.activeAccountId)
+    if (account && account.signature) return account.signature
+    try {
+      const res = await apiFetch('/api/account')
+      if (!res.ok) return null
+      const raw = await res.json()
+      if (!raw || raw.connected === false || !raw.signature) return null
+      return normalizeAccount(raw as Record<string, unknown>).signature
+    } catch { return null /* offline / no backend: seed with nothing */ }
+  }
+  // Signature and quote are filled in once loaded; text typed meanwhile is
+  // kept in front of them instead of being overwritten.
+  let seeded = $state(false)
+  const initialBody = bodyInput
+  async function seedBody() {
+    const [sig, orig] = await Promise.all([loadSignature(), loadOriginal()])
+    const quoted = orig && mode ? quoteOriginal(orig, mode) : null
+    const extra = sig ? applySignature(sig, quoted) : (quoted ? '\n--\n' + quoted : '')
+    if (extra && initialBody === '') {
+      const typed = bodyInput
+      bodyInput = typed ? typed + (extra.startsWith('\n') ? '' : '\n\n') + extra : extra
+      setComposeBody(bodyInput)
+    }
+    if (orig && mode === 'forward') await attachForwarded(orig)
+    seeded = true
+  }
+
+  // A forward carries the original's attachments (removable like any other).
+  async function attachForwarded(orig: MailMessage) {
+    for (const att of orig.attachments ?? []) {
+      if (!att.id) continue
+      try {
+        const res = await MailAPI.attachment(orig.id, att.id, orig.folder || getState().activeFolder)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const blob = await res.blob()
+        const file = new File([blob], att.filename || 'attachment', { type: att.contentType || blob.type })
+        attachments.push(await fileToAttachment(file))
+      } catch (err) {
+        attachmentError = `Could not attach ${att.filename}: ${err instanceof Error ? err.message : String(err)}`
+      }
+    }
+  }
+
+  let showCc = $state(ccValue !== '')
+  let showBcc = $state(bccValue !== '')
   let showSchedule = $state(false)
   let scheduleDate = $state('')
   let scheduleTime = $state('')
@@ -74,7 +110,9 @@
   }
 
   function handleKeyDown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
+    // Escape already used (e.g. to close the recipient suggestions) must not
+    // also close the window and lose the message.
+    if (e.key === 'Escape' && !e.defaultPrevented) {
       e.preventDefault()
       onClose()
       return
@@ -112,7 +150,12 @@
     }
   }
 
+  // Set synchronously on the first click, so a double click (or Ctrl+Enter
+  // while the request is in flight) cannot send the message twice.
+  let sending = $state(false)
+
   function handleSend() {
+    if (sending) return
     const to   = parseRecipients(toValue)
     const cc   = parseRecipients(ccValue)
     const bcc  = parseRecipients(bccValue)
@@ -127,7 +170,7 @@
       return
     }
 
-    setIsLoading(true)
+    sending = true
 
     const message: Record<string, unknown> = {
       to,
@@ -135,7 +178,8 @@
       bcc,
       subject: subjectInput,
       body: bodyInput,
-      scheduled: getState().composeScheduled
+      scheduled: getState().composeScheduled,
+      ...(fullOriginal && mode ? threadHeaders(fullOriginal, mode) : {})
     }
     if (attachments.length) message.attachments = attachments
 
@@ -167,6 +211,7 @@
             subject: subjectInput,
             body: bodyInput,
             scheduled: getState().composeScheduled,
+            ...(fullOriginal && mode ? threadHeaders(fullOriginal, mode) : {}),
             createdAt: new Date().toISOString()
           }
           if (attachments.length) queued.attachments = attachments
@@ -182,7 +227,7 @@
       }
     })
     .finally(() => {
-      setIsLoading(false)
+      sending = false
     })
   }
 
@@ -356,6 +401,7 @@
     <div class="compose-editor">
       <textarea
         id="compose-body"
+        data-seeded={seeded ? 'true' : undefined}
         bind:value={bodyInput}
         oninput={() => setComposeBody(bodyInput)}
         placeholder="Write your message..."
@@ -427,9 +473,9 @@
         type="button"
         class="btn-primary"
         onclick={handleSend}
-        disabled={$store.isLoading}
+        disabled={sending}
       >
-        {#if $store.isLoading}Sending...{:else}Send{/if}
+        {#if sending}Sending...{:else}Send{/if}
       </button>
     </div>
   </div>

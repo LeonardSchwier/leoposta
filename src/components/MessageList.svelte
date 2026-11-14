@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { store, getState, selectMessage, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, updateMessage, setComposeCc } from '../store'
+  import { store, selectMessage, updateMessage } from '../store'
+  import { startReply } from '../lib/reply'
   import ContextMenu from './ContextMenu.svelte'
   import { computeVirtualRange } from '../lib/virtualList'
 
@@ -40,37 +41,11 @@
   }
   function closeMenu() { menuFor = null }
 
-  function isOwnEmail(addr: string) {
-    const s = getState()
-    const acc = s.accounts.find(a => a.id === s.activeAccountId)
-    if (!acc) return false
-    return addr.toLowerCase() === acc.email.toLowerCase()
-  }
-  function extractEmail(v: any): string {
-    if (!v) return ''
-    const s = Array.isArray(v) ? v.join(', ') : String(v)
-    const m = s.match(/[\w.+-]+@[\w.-]+\.\w+/)
-    return m ? m[0] : s
-  }
-  function handleReplyAll(message: any) {
-    const from = extractEmail(message.fromAddress || message.from)
-    const toList = (Array.isArray(message.to) ? message.to : [message.to]).map(extractEmail).filter((e: string) => e && !isOwnEmail(e))
-    const ccList = (Array.isArray(message.cc) ? message.cc : [message.cc]).map(extractEmail).filter((e: string) => e && !isOwnEmail(e))
-    const recipients = Array.from(new Set([...toList, ...ccList]))
-    if (recipients.length === 0) recipients.push(from)
-    setComposeTo(recipients)
-    setComposeCc([])
-    setComposeSubject(`Re: ${message.subject}`)
-    setComposeReplyTo(message.id)
-    setComposeOriginalMessage(message)
-    setComposing(true)
-  }
-
   function menuItems(message: any): MenuItem[] {
     return [
-      { label: 'Reply', icon: '↩', action: () => handleReply(message) },
-      { label: 'Reply All', icon: '↩↩', action: () => handleReplyAll(message) },
-      { label: 'Forward', icon: '⪡', action: () => handleForward(message) },
+      { label: 'Reply', icon: '↩', action: () => void startReply(message, 'reply') },
+      { label: 'Reply All', icon: '↩↩', action: () => void startReply(message, 'replyAll') },
+      { label: 'Forward', icon: '⪡', action: () => void startReply(message, 'forward') },
       { label: 'Archive', icon: '📦', action: () => onArchive?.() },
       { divider: true, label: '', action: undefined },
       { label: 'Delete', icon: '✕', danger: true, action: () => onDelete?.() },
@@ -109,21 +84,6 @@
     if (!flags.includes('\\Seen') && !flags.includes('Seen')) {
       updateMessage(message.id, { flags: [...flags, '\\Seen'] })
     }
-  }
-  function handleReply(message: any) {
-    const from = extractEmail(message.fromAddress || message.from)
-    setComposeTo([from].filter(Boolean))
-    setComposeSubject(`Re: ${message.subject}`)
-    setComposeReplyTo(message.id)
-    setComposeOriginalMessage(message)
-    setComposing(true)
-  }
-  function handleForward(message: any) {
-    setComposeTo([])
-    setComposeSubject(`Fwd: ${message.subject}`)
-    setComposeForward(true)
-    setComposeOriginalMessage(message)
-    setComposing(true)
   }
 </script>
 
