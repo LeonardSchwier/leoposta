@@ -10,9 +10,12 @@
   import Settings from './components/Settings.svelte'
   import Calendar from './components/Calendar.svelte'
   import Contacts from './components/Contacts.svelte'
-  import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward, bootstrapRefreshMode } from './store'
+  import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setComposeDraft, setComposeReplyTo, setComposeOriginalMessage, setComposeForward, bootstrapRefreshMode } from './store'
   import { startRefresh, stopRefresh } from './refresh'
-  import { MailAPI } from './api'
+  import { ApiError, MailAPI } from './api'
+  import MovePicker from './components/MovePicker.svelte'
+  import { runMessageAction, hasFlag, type MessageAction } from './lib/messageActions'
+  import { encodeBase64, type OutboundAttachment } from './lib/attachments'
   import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
   import { beginSplitDrag } from './lib/splitHandle'
   import { specialFolderPath } from './lib/specialFolders'
@@ -168,6 +171,8 @@
     try {
       const data = await MailAPI.messages(folder)
       if (data.messages) {
+        // Rules moved or flagged new mail on the server: other folders' counts changed.
+        if (data.ruleActions > 0) loadFolders()
         setMessages(data.messages)
         setUnreadCount(data.messages.filter((m: any) =>
           !m.flags?.includes('\\Seen') && !m.flags?.includes('Seen')
@@ -260,9 +265,64 @@
     if (getState().activeFolder === folder) loadMessages(folder)
   }
 
-  function handleSelectMessage(id: string) {
-    selectMessage(id)
+  // A mail was sent; if it was a reopened draft, Compose removed that draft:
+  // refresh the Drafts list when it is on screen.
+  function handleSent() {
+    loadFolders()
+    if (isDraftsFolder(getState().activeFolder)) loadMessages(getState().activeFolder)
+  }
+
+  function isDraftsFolder(folder: string): boolean {
+    return folder === specialFolderPath(getState().folders, '\\Drafts', 'Drafts')
+  }
+
+  /** The user opened a message whose server copy is gone (another client deleted it). */
+  function messageGone(id: string) {
+    deleteMessage(id)
+    showToast('That message no longer exists on the server')
+    loadFolders()
+  }
+
+  // Reopen a draft from the Drafts mailbox in Compose with everything restored
+  // (recipients incl. Bcc, subject, body, attachment bytes). Saving it again
+  // replaces that server copy; sending it removes it (Compose, composeDraft).
+  async function openDraft(id: string, folder: string) {
+    selectMessage(null)
+    try {
+      const data = await MailAPI.message(id, folder)
+      const attachments: OutboundAttachment[] = []
+      for (const a of (data.attachments || []) as { id?: string, filename?: string, contentType?: string }[]) {
+        if (!a.id) continue
+        const res = await MailAPI.attachment(id, a.id, folder)
+        if (!res.ok) throw new Error(`Could not load the attachment ${a.filename || ''} (${res.status})`)
+        attachments.push({
+          filename: a.filename || 'attachment',
+          content: encodeBase64(await res.arrayBuffer()),
+          contentType: a.contentType || 'application/octet-stream'
+        })
+      }
+      clearCompose()
+      setComposeTo(data.to || [])
+      setComposeCc(data.cc || [])
+      setComposeBcc(data.bcc || [])
+      setComposeSubject(data.subject === '(No Subject)' ? '' : (data.subject || ''))
+      setComposeBody(data.body || '')
+      setComposeDraft({ uid: id, attachments })
+      setComposing(true)
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) messageGone(id)
+      else showToast('Could not open the draft: ' + (e instanceof Error ? e.message : String(e)))
+    }
+  }
+
+  // `open`: the user clicked the message (vs. moving through the list with
+  // the keyboard). A clicked draft opens in Compose.
+  function handleSelectMessage(id: string, open = false) {
     const folder = getState().activeFolder
+    if (open && isDraftsFolder(folder)) { void openDraft(id, folder); return }
+    selectMessage(id)
+    const wasUnread = !hasFlag(getState().messages.find((m) => m.id === id), '\\Seen')
+    if (wasUnread) updateMessage(id, { flags: [...(getState().messages.find((m) => m.id === id)?.flags || []), '\\Seen'] })
     MailAPI.message(id, folder).then(data => {
       if (data) {
         putMessageCache({ key: `${folder}:${id}`, folder, id, message: data, full: true }).catch(() => {})
@@ -274,8 +334,11 @@
           cc: data.cc,
           bcc: data.bcc
         })
+        // Opening marked it \Seen on the server: the folder's unread count changed.
+        if (wasUnread) loadFolders()
       }
     }).catch(e => {
+      if (e instanceof ApiError && e.status === 404) { messageGone(id); return }
       // Offline: load the full message from the local cache (if it was ever opened).
       getMessageCache(folder, id).then(c => {
         if (c?.full && c.message) {
@@ -292,39 +355,18 @@
     })
   }
 
-  function handleDelete() {
+  // Message actions name the message they act on (lib/messageActions.ts); the
+  // keyboard shortcuts act on the open message.
+  function act(id: string, action: MessageAction) {
+    void runMessageAction(id, action, { notify: (t) => showToast(t), changed: () => { loadFolders() } })
+  }
+  function actOnSelected(action: MessageAction) {
     const id = getState().selectedMessageId
-    if (!id) return
-    const folder = getState().activeFolder
-    MailAPI.delete(id, folder).then(() => {
-      deleteMessage(id)
-    }).catch(e => setError(e.message))
+    if (id) act(id, action)
   }
 
-  function handleArchive() {
-    const id = getState().selectedMessageId
-    if (!id) return
-    const folder = getState().activeFolder
-    MailAPI.move(id, folder, 'Archive').then(() => {
-      deleteMessage(id)
-    }).catch(e => setError(e.message))
-  }
-
-  function handleStar() {
-    const id = getState().selectedMessageId
-    if (!id) return
-    const folder = getState().activeFolder
-    const msg = getState().messages.find((m: any) => m.id === id)
-    if (!msg) return
-    const isFlagged = msg.flags?.includes('\\Flagged') || msg.flags?.includes('Flagged')
-    const base = (msg.flags || []).filter((f: string) => f !== '\\Flagged' && f !== 'Flagged')
-    const flags = isFlagged ? base : [...base, '\\Flagged']
-    const add = isFlagged ? [] : ['\\Flagged']
-    const remove = isFlagged ? ['\\Flagged'] : []
-    MailAPI.setFlags(id, folder, add, remove).then(() => {
-      updateMessage(id, { flags })
-    }).catch(e => setError(e.message))
-  }
+  let moveFor = $state<string | null>(null)
+  function requestMove(id: string) { moveFor = id }
 
   function openCompose() {
     setComposing(true)
@@ -372,13 +414,9 @@
       return
     }
 
-    if (isTyping(e)) {
-      if (e.key === 'Escape' && getState().isComposing) {
-        setComposing(false)
-        clearCompose()
-      }
-      return
-    }
+    // Compose handles its own Escape (it asks before discarding unsaved text).
+    if (isTyping(e)) return
+    if (moveFor) return
 
     const s = getState()
     const msgs = s.messages
@@ -414,16 +452,24 @@
         break
       case 'a':
         e.preventDefault()
-        handleArchive()
+        actOnSelected('archive')
         break
       case 'd':
-      case 'delete':
+      case 'Delete':
         e.preventDefault()
-        handleDelete()
+        actOnSelected('delete')
         break
       case 's':
         e.preventDefault()
-        handleStar()
+        actOnSelected('toggleStar')
+        break
+      case 'u':
+        e.preventDefault()
+        actOnSelected('toggleRead')
+        break
+      case 'v':
+        e.preventDefault()
+        if (s.selectedMessageId) requestMove(s.selectedMessageId)
         break
       case '/': {
         e.preventDefault()
@@ -435,7 +481,7 @@
       }
       case '?':
         e.preventDefault()
-        showToast('? palette · n new · Ctrl+Enter send · r reply · a archive · d delete · s star · / search · Esc close', 6000)
+        showToast('? palette · n new · Ctrl+Enter send · r reply · a archive · d delete · s star · u read/unread · v move · / search · Esc close', 6000)
         break
       case 'Escape':
         e.preventDefault()
@@ -500,6 +546,8 @@
     }
     startRefresh(mode, () => {
       loadMessages(getState().activeFolder).catch(() => {})
+      // New mail changes the unread counts in the sidebar.
+      loadFolders()
     })
   })
 </script>
@@ -529,6 +577,7 @@
       <Compose
         onClose={() => { setComposing(false); clearCompose() }}
         onDraftSaved={handleDraftSaved}
+        onSent={handleSent}
       />
     {:else if appMode === 'calendar'}
       <Calendar showToast={showToast} />
@@ -538,10 +587,9 @@
       <div class="content" style:--list-w={listWidth}>
         <MessageList
           onCompose={openCompose}
-          onSelectMessage={handleSelectMessage}
-          onDelete={handleDelete}
-          onArchive={handleArchive}
-          onStar={handleStar}
+          onSelectMessage={(id) => handleSelectMessage(id, true)}
+          onAction={act}
+          onMoveRequest={requestMove}
           onSearch={handleSearch}
           searchQuery={searchQuery}
           isLoading={$store.isLoading}
@@ -556,15 +604,24 @@
         ></div>
         {#if $store.selectedMessageId}
           <MessageView
-            onDelete={handleDelete}
-            onArchive={handleArchive}
-            onStar={handleStar}
+            onAction={act}
+            onMoveRequest={requestMove}
+            onEditDraft={isDraftsFolder($store.activeFolder) ? (id) => openDraft(id, $store.activeFolder) : undefined}
             onReply={handleReplyKeyboard}
           />
         {/if}
       </div>
     {/if}
   </main>
+
+  {#if moveFor}
+    <MovePicker
+      folders={$store.folders}
+      current={$store.activeFolder}
+      onPick={(path) => { if (moveFor) act(moveFor, { moveTo: path }) }}
+      onClose={() => { moveFor = null }}
+    />
+  {/if}
 
   {#if showPalette}
     <CommandPalette commands={paletteCommands} onClose={() => { showPalette = false }} />
