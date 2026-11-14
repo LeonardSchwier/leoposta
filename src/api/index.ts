@@ -80,8 +80,9 @@ export const MailAPI = {
     method: 'POST', body: JSON.stringify({ name, parentId })
   }),
   deleteFolder: (name: string) => api(`/folder?path=${encodeURIComponent(name)}`, { method: 'DELETE' }),
-  renameFolder: (from: string, to: string) => api('/folder/rename', {
-    method: 'POST', body: JSON.stringify({ from, to })
+  /** Rename a folder in place (same parent); resolves { success, path } with its new path. */
+  renameFolder: (from: string, name: string): Promise<{ success: boolean, path: string }> => api('/folder/rename', {
+    method: 'POST', body: JSON.stringify({ from, name })
   }),
   /** Authenticated download of one received attachment (see lib/attachmentDownload). */
   attachment: (id: string, attachmentId: string, folder: string) =>

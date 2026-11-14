@@ -4,7 +4,10 @@ import {
   toggleExpanded,
   loadExpanded,
   saveExpanded,
-  EXPANDED_STORAGE_KEY
+  EXPANDED_STORAGE_KEY,
+  isSameOrBelow,
+  movedPath,
+  renameExpanded
 } from '../lib/folderTree'
 
 const f = (id: string, name: string, parentId: string | null = null, extra: any = {}) =>
@@ -78,5 +81,20 @@ describe('expanded persistence', () => {
     mem.set(EXPANDED_STORAGE_KEY, '{not json')
     expect(loadExpanded(storage).size).toBe(0)
     expect(loadExpanded(null).size).toBe(0)
+  })
+})
+
+describe('rename/delete path helpers', () => {
+  it('isSameOrBelow respects the delimiter and does not match name prefixes', () => {
+    expect(isSameOrBelow('Tree', 'Tree', '/')).toBe(true)
+    expect(isSameOrBelow('Tree/A/B', 'Tree', '/')).toBe(true)
+    expect(isSameOrBelow('Treehouse', 'Tree', '/')).toBe(false)
+    expect(isSameOrBelow('INBOX.Tree.A', 'INBOX.Tree', '.')).toBe(true)
+    expect(isSameOrBelow('INBOX.Treehouse', 'INBOX.Tree', '.')).toBe(false)
+  })
+  it('movedPath and renameExpanded carry children along', () => {
+    expect(movedPath('INBOX.Old.Child', 'INBOX.Old', 'INBOX.New', '.')).toBe('INBOX.New.Child')
+    expect(movedPath('INBOX.Older', 'INBOX.Old', 'INBOX.New', '.')).toBe('INBOX.Older')
+    expect([...renameExpanded(new Set(['Old', 'Old/Child', 'Other']), 'Old', 'New', '/')]).toEqual(['New', 'New/Child', 'Other'])
   })
 })

@@ -7,6 +7,7 @@
     loadExpanded,
     saveExpanded,
     toggleExpanded,
+    renameExpanded,
     type FolderNode
   } from '../lib/folderTree'
 
@@ -24,22 +25,41 @@
 
   type MenuItem = { label: string; icon?: string; action?: () => void; danger?: boolean; divider?: boolean }
   let menuPos = $state({ x: 0, y: 0 })
-  let menuFolder = $state<any>(null)
-  function showFolderMenu(e: MouseEvent, folder: any) {
+  let menuItems = $state<MenuItem[] | null>(null)
+  function showMenu(e: MouseEvent, items: MenuItem[]) {
     e.preventDefault()
     e.stopPropagation()
     menuPos = { x: e.clientX, y: e.clientY }
-    menuFolder = folder
+    menuItems = items
   }
-  function closeMenu() { menuFolder = null }
+  function closeMenu() { menuItems = null }
+
+  const newFolderItem: MenuItem = { label: 'New Folder', icon: '📁', action: () => onNewFolder?.() }
 
   function folderItems(folder: any): MenuItem[] {
     return [
-      { label: 'New Subfolder', icon: '➕', action: () => onNewSubFolder?.(folder.id) },
-      { label: 'Rename', icon: '✎', action: () => onRenameFolder?.(folder) },
+      newFolderItem,
+      { label: 'New Subfolder', icon: '➕', action: () => newSubFolder(folder) },
+      { label: 'Rename', icon: '✎', action: () => renameFolder(folder) },
       { divider: true, label: '', action: undefined },
       { label: 'Delete Folder', icon: '🗑', danger: true, action: () => onDeleteFolder?.(folder) },
     ]
+  }
+
+  // The parent is expanded so the new subfolder is visible once the list reloads.
+  function newSubFolder(folder: any) {
+    if (!expandedFolders.has(folder.id)) toggleFolder(folder.id)
+    onNewSubFolder?.(folder.id)
+  }
+
+  // onRenameFolder resolves to the folder's new path (or null when cancelled);
+  // the folder and its children keep their expanded state under the new path.
+  async function renameFolder(folder: any) {
+    const to = await onRenameFolder?.(folder)
+    if (typeof to === 'string' && to && to !== folder.id) {
+      expandedFolders = renameExpanded(expandedFolders, folder.id, to, folder.delimiter)
+      saveExpanded(expandedFolders)
+    }
   }
   
   const activeFolder = $derived($store.activeFolder)
@@ -116,7 +136,7 @@
       class:active={activeFolder === node.id}
       class:ancestor-active={!isExpanded && isAncestorOfActive(node)}
       style:padding-left="{4 + node.depth * 14}px"
-      oncontextmenu={(e) => showFolderMenu(e, node.folder)}
+      oncontextmenu={(e) => showMenu(e, folderItems(node.folder))}
       role="presentation"
     >
       {#if hasChildren}
@@ -192,8 +212,12 @@
       </button>
     {/each}
     
+    <!-- Always shown: it is where the first custom folder gets created. -->
+    <div class="section-label section-label-row" role="presentation" oncontextmenu={(e) => showMenu(e, [newFolderItem])}>
+      <span>Folders</span>
+      <button type="button" class="section-add" title="New folder" aria-label="New folder" onclick={() => onNewFolder?.()}>+</button>
+    </div>
     {#if folderTree.length > 0}
-      <div class="section-label" oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); onNewFolder?.() }}>Folders</div>
       <ul class="folder-tree" role="tree" aria-label="Folders">
         {#each folderTree as node (node.id)}
           {@render folderNode(node)}
@@ -209,11 +233,11 @@
     </button>
   </div>
 
-  {#if menuFolder}
+  {#if menuItems}
     <ContextMenu
       x={menuPos.x}
       y={menuPos.y}
-      items={folderItems(menuFolder)}
+      items={menuItems}
       onClose={closeMenu}
     />
   {/if}
@@ -279,6 +303,30 @@
     padding: 10px 8px 3px;
   }
   
+  .section-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .section-add {
+    width: 18px;
+    height: 18px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--color-text-secondary);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .section-add:hover {
+    background: var(--color-border);
+    color: var(--color-text);
+  }
+
   .folder-item {
     display: flex;
     align-items: center;
