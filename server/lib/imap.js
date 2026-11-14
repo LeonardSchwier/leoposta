@@ -78,8 +78,14 @@ export function makePool(acct, connectClient = createImapClient) {
     async _exec(fn, retry) {
       let lastErr
       for (let i = 0; i < retry; i++) {
+        const reused = isUsable(this.client)
         const c = await this.ensure()
         try {
+          // A reused session does not see what changed in its selected mailbox
+          // since its last command (new mail, expunges by other clients):
+          // getMailboxLock() on that same mailbox skips SELECT. NOOP fetches
+          // the pending EXISTS/EXPUNGE and also proves the session is alive.
+          if (reused && c.mailbox) await c.noop()
           return await fn(c)
         } catch (e) {
           lastErr = e

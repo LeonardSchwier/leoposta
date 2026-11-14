@@ -73,6 +73,7 @@ function makeFakeClient({ messages = [], addResult = true, removeResult = true, 
   const client = {
     usable: true,
     authenticated: 'tester',
+    async noop() {},
     calls,
     mailbox: { exists: messages.length, unseen: messages.filter((m) => !m.flags.has('\\Seen')).length },
     async getMailboxLock(p) {
