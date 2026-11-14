@@ -57,7 +57,8 @@ function makeFakeClient({
   deleteResult = true,
   createResult = undefined,
   createError = null,
-  namespacePrefix = ''
+  namespacePrefix = '',
+  missing = []
 } = {}) {
   const normalize = (p) => {
     if (String(p).toUpperCase() === 'INBOX') return 'INBOX'
@@ -69,6 +70,11 @@ function makeFakeClient({
     capabilities: new Set(move ? ['IMAP4rev1', 'MOVE', 'UIDPLUS'] : ['IMAP4rev1', 'UIDPLUS']),
     calls,
     async list() { calls.push(['list']); return mailboxes },
+    // ImapFlow: fetchOne resolves false for a UID that is not in the mailbox.
+    async fetchOne(range, query, o) {
+      calls.push(['fetchOne', range, query, o])
+      return missing.includes(Number(range)) ? false : { uid: Number(range) }
+    },
     async getMailboxLock(p) {
       const resolved = normalize(p)
       calls.push(['lock', resolved])
@@ -294,6 +300,79 @@ test('POST /message/:id/move still moves and reports success', async () => {
   const c = useClient()
   const res = await move(9, { from: 'INBOX', to: 'Archive' })
   assert.equal(res.status, 200)
-  assert.deepEqual(res.body, { success: true })
+  assert.deepEqual(res.body, { success: true, folder: 'Archive' })
   assert.deepEqual(find(c, 'messageMove').slice(1), [9, 'Archive', { uid: true }])
+})
+
+// ── moves to a special-use mailbox, and messages that are gone ─────────────
+
+const DOT_MAILBOXES = [
+  { path: 'INBOX', specialUse: '\\Inbox', delimiter: '.' },
+  { path: 'INBOX.Archive', specialUse: '\\Archive', delimiter: '.' },
+  { path: 'INBOX.Junk', specialUse: '\\Junk', delimiter: '.' },
+  { path: 'INBOX.Trash', specialUse: '\\Trash', delimiter: '.' }
+]
+
+test('Archive moves to the mailbox flagged \\Archive ("INBOX.Archive"), not a hard-coded "Archive"', async () => {
+  const c = useClient({ mailboxes: DOT_MAILBOXES, namespacePrefix: 'INBOX.' })
+  const res = await move(9, { from: 'INBOX', toSpecialUse: '\\Archive' })
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.body, { success: true, folder: 'INBOX.Archive' })
+  assert.deepEqual(find(c, 'messageMove').slice(1), [9, 'INBOX.Archive', { uid: true }])
+})
+
+test('Junk moves to the \\Junk mailbox whatever it is called; "Not junk" moves back to INBOX', async () => {
+  const c = useClient({ mailboxes: [{ path: 'INBOX' }, { path: 'Spam', specialUse: '\\Junk' }] })
+  const res = await move(9, { from: 'INBOX', toSpecialUse: '\\Junk' })
+  assert.deepEqual(res.body, { success: true, folder: 'Spam' })
+  assert.deepEqual(find(c, 'messageMove').slice(1), [9, 'Spam', { uid: true }])
+  const back = await move(9, { from: 'Spam', toSpecialUse: '\\Inbox' })
+  assert.deepEqual(back.body, { success: true, folder: 'INBOX' })
+})
+
+test('without an Archive mailbox one is created and the message moved to the path the server reports', async () => {
+  const c = useClient({ mailboxes: [{ path: 'INBOX' }], createResult: { path: 'INBOX.Archive', created: true } })
+  const res = await move(9, { from: 'INBOX', toSpecialUse: '\\Archive' })
+  assert.equal(res.status, 200)
+  assert.deepEqual(find(c, 'mailboxCreate').slice(1), ['Archive'])
+  assert.deepEqual(find(c, 'messageMove').slice(1), [9, 'INBOX.Archive', { uid: true }])
+})
+
+test('an unknown special use is rejected before the server is touched', async () => {
+  const c = useClient()
+  const res = await move(9, { from: 'INBOX', toSpecialUse: '\\Flagged' })
+  assert.equal(res.status, 400)
+  assert.deepEqual(names(c), [])
+})
+
+test('archiving a message that is already in Archive is an error, not a no-op success', async () => {
+  const c = useClient({ mailboxes: DOT_MAILBOXES, namespacePrefix: 'INBOX.' })
+  const res = await move(9, { from: 'Archive', toSpecialUse: '\\Archive' })
+  assert.equal(res.status, 500)
+  assert.ok(!names(c).includes('messageMove'))
+  assert.ok(!names(c).includes('logout'))
+})
+
+test('moving, deleting or flagging a message another client already deleted is a 404 that keeps the connection', async () => {
+  for (const [label, call] of [
+    ['move', () => move(9, { from: 'INBOX', to: 'Archive' })],
+    ['special move', () => move(9, { from: 'INBOX', toSpecialUse: '\\Archive' })],
+    ['delete', () => del(9)],
+    ['flags', async () => {
+      const r = await fetch(`${base}/api/message/9/flags`, {
+        method: 'POST', headers: { ...authed, 'content-type': 'application/json' },
+        body: JSON.stringify({ folder: 'INBOX', add: ['\\Seen'] })
+      })
+      return { status: r.status, body: await r.json() }
+    }]
+  ]) {
+    const c = useClient({ missing: [9] })
+    const res = await call()
+    assert.equal(res.status, 404, label)
+    assert.equal(res.body.error, 'message_not_found', label)
+    for (const n of ['messageMove', 'messageCopy', 'messageDelete', 'messageFlagsAdd', 'logout']) {
+      assert.ok(!names(c).includes(n), `${label}: ${n} must not run`)
+    }
+    assert.ok(names(c).includes('release'), `${label}: the mailbox lock is released`)
+  }
 })

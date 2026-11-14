@@ -98,7 +98,7 @@ function makeFakeClient({ messages = [], addResult = true, removeResult = true, 
     },
     async messageFlagsAdd(range, flags, opts) { calls.push(['messageFlagsAdd', range, flags, opts]); return addResult },
     async messageFlagsRemove(range, flags, opts) { calls.push(['messageFlagsRemove', range, flags, opts]); return removeResult },
-    async list() { calls.push(['list']); return mailboxes },
+    async list(opts) { calls.push(['list', opts]); return mailboxes },
     async mailboxCreate(p) { calls.push(['mailboxCreate', p]); return { path: p, created: true } },
     logout() { calls.push(['logout']); return Promise.resolve() }
   }
@@ -219,6 +219,32 @@ test('opening an unread message marks it \\Seen through messageFlagsAdd', async 
   assert.equal(res.status, 200)
   assert.deepEqual(find(c, 'messageFlagsAdd').slice(1), [5, ['\\Seen'], { uid: true }])
   assert.ok(!names(c).includes('logout'))
+})
+
+test('opening a message another client deleted is a 404 that keeps the connection and releases the lock', async () => {
+  const c = useClient({ messages: [message(7)] })
+  const res = await getMessage(8)
+  assert.equal(res.status, 404)
+  assert.equal(res.body.error, 'message_not_found')
+  assert.ok(!names(c).includes('logout'), 'a missing message is not a broken connection')
+  assert.ok(names(c).includes('release'))
+})
+
+test('opening a message fetches it by UID, not by a sequence number from a 1:* scan', async () => {
+  const c = useClient({ messages: [message(7), message(9)] })
+  const res = await getMessage(9)
+  assert.equal(res.status, 200)
+  assert.equal(res.body.id, '9')
+  assert.deepEqual(find(c, 'fetchOne').slice(1, 2), ['9'])
+  assert.equal(find(c, 'fetchOne')[3]?.uid, true)
+})
+
+test('a draft keeps its Bcc when reopened: the envelope Bcc is returned', async () => {
+  const m = message(5, { flags: ['\\Seen', '\\Draft'] })
+  m.envelope.bcc = [{ address: 'hidden@example.test' }]
+  useClient({ messages: [m] })
+  const res = await getMessage(5)
+  assert.deepEqual(res.body.bcc, ['hidden@example.test'])
 })
 
 test('opening a message that is already read does not touch its flags', async () => {
@@ -478,6 +504,26 @@ test('the folder list carries the real parent path, delimiter and \\Noselect for
   assert.equal(byId['INBOX.Projects.2026'].noselect, false)
   assert.equal(byId['2026/Projects/2026'].parentId, '2026/Projects')
   assert.equal(byId['2026/Projects/2026'].name, '2026')
+})
+
+test('the folder list carries every mailbox\'s real unread and total count from STATUS', async () => {
+  const c = useClient({
+    mailboxes: [
+      { ...mailbox('INBOX', '/'), status: { path: 'INBOX', messages: 5, unseen: 2 } },
+      { ...mailbox('Projects', '/', { flags: ['\\Noselect'] }) },
+      { ...mailbox('Projects/Q1', '/'), status: { path: 'Projects/Q1', messages: 1, unseen: 0 } },
+      { ...mailbox('Broken', '/'), status: { error: new Error('NO') } }
+    ]
+  })
+  const res = await fetch(`${base}/api/folders`, { headers: authed })
+  const { folders } = await res.json()
+  const byId = Object.fromEntries(folders.map((f) => [f.id, f]))
+  assert.deepEqual(find(c, 'list')[1], { statusQuery: { messages: true, unseen: true } })
+  assert.equal(byId['INBOX'].unseen, 2)
+  assert.equal(byId['INBOX'].exists, 5)
+  assert.equal(byId['Projects/Q1'].unseen, 0)
+  assert.equal(byId['Projects'].unseen, undefined)
+  assert.equal(byId['Broken'].unseen, undefined)
 })
 
 test('a new subfolder is created with the parent\'s delimiter, not a hard-coded "/"', async () => {
