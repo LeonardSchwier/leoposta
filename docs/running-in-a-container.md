@@ -46,7 +46,8 @@ No secret is baked into the image. All settings are optional.
 |----------|---------|---------|
 | `LEOPOSTA_TOKEN` | random per start | API token. Letters, digits, `.`, `_`, `-` only. Set it to keep it stable across restarts. |
 | `LEOPOSTA_IMAP_PASS`, `LEOPOSTA_SMTP_PASS` | unset | Passwords for the first account, kept out of the data volume ([README](../README.md#credentials)) |
-| `ALLOWED_ORIGINS` | `http://localhost:3001,http://127.0.0.1:3001,...` | Comma-separated browser origins allowed by CORS. Set it when you open the app under another host name. |
+| `ALLOWED_ORIGINS` | `http://localhost:3001,http://127.0.0.1:3001` | Comma-separated browser origins allowed by CORS. Set it when you open the app under another host name. |
+| `ALLOWED_HOSTS` | (empty) | Extra host names the server answers for. Loopback names and the host names in `ALLOWED_ORIGINS` are always allowed; any other `Host` header gets `403 host_not_allowed` (DNS-rebinding guard). |
 | `PORT` | `3001` | Listening port inside the container |
 | `LEOPOSTA_DATA_DIR` | `/data` | Where accounts, rules, scheduled mail and PGP keys are stored |
 

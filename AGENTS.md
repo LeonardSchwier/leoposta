@@ -175,6 +175,10 @@ list. (Multi-account support and email signature are both shipped —
 Leoposta is a mail client: HTML body rendering, IMAP/SMTP credentials on the
 backend, and a REST API are the three trust boundaries to defend.
 
+**When to run it, what to do with findings and the scanner commands:
+[`skills/security-review.md`](skills/security-review.md).** CI runs the
+scanners in `.github/workflows/security.yml`.
+
 - Skill installed at `~/.config/opencode/skills/security-audit/` (Cloudflare
   `security-audit-skill`, MIT). It is an OpenCode agent skill — run it from
   the agent, not from the app; it is not a runtime dependency.

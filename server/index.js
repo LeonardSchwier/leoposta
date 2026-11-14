@@ -5,6 +5,8 @@ import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
 import { requireToken } from './lib/auth.js'
+import { requireAllowedHost } from './lib/hostcheck.js'
+import { appCsp } from './lib/csp.js'
 import { apiErrorHandler, originNotAllowedError } from './lib/errors.js'
 import { API_TOKEN, TOKEN_FROM_ENV, ALLOWED_ORIGINS, state } from './lib/state.js'
 
@@ -21,6 +23,9 @@ import goaRoutes from './routes/goa.js'
 import { processPgp } from './lib/pgp.js'
 
 const app = express()
+
+// First: a foreign Host is a DNS-rebinding page (see lib/hostcheck.js).
+app.use(requireAllowedHost({ allowedOrigins: ALLOWED_ORIGINS, allowedHostsEnv: process.env.ALLOWED_HOSTS }))
 
 app.use(cors({
   origin: (origin, cb) => {
@@ -65,6 +70,7 @@ const DIST_DIR = process.env.LEOPOSTA_DIST_DIR
   ? path.resolve(process.env.LEOPOSTA_DIST_DIR)
   : path.resolve(new URL('..', import.meta.url).pathname, 'dist')
 if (fs.existsSync(DIST_DIR)) {
+  app.use(appCsp)
   app.use(express.static(DIST_DIR, { maxAge: '1h' }))
   app.get(/^\/(?!api\/).*/, (req, res) => res.sendFile(path.join(DIST_DIR, 'index.html')))
   console.log(`Serving PWA from ${DIST_DIR}`)
