@@ -32,7 +32,17 @@ await new Promise((resolve, reject) => {
 })
 const davBase = `http://127.0.0.1:${fakeDav.address().port}`
 
-const { createApp, processPgp } = await import('./index.js')
+const { createApp, processPgp: processFor } = await import('./index.js')
+const { state: appState } = await import('./lib/state.js')
+
+// PGP keys belong to an account: the PGP tests run against this one (added
+// for the test only, so the other tests see the accounts they expect).
+const PGP_ACCT = { id: 'acct-pgp-test', email: 'pgp@example.com' }
+const processPgp = (input) => processFor(input, PGP_ACCT)
+async function withPgpAccount(fn) {
+  appState.accounts.push(PGP_ACCT)
+  try { await fn() } finally { appState.accounts = appState.accounts.filter(a => a !== PGP_ACCT) }
+}
 
 let server
 let base
@@ -141,90 +151,90 @@ test('/api/send without a JSON body answers 400, not a destructuring crash', asy
   assert.doesNotMatch(data.error, /destructure/)
 })
 
-test('PGP: passphrase never persisted; locked until unlocked; wrong passphrase 401', async () => {
-  const pass = 'correct horse'
-  const { privateKey, publicKey } = await openpgp.generateKey({
-    type: 'ecc', curve: 'curve25519Legacy', userIDs: [{ name: 't', email: 't@example.com' }], passphrase: pass, format: 'armored'
-  })
-  const armored = await openpgp.encrypt({
-    message: await openpgp.createMessage({ text: 'Content-Type: text/plain\r\n\r\nsecret body' }),
-    encryptionKeys: await openpgp.readKey({ armoredKey: publicKey })
-  })
-  const json = { ...authed, 'content-type': 'application/json' }
-  const put = await fetch(`${base}/api/pgp`, { method: 'PUT', headers: json, body: JSON.stringify({ privateAsc: privateKey, passphrase: pass }) })
-  assert.equal(put.status, 200)
-  assert.equal(fs.existsSync(path.join(DATA_DIR, 'pgp_passphrase.txt')), false)
-  const st = await (await fetch(`${base}/api/pgp/status`, { headers: authed })).json()
-  assert.equal(st.hasPassphrase, true)
+test('PGP: passphrase never persisted; locked until unlocked; wrong passphrase 401', () => withPgpAccount(async () => {
+    const pass = 'correct horse'
+    const { privateKey, publicKey } = await openpgp.generateKey({
+      type: 'ecc', curve: 'curve25519Legacy', userIDs: [{ name: 't', email: 't@example.com' }], passphrase: pass, format: 'armored'
+    })
+    const armored = await openpgp.encrypt({
+      message: await openpgp.createMessage({ text: 'Content-Type: text/plain\r\n\r\nsecret body' }),
+      encryptionKeys: await openpgp.readKey({ armoredKey: publicKey })
+    })
+    const json = { ...authed, 'x-account': PGP_ACCT.email, 'content-type': 'application/json' }
+    const put = await fetch(`${base}/api/pgp`, { method: 'PUT', headers: json, body: JSON.stringify({ privateAsc: privateKey, passphrase: pass }) })
+    assert.equal(put.status, 200)
+    assert.equal(fs.existsSync(path.join(DATA_DIR, 'pgp_passphrase.txt')), false)
+    const st = await (await fetch(`${base}/api/pgp/status`, { headers: { ...authed, 'x-account': PGP_ACCT.email } })).json()
+    assert.equal(st.hasPassphrase, true)
 
-  // PUT with a passphrase must not unlock: lock first via a fresh lock call
-  await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: authed })
-  let r = await processPgp(armored)
-  assert.equal(r.decrypted, false)
-  assert.equal(r.error, 'pgp_locked')
+    // PUT with a passphrase must not unlock: lock first via a fresh lock call
+    await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: { ...authed, 'x-account': PGP_ACCT.email } })
+    let r = await processPgp(armored)
+    assert.equal(r.decrypted, false)
+    assert.equal(r.error, 'pgp_locked')
 
-  const bad = await fetch(`${base}/api/pgp/unlock`, { method: 'POST', headers: json, body: JSON.stringify({ passphrase: 'nope' }) })
-  assert.equal(bad.status, 401)
-  r = await processPgp(armored)
-  assert.equal(r.error, 'pgp_locked')
+    const bad = await fetch(`${base}/api/pgp/unlock`, { method: 'POST', headers: json, body: JSON.stringify({ passphrase: 'nope' }) })
+    assert.equal(bad.status, 401)
+    r = await processPgp(armored)
+    assert.equal(r.error, 'pgp_locked')
 
-  const ok = await fetch(`${base}/api/pgp/unlock`, { method: 'POST', headers: json, body: JSON.stringify({ passphrase: pass }) })
-  assert.equal(ok.status, 200)
-  assert.deepEqual(await ok.json(), { ok: true })
-  r = await processPgp(armored)
-  assert.equal(r.decrypted, true)
-  assert.match(r.text, /secret body/)
-  assert.equal(fs.existsSync(path.join(DATA_DIR, 'pgp_passphrase.txt')), false)
-})
+    const ok = await fetch(`${base}/api/pgp/unlock`, { method: 'POST', headers: json, body: JSON.stringify({ passphrase: pass }) })
+    assert.equal(ok.status, 200)
+    assert.deepEqual(await ok.json(), { ok: true })
+    r = await processPgp(armored)
+    assert.equal(r.decrypted, true)
+    assert.match(r.text, /secret body/)
+    assert.equal(fs.existsSync(path.join(DATA_DIR, 'pgp_passphrase.txt')), false)
+}))
 
-test('PGP: saving a passphrase-protected key makes it decryptable without a separate unlock', async () => {
-  const pass = 'red horse saved'
-  const { privateKey, publicKey } = await openpgp.generateKey({
-    type: 'ecc', curve: 'curve25519Legacy', userIDs: [{ name: 't', email: 't2@example.com' }], passphrase: pass, format: 'armored'
-  })
-  const armored = await openpgp.encrypt({
-    message: await openpgp.createMessage({ text: 'Content-Type: text/plain\r\n\r\nsave-then-decrypt body' }),
-    encryptionKeys: await openpgp.readKey({ armoredKey: publicKey })
-  })
-  const json = { ...authed, 'content-type': 'application/json' }
+test('PGP: saving a passphrase-protected key makes it decryptable without a separate unlock', () => withPgpAccount(async () => {
+    const pass = 'red horse saved'
+    const { privateKey, publicKey } = await openpgp.generateKey({
+      type: 'ecc', curve: 'curve25519Legacy', userIDs: [{ name: 't', email: 't2@example.com' }], passphrase: pass, format: 'armored'
+    })
+    const armored = await openpgp.encrypt({
+      message: await openpgp.createMessage({ text: 'Content-Type: text/plain\r\n\r\nsave-then-decrypt body' }),
+      encryptionKeys: await openpgp.readKey({ armoredKey: publicKey })
+    })
+    const json = { ...authed, 'x-account': PGP_ACCT.email, 'content-type': 'application/json' }
 
-  // Fresh lock state so the prior test's unlock doesn't hide the bug.
-  await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: authed })
+    // Fresh lock state so the prior test's unlock doesn't hide the bug.
+    await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: { ...authed, 'x-account': PGP_ACCT.email } })
 
-  const put = await fetch(`${base}/api/pgp`, {
-    method: 'PUT', headers: json,
-    body: JSON.stringify({ privateAsc: privateKey, publicAsc: publicKey, passphrase: pass })
-  })
-  assert.equal(put.status, 200)
+    const put = await fetch(`${base}/api/pgp`, {
+      method: 'PUT', headers: json,
+      body: JSON.stringify({ privateAsc: privateKey, publicAsc: publicKey, passphrase: pass })
+    })
+    assert.equal(put.status, 200)
 
-  // No /api/pgp/unlock call in between: decryption must already work.
-  let r = await processPgp(armored)
-  assert.equal(r.decrypted, true, `expected decrypted=true, got ${r.error}`)
-  assert.match(r.text, /save-then-decrypt body/)
+    // No /api/pgp/unlock call in between: decryption must already work.
+    let r = await processPgp(armored)
+    assert.equal(r.decrypted, true, `expected decrypted=true, got ${r.error}`)
+    assert.match(r.text, /save-then-decrypt body/)
 
-  // A wrong passphrase must NOT replace the working unlock: lock + try bad first.
-  await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: authed })
-  const bad = await fetch(`${base}/api/pgp`, {
-    method: 'PUT', headers: json,
-    body: JSON.stringify({ privateAsc: privateKey, passphrase: 'definitely wrong' })
-  })
-  assert.equal(bad.status, 400)
-  r = await processPgp(armored)
-  assert.equal(r.decrypted, false)
-})
+    // A wrong passphrase must NOT replace the working unlock: lock + try bad first.
+    await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: { ...authed, 'x-account': PGP_ACCT.email } })
+    const bad = await fetch(`${base}/api/pgp`, {
+      method: 'PUT', headers: json,
+      body: JSON.stringify({ privateAsc: privateKey, passphrase: 'definitely wrong' })
+    })
+    assert.equal(bad.status, 400)
+    r = await processPgp(armored)
+    assert.equal(r.decrypted, false)
+}))
 
-test('PGP: unlock rejects a wrong passphrase with 401', async () => {
-  // Uses the key saved by the previous test (passphrase 'red horse saved').
-  await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: authed })
-  const bad = await fetch(`${base}/api/pgp/unlock`, {
-    method: 'POST',
-    headers: { ...authed, 'content-type': 'application/json' },
-    body: JSON.stringify({ passphrase: 'definitely wrong' })
-  })
-  assert.equal(bad.status, 401)
-  const st = await (await fetch(`${base}/api/pgp/status`, { headers: authed })).json()
-  assert.equal(st.unlocked, false)
-})
+test('PGP: unlock rejects a wrong passphrase with 401', () => withPgpAccount(async () => {
+    // Uses the key saved by the previous test (passphrase 'red horse saved').
+    await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: { ...authed, 'x-account': PGP_ACCT.email } })
+    const bad = await fetch(`${base}/api/pgp/unlock`, {
+      method: 'POST',
+      headers: { ...authed, 'x-account': PGP_ACCT.email, 'content-type': 'application/json' },
+      body: JSON.stringify({ passphrase: 'definitely wrong' })
+    })
+    assert.equal(bad.status, 401)
+    const st = await (await fetch(`${base}/api/pgp/status`, { headers: { ...authed, 'x-account': PGP_ACCT.email } })).json()
+    assert.equal(st.unlocked, false)
+}))
 
 test('scheduled send with attachments persists the attachments on disk', async () => {
   await fetch(`${base}/api/account`, {
@@ -372,29 +382,29 @@ test('DAV: an unreachable DAV server is a 502 with a message naming the host, no
   } finally { state.accounts = saved }
 })
 
-test('PGP: repeated wrong passphrases lock /api/pgp/unlock with 429 and Retry-After, even for the right one', async () => {
-  const json = { ...authed, 'content-type': 'application/json' }
-  const pass = 'throttle-pass-1'
-  const { privateKey } = await openpgp.generateKey({
-    type: 'ecc', curve: 'curve25519Legacy', userIDs: [{ name: 'T', email: 't@example.com' }], passphrase: pass, format: 'armored'
-  })
-  const put = await fetch(`${base}/api/pgp`, { method: 'PUT', headers: json, body: JSON.stringify({ privateAsc: privateKey, passphrase: pass }) })
-  assert.equal(put.status, 200)
-  await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: authed })
-  const unlock = (passphrase) => fetch(`${base}/api/pgp/unlock`, { method: 'POST', headers: json, body: JSON.stringify({ passphrase }) })
+test('PGP: repeated wrong passphrases lock /api/pgp/unlock with 429 and Retry-After, even for the right one', () => withPgpAccount(async () => {
+    const json = { ...authed, 'x-account': PGP_ACCT.email, 'content-type': 'application/json' }
+    const pass = 'throttle-pass-1'
+    const { privateKey } = await openpgp.generateKey({
+      type: 'ecc', curve: 'curve25519Legacy', userIDs: [{ name: 'T', email: 't@example.com' }], passphrase: pass, format: 'armored'
+    })
+    const put = await fetch(`${base}/api/pgp`, { method: 'PUT', headers: json, body: JSON.stringify({ privateAsc: privateKey, passphrase: pass }) })
+    assert.equal(put.status, 200)
+    await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: { ...authed, 'x-account': PGP_ACCT.email } })
+    const unlock = (passphrase) => fetch(`${base}/api/pgp/unlock`, { method: 'POST', headers: json, body: JSON.stringify({ passphrase }) })
 
-  // A success resets the counter, so earlier tests in this file cannot count.
-  assert.equal((await unlock(pass)).status, 200)
-  await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: authed })
+    // A success resets the counter, so earlier tests in this file cannot count.
+    assert.equal((await unlock(pass)).status, 200)
+    await fetch(`${base}/api/pgp/lock`, { method: 'POST', headers: { ...authed, 'x-account': PGP_ACCT.email } })
 
-  for (let i = 0; i < 5; i++) assert.equal((await unlock('wrong-' + i)).status, 401)
-  const blocked = await unlock('wrong-again')
-  assert.equal(blocked.status, 429)
-  assert.deepEqual(await blocked.json(), { error: 'too_many_attempts' })
-  assert.ok(Number(blocked.headers.get('retry-after')) > 0)
+    for (let i = 0; i < 5; i++) assert.equal((await unlock('wrong-' + i)).status, 401)
+    const blocked = await unlock('wrong-again')
+    assert.equal(blocked.status, 429)
+    assert.deepEqual(await blocked.json(), { error: 'too_many_attempts' })
+    assert.ok(Number(blocked.headers.get('retry-after')) > 0)
 
-  const right = await unlock(pass)
-  assert.equal(right.status, 429, 'the correct passphrase must not get through while locked out')
-  const st = await (await fetch(`${base}/api/pgp/status`, { headers: authed })).json()
-  assert.equal(st.unlocked, false)
-})
+    const right = await unlock(pass)
+    assert.equal(right.status, 429, 'the correct passphrase must not get through while locked out')
+    const st = await (await fetch(`${base}/api/pgp/status`, { headers: { ...authed, 'x-account': PGP_ACCT.email } })).json()
+    assert.equal(st.unlocked, false)
+}))
