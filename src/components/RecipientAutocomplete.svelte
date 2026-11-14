@@ -168,7 +168,7 @@
   />
   {#if suggestions.length}
     <div class="suggestions" role="listbox">
-      {#each suggestions as c, i (c.uid)}
+      {#each suggestions as c, i (c.email)}
         <div
           class="suggestion"
           class:active={suggestionIndex === i}
