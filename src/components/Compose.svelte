@@ -6,6 +6,7 @@
   import { buildMessageBody, normalizeAccount, type Signature } from '../lib/signature'
   import { fileToAttachment, type OutboundAttachment, AttachmentTooLargeError } from '../lib/attachments'
   import RecipientAutocomplete from './RecipientAutocomplete.svelte'
+  import { splitRecipients } from '../lib/recipients'
 
   // onDraftSaved(folder): the draft is stored on the server in `folder` (the
   // real IMAP path of the Drafts mailbox), so the app can refresh that view.
@@ -67,8 +68,9 @@
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`
   }
 
+  // "Anna Älter <a@x.y>, b@x.y": split on "," / ";" only, so display names survive.
   function parseRecipients(value: string): string[] {
-    return value.split(/[,;\s]+/).map(e => e.trim()).filter(e => e)
+    return splitRecipients(value)
   }
 
   function handleKeyDown(e: KeyboardEvent) {
