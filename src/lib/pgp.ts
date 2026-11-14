@@ -1,4 +1,4 @@
-import { apiFetch, MailAPI } from '../api'
+import { apiFetch, ApiError, MailAPI } from '../api'
 import { getState, updateMessage } from '../store'
 
 export interface PgpStatus { hasPrivateKey: boolean; hasPublicKey: boolean; hasPassphrase: boolean; unlocked: boolean }
@@ -35,8 +35,16 @@ export async function pgpLock(): Promise<void> {
   }
 }
 
-/** Fetch a message again (after unlocking) and put the result in the store. */
-export async function reloadMessage(id: string, folder: string): Promise<void> {
-  const data = await MailAPI.message(id, folder)
+/** Fetch a message again (after unlocking) and put the result in the store.
+ * Deleted on the server meanwhile (404): `onGone`, like opening it
+ * (lib/openMessage.ts: the app drops the row and says so in a toast). */
+export async function reloadMessage(id: string, folder: string, onGone?: (id: string) => void): Promise<void> {
+  let data
+  try {
+    data = await MailAPI.message(id, folder)
+  } catch (e) {
+    if (onGone && e instanceof ApiError && e.status === 404) { onGone(id); return }
+    throw e
+  }
   if (data) updateMessage(id, { body: data.body, bodyHtml: data.bodyHtml, pgp: data.pgp, attachments: data.attachments, cc: data.cc, bcc: data.bcc })
 }

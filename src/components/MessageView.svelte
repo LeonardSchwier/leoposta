@@ -14,13 +14,16 @@
     onAction,
     onMoveRequest,
     onEditDraft,
-    onReply: propReply
+    onReply: propReply,
+    onGone
   }: {
     onAction?: (id: string, action: MessageAction) => void
     onMoveRequest?: (id: string) => void
     /** Set while the Drafts mailbox is open: reopen this draft in Compose. */
     onEditDraft?: (id: string) => void
     onReply?: () => void
+    /** The message was deleted on the server (a 404): drop the row + toast. */
+    onGone?: (id: string) => void
   } = $props()
 
   // Per-message opt-in; not persisted.
@@ -183,7 +186,7 @@
                 </span>
               {/if}
             </div>
-            <PgpUnlock {msg} />
+            <PgpUnlock {msg} {onGone} />
             {#if !msg.pgp.decrypted}
               {#if msg.pgp.armored}
                 <details class="pgp-armor">

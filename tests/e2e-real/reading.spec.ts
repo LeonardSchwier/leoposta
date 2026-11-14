@@ -310,10 +310,13 @@ test.describe('a message deleted elsewhere', () => {
     await expect(row(app, 'Gone already')).toBeVisible()
     await deleteOnServer(mailbox, 'Gone already')
     await row(app, 'Gone already').click({ position: { x: 60, y: 30 } })
-    // The stale row goes away and a notice says why (qa/actions behaviour for
-    // a 404 on open; the open-then-gone case below keeps its pane text).
+    // Product decision for a 404 on open: the stale row goes away and a toast
+    // says why; the reading pane shows no "gone" notice of its own.
     await expect(app.locator('.toast')).toContainText(/no longer exists on the server/i)
     await expect(row(app, 'Gone already')).toHaveCount(0)
+    await expect(app.locator('.load-error')).toHaveCount(0)
+    await expect(app.getByText(/no longer on the server/i)).toHaveCount(0)
+    await expect(app.getByText(/no longer in this folder/i)).toHaveCount(0)
     // Another message still opens fine afterwards (the IMAP connection survived).
     const content = await openMessage(app, 'Vanishing', { reload: false })
     await expect(content).toContainText('here now')
