@@ -4,7 +4,8 @@ use std::process::{Child, Command};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use tauri::{Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::webview::NewWindowResponse;
+use tauri::{Manager, Url, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
 
 /// Holds the spawned bundled-node child so we can kill it on exit.
 pub struct Backend {
@@ -133,6 +134,53 @@ fn wait_for_port(port: u16, timeout: Duration) -> bool {
     false
 }
 
+/// The port is chosen, released and then bound by node, so another local user
+/// could bind it first and be shown in the window, which then hands it the
+/// per-launch token. Only open the window if every socket that can answer on
+/// 127.0.0.1:port belongs to our node child.
+#[cfg(target_os = "linux")]
+fn listener_owned_by(pid: u32, port: u16) -> bool {
+    // /proc/net/tcp{,6}: "sl local_address rem_address st ... uid timeout inode";
+    // addresses are hex, st 0A is LISTEN.
+    let p = format!(":{port:04X}");
+    let serves_loopback = |addr: &str| {
+        matches!(
+            addr.strip_suffix(p.as_str()),
+            Some("0100007F")
+                | Some("00000000")
+                | Some("00000000000000000000000000000000")
+                | Some("0000000000000000FFFF00000100007F")
+        )
+    };
+    let mut inodes = Vec::new();
+    for table in ["/proc/net/tcp", "/proc/net/tcp6"] {
+        let Ok(text) = std::fs::read_to_string(table) else { continue };
+        for line in text.lines().skip(1) {
+            let f: Vec<&str> = line.split_whitespace().collect();
+            if f.len() > 9 && f[3] == "0A" && serves_loopback(f[1]) {
+                inodes.push(format!("socket:[{}]", f[9]));
+            }
+        }
+    }
+    if inodes.is_empty() {
+        return false;
+    }
+    let Ok(fds) = std::fs::read_dir(format!("/proc/{pid}/fd")) else {
+        return false;
+    };
+    let owned: Vec<String> = fds
+        .flatten()
+        .filter_map(|e| std::fs::read_link(e.path()).ok())
+        .map(|l| l.to_string_lossy().into_owned())
+        .collect();
+    inodes.iter().all(|i| owned.contains(i))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn listener_owned_by(_pid: u32, _port: u16) -> bool {
+    true
+}
+
 /// 32 random bytes from the kernel, hex-encoded: the per-launch API token.
 fn random_token() -> Result<String, String> {
     use std::io::Read;
@@ -143,10 +191,40 @@ fn random_token() -> Result<String, String> {
     Ok(buf.iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// The window may only ever show the app itself. Mail is full of links, and
+/// this window has no address bar or back button: a linked page shown here
+/// could pose as Leoposta and ask for passwords.
+fn navigation_allowed(url: &Url, app_origin: &str) -> bool {
+    url.origin().ascii_serialization() == app_origin
+}
+
+/// Links the user may follow outside the app (in the system browser / mail
+/// handler). Everything else (file:, javascript:, custom schemes) is dropped.
+fn external_link(url: &Url) -> bool {
+    matches!(url.scheme(), "http" | "https" | "mailto")
+}
+
+fn open_external(url: &Url) {
+    if !external_link(url) {
+        eprintln!("[leoposta] blocked navigation to a {} URL", url.scheme());
+        return;
+    }
+    // One argument, no shell: the URL is data, never a command line.
+    match Command::new("xdg-open").arg(url.as_str()).spawn() {
+        Ok(mut child) => {
+            std::thread::spawn(move || {
+                let _ = child.wait();
+            });
+        }
+        Err(e) => eprintln!("[leoposta] could not open link: {e}"),
+    }
+}
+
 fn build_main_window(
     app: &tauri::App,
     url: WebviewUrl,
     init_script: Option<String>,
+    app_origin: Option<String>,
 ) -> tauri::Result<WebviewWindow> {
     let mut b = WebviewWindowBuilder::new(app, "main", url)
         .title("Leoposta")
@@ -156,6 +234,20 @@ fn build_main_window(
         .resizable(true);
     if let Some(js) = init_script {
         b = b.initialization_script(&js);
+    }
+    if let Some(origin) = app_origin {
+        b = b
+            .on_navigation(move |url| {
+                if navigation_allowed(url, &origin) {
+                    return true;
+                }
+                open_external(url);
+                false
+            })
+            .on_new_window(|url, _features| {
+                open_external(&url);
+                NewWindowResponse::Deny
+            });
     }
     b.build()
 }
@@ -169,7 +261,7 @@ pub fn run() {
 
             if cfg!(dev) {
                 eprintln!("[leoposta] dev mode: using devUrl, not spawning bundled backend");
-                build_main_window(app, WebviewUrl::default(), None)?;
+                build_main_window(app, WebviewUrl::default(), None, None)?;
                 return Ok(());
             }
 
@@ -193,6 +285,10 @@ pub fn run() {
                 backend.kill();
                 return Err("bundled backend on port did not come up within 30s".into());
             }
+            if !backend.pid.is_some_and(|pid| listener_owned_by(pid, port)) {
+                backend.kill();
+                return Err(format!("127.0.0.1:{port} is not served by the bundled backend; not opening the window").into());
+            }
             eprintln!("[leoposta] backend up on 127.0.0.1:{port}");
 
             // Keep it in state so we can kill on exit.
@@ -210,7 +306,7 @@ pub fn run() {
                 "if (location.origin === {origin:?}) {{ window.__LEOPOSTA_DESKTOP_TOKEN__ = {token:?}; }}"
             );
             let url = WebviewUrl::External(origin.parse().expect("loopback url"));
-            build_main_window(app, url, Some(init))?;
+            build_main_window(app, url, Some(init), Some(origin.clone()))?;
             eprintln!("[leoposta] window opened on {origin}");
 
             Ok(())
@@ -228,4 +324,45 @@ pub fn run() {
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_app_origin_may_be_shown_in_the_window() {
+        let app = "http://127.0.0.1:43123";
+        let ok = |u: &str| navigation_allowed(&Url::parse(u).unwrap(), app);
+        assert!(ok("http://127.0.0.1:43123/"));
+        assert!(ok("http://127.0.0.1:43123/inbox?x=1#y"));
+        assert!(!ok("http://127.0.0.1:43124/"));
+        assert!(!ok("http://localhost:43123/"));
+        assert!(!ok("https://phish.example/"));
+        assert!(!ok("file:///etc/passwd"));
+    }
+
+    #[test]
+    fn only_web_and_mail_links_leave_the_app() {
+        let ext = |u: &str| external_link(&Url::parse(u).unwrap());
+        assert!(ext("https://example.test/a"));
+        assert!(ext("http://example.test/a"));
+        assert!(ext("mailto:a@example.test"));
+        assert!(!ext("file:///home/user/.ssh/id_rsa"));
+        assert!(!ext("javascript:alert(1)"));
+        assert!(!ext("smb://host/share"));
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn the_window_opens_only_on_a_listener_owned_by_the_backend() {
+        let l = std::net::TcpListener::bind((IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+        let port = l.local_addr().unwrap().port();
+        assert!(listener_owned_by(std::process::id(), port));
+        // Another process (pid 1 stands in for another user's server) does not own it.
+        assert!(!listener_owned_by(1, port));
+        drop(l);
+        // Nothing listening: not ours either.
+        assert!(!listener_owned_by(std::process::id(), port));
+    }
 }

@@ -42,8 +42,12 @@ export const API_TOKEN = process.env.LEOPOSTA_TOKEN
   || fileToken
   || writeDevTokenFile(crypto.randomBytes(32).toString('hex'))
 export const TOKEN_FROM_ENV = !!process.env.LEOPOSTA_TOKEN
+// Only this server's own origins by default. The Vite dev server on :3000
+// proxies /api and rewrites Origin to this one (vite.config.ts), so any other
+// page that happens to be served on :3000 is not trusted with the API.
+const OWN_PORT = process.env.PORT || '3001'
 export const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS
-  || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001')
+  || `http://localhost:${OWN_PORT},http://127.0.0.1:${OWN_PORT}`)
   .split(',').map(s => s.trim()).filter(Boolean)
 
 // Server-side DAV response cache shared by every route module and the tests.

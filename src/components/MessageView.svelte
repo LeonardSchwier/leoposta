@@ -104,6 +104,17 @@
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
   }
 
+  // A link in a message must never replace the app itself: in the desktop
+  // window there is no address bar or back button, so the linked page could
+  // pose as Leoposta. Web and mail links open outside the app instead.
+  function handleContentClick(e: MouseEvent) {
+    const link = (e.target as Element | null)?.closest?.('a[href]')
+    if (!link || !(e.currentTarget as Element).contains(link)) return
+    e.preventDefault()
+    const href = (link.getAttribute('href') || '').trim()
+    if (/^(?:https?:|mailto:)/i.test(href)) window.open(href, '_blank', 'noopener,noreferrer')
+  }
+
   function hasFlag(flags: string[], flag: string) {
     return flags.includes('\\' + flag) || flags.includes(flag)
   }
@@ -136,7 +147,9 @@
       </div>
     </div>
 
-      <div class="message-content">
+      <!-- Clicks are delegated from links inside sender HTML; keyboard activation of a link also fires click. -->
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <div class="message-content" onclick={handleContentClick}>
         {#if msg.pgp && msg.pgp.encrypted}
           <div class="pgp-banner" class:pgp-banner-decrypted={!!msg.pgp.decrypted}>
             <div class="pgp-banner-row">
@@ -233,7 +246,9 @@
   .action-btn:hover { background: var(--color-hover); }
   .action-btn.starred { background: var(--color-selected); border-color: var(--color-star); }
   .action-btn.danger:hover { background: var(--danger-bg); border-color: var(--color-danger); color: var(--color-danger); }
-  .message-content { flex: 1; overflow-y: auto; padding: 24px; font-size: 14px; line-height: 1.7; color: var(--color-text); }
+  /* contain: paint makes this pane the containing block of position:fixed/absolute
+     sender content and clips it, so a message cannot overlay the app (UI redress). */
+  .message-content { flex: 1; overflow-y: auto; padding: 24px; font-size: 14px; line-height: 1.7; color: var(--color-text); contain: paint; isolation: isolate; }
   .message-content img { max-width: 100%; height: auto; }
   .message-content a { color: var(--color-accent); text-decoration: underline; }
   .message-content pre { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; font-size: 13px; }

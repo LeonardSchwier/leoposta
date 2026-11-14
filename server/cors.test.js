@@ -48,7 +48,7 @@ const authed = { 'x-leoposta-token': TOKEN }
 const STACK_RE = /\bat .*\(.*:\d+:\d+\)|node_modules|\/server\/.*\.js:\d+/
 
 test('GET /api/idle answers for the requesting origin, never with a wildcard', async () => {
-  const origin = 'http://localhost:3000'
+  const origin = 'http://127.0.0.1:3001'
   // No account is configured in the empty data dir, so the stream ends at once.
   const res = await request('GET', '/api/idle', { ...authed, origin })
   assert.equal(res.status, 200)
