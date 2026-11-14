@@ -247,6 +247,10 @@
   onMount(() => { loadCalendars().then(() => loadEvents()) })
 </script>
 
+<!-- Escape closes the editor dialog (unless an inner control, e.g. the
+     autocomplete list, already used that Escape). -->
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && showEditor && !e.defaultPrevented) { e.preventDefault(); showEditor = false } }} />
+
 <section class="calendar">
   <aside class="cal-side">
     <div class="cal-side-head">
@@ -304,17 +308,20 @@
       {#each weekdayNames as wd, i}<div class="wd">{wd}</div>{/each}
     </div>
 
-    <div class="grid" role="grid">
+    <div class="grid">
       {#each grid() as cell, i (cell.dateStr)}
         {@const dayEvents = eventsForDay(cell.dateStr)}
+        <!-- Clicking anywhere in a day is a mouse shortcut; the day number is the keyboard-reachable button. -->
         <div
           class="cell"
+          role="presentation"
           class:out={cell.inMonth === false}
           class:today={cell.dateStr === fmtISODate(new Date())}
           onclick={() => openCreate(cell.dateStr)}
         >
           <div class="cell-head">
-            <span class="daynum">{cell.date.getDate()}</span>
+            <button type="button" class="daynum" aria-label={`New event on ${cell.dateStr}`}
+              onclick={(e) => { e.stopPropagation(); openCreate(cell.dateStr) }}>{cell.date.getDate()}</button>
           </div>
           {#if dayEvents.length > 0}
             <div class="chips">
@@ -337,8 +344,9 @@
   </div>
 
   {#if showEditor}
-    <div class="modal-back" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }} role="dialog">
-      <div class="modal">
+    <!-- Backdrop click is a mouse shortcut; Escape closes for keyboard users (svelte:window below). -->
+    <div class="modal-back" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }}>
+      <div class="modal" role="dialog" aria-modal="true" aria-label={editingUid ? 'Edit event' : 'New event'} tabindex="-1">
         <h4>{editingUid ? 'Edit event' : 'New event'}</h4>
         {#if calendars.length}
           <label>
@@ -398,7 +406,6 @@
   .cal-item input[type="checkbox"] { width: 14px; height: 14px; flex: 0 0 auto; margin: 0; accent-color: var(--color-accent); }
   .cal-item.checked { font-weight: 500; }
   .cal-warn { background: var(--color-bg-secondary); color: var(--color-text-secondary); border-left: 3px solid var(--color-warn, #b58900); padding: 8px 18px; font-size: 12px; }
-  .cal-target { font-size: 11px; color: var(--color-text-secondary); margin: -6px 0 10px; }
   .cal-item:hover { background: var(--color-hover); }
   .cal-dot { width: 10px; height: 10px; border-radius: 3px; flex: 0 0 auto; }
   .cal-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -412,7 +419,7 @@
   .cal-top { display: flex; align-items: center; padding: 10px 18px; border-bottom: 1px solid var(--color-border); }
   .cal-nav { display: flex; align-items: center; gap: 6px; }
   .cal-nav button { background: var(--color-bg-secondary); border: 1px solid var(--color-border); color: var(--color-text); width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 14px; }
-  .cal-nav buttonhover { background: var(--color-hover); }
+  .cal-nav button:hover { background: var(--color-hover); }
   .cal-nav button:nth-child(2) { width: auto; padding: 0 12px; font-size: 12px; font-weight: 500; }
   .cal-nav h3 { font-size: 15px; font-weight: 600; margin-left: 10px; }
   .cal-err { background: var(--danger-bg); color: var(--color-danger); padding: 10px 18px; font-size: 13px; display: flex; gap: 12px; align-items: center; justify-content: space-between; }
@@ -425,7 +432,7 @@
   .cell.out { opacity: 0.55; background: transparent; }
   .cell.today { border-color: var(--color-accent); background: var(--color-selected); }
   .cell-head { display: flex; justify-content: flex-end; }
-  .daynum { font-size: 11px; font-weight: 600; color: var(--color-text-secondary); padding: 2px 6px; border-radius: 5px; }
+  .daynum { font: inherit; font-size: 11px; font-weight: 600; color: var(--color-text-secondary); padding: 2px 6px; border-radius: 5px; border: none; background: transparent; cursor: pointer; }
   .cell.today .daynum { background: var(--color-accent); color: #fff; }
   .chips { display: flex; flex-direction: column; gap: 2px; margin-top: 4px; }
   .chip { text-align: left; font-size: 11px; border: none; background: var(--color-selected); color: var(--color-text); padding: 3px 5px; border-radius: 4px; cursor: pointer; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

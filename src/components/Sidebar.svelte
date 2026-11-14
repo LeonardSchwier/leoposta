@@ -192,8 +192,14 @@
       </button>
     {/each}
     
+    <!-- Always shown, with a real button: "New folder" used to be only a
+         right-click on this label, which keyboard users could not reach and
+         which did not exist at all until the account had a custom folder. -->
+    <div class="section-label section-label-row">
+      <span>Folders</span>
+      <button type="button" class="section-add" title="New folder" aria-label="New folder" onclick={() => onNewFolder?.()}>+</button>
+    </div>
     {#if folderTree.length > 0}
-      <div class="section-label" oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); onNewFolder?.() }}>Folders</div>
       <ul class="folder-tree" role="tree" aria-label="Folders">
         {#each folderTree as node (node.id)}
           {@render folderNode(node)}
@@ -279,6 +285,28 @@
     padding: 10px 8px 3px;
   }
   
+  .section-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+  .section-add {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--color-text-secondary);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+  }
+  .section-add:hover {
+    background: var(--color-hover);
+    color: var(--color-text);
+  }
+
   .folder-item {
     display: flex;
     align-items: center;

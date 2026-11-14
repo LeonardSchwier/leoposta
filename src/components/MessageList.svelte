@@ -110,6 +110,13 @@
       updateMessage(message.id, { flags: [...flags, '\\Seen'] })
     }
   }
+  // Roving tabindex: Tab reaches the list once (on the selected row, or the
+  // first one), Enter/Space opens the focused row.
+  function rowTabIndex(id: string): 0 | -1 {
+    const sel = $store.selectedMessageId
+    const anchor = sel && messages.some((m: any) => m.id === sel) ? sel : messages[0]?.id
+    return id === anchor ? 0 : -1
+  }
   function handleReply(message: any) {
     const from = extractEmail(message.fromAddress || message.from)
     setComposeTo([from].filter(Boolean))
@@ -170,7 +177,9 @@
           class:selected={$store.selectedMessageId === message.id}
           role="option"
           aria-selected={$store.selectedMessageId === message.id}
+          tabindex={rowTabIndex(message.id)}
           onclick={() => handleSelect(message)}
+          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSelect(message) } }}
           oncontextmenu={(e) => showMenu(e, message)}
         >
           <div class="message-star">
@@ -256,34 +265,6 @@
     border-color: var(--color-accent);
   }
   
-  .actions {
-    display: flex;
-    gap: 6px;
-    margin-left: auto;
-  }
-  
-   .action-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 44px;
-    min-height: 44px;
-    padding: 0;
-    background: transparent;
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    font-size: 16px;
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    transition: all 0.1s;
-    box-sizing: border-box;
-  }
-  
-  .action-btn:hover {
-    background: var(--color-hover);
-    color: var(--color-text);
-  }
-  
   .loading {
     flex: 1;
     display: flex;
@@ -361,6 +342,10 @@
   
   .message-row.selected {
     background: var(--color-selected);
+  }
+  /* Inset: the list clips overflow, so the global 2px outside ring would be cut off. */
+  .message-row:focus-visible {
+    outline-offset: -2px;
   }
   
   .message-row.unread .sender-name,
