@@ -240,9 +240,12 @@ function trimSlashes(str) {
 }
 
 export function joinDavPath(basePath, sub) {
-  if (sub && sub.startsWith('/')) return trimSlashesEnd(sub)
-  const base = trimSlashesEnd(basePath || '')
-  const s = trimSlashes(sub || '')
+  // Coerce first: a tampered query/body value may be an array, not a string.
+  basePath = typeof basePath === 'string' ? basePath : ''
+  sub = typeof sub === 'string' ? sub : ''
+  if (sub.startsWith('/')) return trimSlashesEnd(sub)
+  const base = trimSlashesEnd(basePath)
+  const s = trimSlashes(sub)
   return s ? base + '/' + s : base
 }
 
