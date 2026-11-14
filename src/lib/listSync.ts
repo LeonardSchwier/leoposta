@@ -51,3 +51,23 @@ export function mergeRefreshed<M extends ListMessage>(previous: readonly M[], fr
     return merged
   })
 }
+
+interface Paged { id: string }
+
+/** The list with the next (older) page appended; a message already shown is not repeated. */
+export function appendPage<M extends Paged>(list: readonly M[], page: readonly M[]): M[] {
+  const have = new Set(list.map((m) => m.id))
+  return [...list, ...page.filter((m) => !have.has(m.id))]
+}
+
+/**
+ * A refresh only re-reads the newest page. Pages the user already loaded with
+ * "load more" stay below it: every shown message older than the refreshed
+ * page (lower UID) is kept, unless the refreshed page is the whole folder.
+ */
+export function keepOlderPages<M extends Paged>(previous: readonly M[], refreshed: readonly M[], total: number): M[] {
+  if (refreshed.length === 0 || refreshed.length >= total) return [...refreshed]
+  const oldest = Math.min(...refreshed.map((m) => Number(m.id)))
+  const have = new Set(refreshed.map((m) => m.id))
+  return [...refreshed, ...previous.filter((m) => !have.has(m.id) && Number(m.id) < oldest)]
+}

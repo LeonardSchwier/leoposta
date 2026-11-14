@@ -59,7 +59,9 @@ export const MailAPI = {
   account: () => api('/account'),
   // Mailbox paths are free text ("# Archive", "R&D"): always encode them, or a
   // "#" turns the rest of the URL into a fragment and the server sees folder="".
-  messages: (folder: string, limit = 50) => api(`/messages?folder=${enc(folder)}&limit=${limit}`),
+  /** One page, newest first: the `limit` messages after the newest `offset`. */
+  messages: (folder: string, limit = 50, offset = 0) =>
+    api(`/messages?folder=${enc(folder)}&limit=${limit}${offset ? `&offset=${offset}` : ''}`),
   message: (id: string, folder: string) => api(`/message/${enc(id)}?folder=${enc(folder)}`),
   folders: () => api('/folders'),
   search: (query: string, folder = 'INBOX') => api(`/search?q=${enc(query)}&folder=${enc(folder)}`),

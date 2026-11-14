@@ -17,7 +17,7 @@
   import { beginSplitDrag } from './lib/splitHandle'
   import { specialFolderPath } from './lib/specialFolders'
   import { isSameOrBelow, movedPath } from './lib/folderTree'
-  import { createLatest, mergeRefreshed } from './lib/listSync'
+  import { appendPage, createLatest, keepOlderPages, mergeRefreshed } from './lib/listSync'
 
   let activeView = $state('inbox')
   let appMode = $state<'mail' | 'calendar' | 'contacts'>('mail')
@@ -170,15 +170,23 @@
   // already left never replaces the folder on screen.
   const listLoads = createLatest()
 
+  const PAGE = 50
+  /** Messages in the folder on screen (server EXISTS); more than shown → "load more". */
+  let listTotal = $state(0)
+  let loadingMore = $state(false)
+
   /** `background`: a refresh of the folder on screen (no spinner, keep loaded bodies). */
   async function loadMessages(folder: string, { background = false } = {}) {
     const current = listLoads.begin()
     if (!background) setIsLoading(true)
     try {
-      const data = await MailAPI.messages(folder)
+      const data = await MailAPI.messages(folder, PAGE)
       if (!current()) return
       if (data.messages) {
-        setMessages(background ? mergeRefreshed(getState().messages, data.messages) : data.messages)
+        const total = typeof data.total === 'number' ? data.total : data.messages.length
+        const prev = getState().messages
+        setMessages(background ? mergeRefreshed(prev, keepOlderPages(prev, data.messages, total)) : data.messages)
+        listTotal = total
         setUnreadCount(data.messages.filter((m: any) =>
           !m.flags?.includes('\\Seen') && !m.flags?.includes('Seen')
         ).length)
@@ -191,6 +199,7 @@
       // Offline / server down: fall back to the local cache for this folder.
       const cached = await cachedMessagesForFolder(folder).catch(() => [] as any[])
       if (!current()) return
+      listTotal = 0
       if (cached.length) {
         setMessages(cached)
         setUnreadCount(0)
@@ -202,6 +211,26 @@
       }
     } finally {
       if (current()) setIsLoading(false)
+    }
+  }
+
+  /** "Load more": append the next older page of the folder on screen. */
+  async function loadMore() {
+    if (loadingMore || searchQuery) return
+    const folder = getState().activeFolder
+    const current = listLoads.begin()
+    loadingMore = true
+    try {
+      const data = await MailAPI.messages(folder, PAGE, getState().messages.length)
+      if (!current() || !data.messages) return
+      setMessages(appendPage(getState().messages, data.messages))
+      // An empty page means everything is shown (e.g. messages were removed meanwhile).
+      listTotal = data.messages.length === 0 ? getState().messages.length
+        : typeof data.total === 'number' ? data.total : listTotal
+    } catch (e) {
+      if (current()) setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      loadingMore = false
     }
   }
 
@@ -370,6 +399,7 @@
     const folder = getState().activeFolder
     MailAPI.delete(id, folder).then(() => {
       deleteMessage(id)
+      listTotal = Math.max(0, listTotal - 1)
     }).catch(e => setError(e.message))
   }
 
@@ -379,6 +409,7 @@
     const folder = getState().activeFolder
     MailAPI.move(id, folder, 'Archive').then(() => {
       deleteMessage(id)
+      listTotal = Math.max(0, listTotal - 1)
     }).catch(e => setError(e.message))
   }
 
@@ -614,6 +645,9 @@
           onStar={handleStar}
           onSearch={handleSearch}
           searchQuery={searchQuery}
+          hasMore={!searchQuery && $store.messages.length < listTotal}
+          {loadingMore}
+          onLoadMore={loadMore}
           isLoading={$store.isLoading}
           error={$store.error}
         />
