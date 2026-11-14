@@ -322,6 +322,12 @@ test('toDavTime: already-DAV format passes through', () => {
   assert.equal(toDavTime('20250115T143000Z'), '20250115T143000Z')
 })
 
+test('toDavTime: unrecognised input never reaches the REPORT XML', () => {
+  assert.equal(toDavTime('x"/><c:comp-filter name="VTODO"'), '')
+  assert.equal(toDavTime('tomorrow'), '')
+  assert.equal(toDavTime(['2025-01-15', '2025-01-16']), '')
+})
+
 test('toDavTime: empty/null returns empty string', () => {
   assert.equal(toDavTime(''), '')
   assert.equal(toDavTime(null), '')
