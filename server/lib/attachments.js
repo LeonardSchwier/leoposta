@@ -31,14 +31,14 @@ export function listAttachments(attachments = []) {
   }))
 }
 
-/** Attachments found inside a PGP-decrypted message are appended without an id:
- * their bytes exist only inside one decrypt call, so they cannot be downloaded
- * yet, and the client disables the button for an entry that has no id. */
+/** Attachments found inside a PGP-decrypted message are appended with the id
+ * "pgp-<n>" (their index in the decrypted message): the download route
+ * decrypts again to serve them, so the plaintext is never stored. */
 export function mergePgpAttachments(attachments, pgpAttachments = []) {
   const known = new Set(attachments.map((a) => a.filename))
   const extra = pgpAttachments
+    .map((p, i) => ({ ...p, id: `pgp-${i}` }))
     .filter((p) => !known.has(p.filename))
-    .map(({ id, ...rest }) => rest)
   return [...attachments, ...extra]
 }
 
