@@ -2,9 +2,18 @@ import https from 'node:https'
 import http from 'node:http'
 import { state } from './state.js'
 
-export const DAV_HOST = process.env.DAV_HOST || 'dav.example.com'
+// Server-wide DAV fallback for accounts without a davUrl: only when the
+// operator sets DAV_HOST. There is no built-in default host: a placeholder
+// such as dav.example.com received the IMAP password in clear text from
+// whoever answered for that name on the network.
+export const DAV_HOST = process.env.DAV_HOST || ''
 export const DAV_PORT = parseInt(process.env.DAV_PORT || '443', 10)
-export const DAV_TLS = (process.env.DAV_TLS || (process.env.DAV_HOST ? 'true' : 'false')) === 'true'
+export const DAV_TLS = (process.env.DAV_TLS || 'true') === 'true'
+
+/** Thrown when an account has no DAV server: no request is made. */
+export class DavNotConfiguredError extends Error {
+  constructor() { super('No CardDAV/CalDAV server is configured for this account'); this.code = 'DAV_NOT_CONFIGURED' }
+}
 export const DAV_PATH_PREFIX = (user) => (process.env.DAV_PREFIX || '/dav/' + user)
 
 // Read vs write timeouts. Reads (PROPFIND/REPORT) against a large book can take
@@ -33,6 +42,7 @@ export function resolveDavTarget(acct) {
       return { hostname: u.hostname, port, tls, basePath: u.pathname || '/', user, pass }
     } catch {}
   }
+  if (!DAV_HOST) return null
   return {
     hostname: DAV_HOST,
     port: DAV_PORT,
@@ -47,6 +57,7 @@ export function davRequest(method, urlPath, body, contentType, acct, depth) {
   return new Promise((resolve, reject) => {
     const account = acct || state.accounts[0] || {}
     const t = resolveDavTarget(account)
+    if (!t) return reject(new DavNotConfiguredError())
     const token = Buffer.from(`${t.user}:${t.pass}`).toString('base64')
     const opts = {
       hostname: t.hostname,
@@ -108,6 +119,7 @@ const HOME_SET_TTL = 10 * 60 * 1000
 //   PROPFIND / for current-user-principal → PROPFIND principal for home-set.
 export async function resolveDavBase(account, kind) {
   const t = resolveDavTarget(account)
+  if (!t) throw new DavNotConfiguredError()
   const key = `${t.hostname}:${t.port}|${t.user}|${kind}`
   const cached = homeSetCache.get(key)
   if (cached && Date.now() - cached.ts < HOME_SET_TTL) return { ...t, basePath: cached.href }
