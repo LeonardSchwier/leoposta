@@ -2,7 +2,12 @@
   import { onMount } from 'svelte'
   import { CalendarAPI } from '../api'
   import { eventToICS } from '../lib/vcf'
-  import { patchEventICS } from '../lib/icsPatch'
+  import { patchEventICS, masterStartInfo, masterStartLocalDate, weeklyStartMismatch } from '../lib/icsPatch'
+  import {
+    defaultRepeat, parseRRule, buildRRule, repeatProblem, weekdayOf, weekdayName, WEEKDAYS,
+    type Repeat, type Freq, type RuleContext, type Weekday
+  } from '../lib/rrule'
+  import { browserZone } from '../lib/tz'
   import { loadSelection, saveSelection, STORAGE_KEY } from '../lib/calSelection'
   import {
     fmtISODate, eventOnDay, timeLabel, icsToLocalParts, localToIcsUtc, dateToIcsDate,
@@ -46,6 +51,23 @@
   let fAllDay = $state(false)
   let fAttendees = $state('') // comma/space separated emails
   let fTargetCal = $state<string>('')
+  // Repeat control. 'CUSTOM': a rule the control cannot express, kept as is.
+  let fFreq = $state<Freq | 'CUSTOM'>('NONE')
+  let fRepeat = $state<Repeat>(defaultRepeat(''))
+  let fCustomRule = $state('')
+  let initialRepeat: Repeat | 'CUSTOM' | null = null
+  let lastStart = ''
+  // A series is anchored to its first occurrence (monthly "day 2"), not to the
+  // occurrence the editor was opened on; it moves with the start by as many days.
+  let seriesAnchor = $state<{ series: string, opened: string } | null>(null)
+  let anchorDate = $derived.by(() => {
+    if (!seriesAnchor || !/^\d{4}-\d{2}-\d{2}$/.test(fStart)) return fStart
+    const day = (s: string) => { const [y, m, d] = s.split('-').map(Number); return Date.UTC(y, m - 1, d) }
+    const t = new Date(day(seriesAnchor.series) + day(fStart) - day(seriesAnchor.opened))
+    return t.toISOString().slice(0, 10)
+  })
+  const unitNames: Record<string, [string, string]> = { DAILY: ['day', 'days'], WEEKLY: ['week', 'weeks'], MONTHLY: ['month', 'months'], YEARLY: ['year', 'years'] }
+  const shortDay = (d: Weekday) => weekdayName(d).slice(0, 3)
 
   const evKey = (ev: Ev) => `${ev.calendar}|${ev.uid}|${ev.recurrenceId || ev.start}`
 
@@ -155,6 +177,12 @@
     fAllDay = false
     fAttendees = ''
     fTargetCal = firstSel?.uri || (calendars[0] && calendars[0].uri) || ''
+    fRepeat = defaultRepeat(fStart)
+    fFreq = 'NONE'
+    fCustomRule = ''
+    initialRepeat = null
+    lastStart = fStart
+    seriesAnchor = null
     showEditor = true
   }
 
@@ -180,7 +208,47 @@
     fDescription = ev.description || ''
     fAttendees = ev.attendees?.join(', ') || ''
     fTargetCal = ev.calendar
+    const series = ev.recurring && ev.ics ? masterStartLocalDate(ev.ics, ev.uid) : null
+    seriesAnchor = series ? { series, opened: fStart } : null
+    const parsed = parseRRule(ev.recurring ? ev.rrule : '', series || fStart, ruleContext(ev))
+    fCustomRule = parsed.kind === 'custom' ? parsed.rrule : ''
+    fRepeat = parsed.kind === 'simple' ? parsed.repeat : defaultRepeat(fStart)
+    fFreq = parsed.kind === 'custom' ? 'CUSTOM' : fRepeat.freq
+    initialRepeat = parsed.kind === 'custom' ? 'CUSTOM' : { ...fRepeat, byDay: [...fRepeat.byDay] }
+    lastStart = fStart
     showEditor = true
+  }
+
+  /** Where the rule's dates are read/written: the series' own zone (UTC/all-day: the browser's), null = floating. */
+  function ruleContext(ev: Ev | null): RuleContext {
+    const info = ev?.ics ? masterStartInfo(ev.ics, ev.uid) : null
+    if (info && info.kind === 'local') return { allDay: fAllDay, zone: info.tzid }
+    return { allDay: fAllDay, zone: browserZone() }
+  }
+
+  function onStartChange() {
+    // A weekly repeat on the old start's weekday follows the start to its new weekday.
+    if (/^\d{4}-\d{2}-\d{2}$/.test(fStart) && /^\d{4}-\d{2}-\d{2}$/.test(lastStart) &&
+        fRepeat.byDay.length === 1 && fRepeat.byDay[0] === weekdayOf(lastStart)) {
+      fRepeat.byDay = [weekdayOf(fStart)]
+    }
+    if (fStart) lastStart = fStart
+  }
+
+  function toggleDay(d: Weekday) {
+    fRepeat.byDay = fRepeat.byDay.includes(d) ? fRepeat.byDay.filter(x => x !== d) : WEEKDAYS.filter(x => x === d || fRepeat.byDay.includes(x))
+  }
+
+  /**
+   * The rule to write: undefined = leave the event's RRULE alone (control
+   * untouched, or still "Custom"), null = no repeat, else the new RRULE.
+   */
+  function editorRule(ctx: RuleContext): string | null | undefined {
+    if (fFreq === 'CUSTOM') return undefined
+    const now = buildRRule({ ...fRepeat, freq: fFreq }, ctx)
+    if (initialRepeat === null) return now
+    if (initialRepeat !== 'CUSTOM' && buildRRule(initialRepeat, ctx) === now) return undefined
+    return now
   }
 
   function editorTimes(): { start: string, end: string } | string {
@@ -202,6 +270,12 @@
     const times = editorTimes()
     if (typeof times === 'string') { showToast(times); return }
     const orig = editing
+    if (fFreq !== 'CUSTOM') {
+      const problem = repeatProblem({ ...fRepeat, freq: fFreq }, fStart)
+      if (problem) { showToast(problem); return }
+    }
+    const ctx = ruleContext(orig)
+    const rrule = editorRule(ctx)
     try {
       busy = true
       const uid = orig?.uid || ('leoposta-' + crypto.randomUUID())
@@ -211,14 +285,28 @@
       // a new one is built from the form.
       const patched = orig?.ics ? patchEventICS(orig.ics, orig.uid, {
         summary: fSummary, location: fLocation, description: fDescription, attendees, allDay: fAllDay,
-        occurrenceStart: orig.start, start: times.start, end: times.end
+        occurrenceStart: orig.start, start: times.start, end: times.end,
+        rrule, zone: browserZone()
       }) : null
+      const newRule = rrule === undefined ? (orig?.recurring ? orig.rrule : undefined) : (rrule ?? undefined)
+      // A new timed series is written in local wall-clock time with TZID (see lib/tz.ts).
+      const zoned = !patched && !fAllDay && !!newRule
+      const wall = (date: string, time: string) => `${date.replace(/-/g, '')}T${(time || '00:00').replace(':', '')}00`
       const ics = patched ?? eventToICS({
-        summary: fSummary, start: times.start, end: times.end,
+        summary: fSummary,
+        start: zoned ? wall(fStart, fTime || '09:00') : times.start,
+        end: zoned ? wall(fEnd || fStart, fEndTime || fTime || '10:00') : times.end,
         location: fLocation, description: fDescription, allDay: fAllDay,
         attendees: attendees.length ? attendees : undefined,
-        rrule: orig?.recurring ? orig.rrule : undefined
+        rrule: newRule,
+        tzid: zoned ? browserZone() : undefined
       }, uid)
+      const off = rrule ? weeklyStartMismatch(ics, uid) : null
+      if (off) {
+        const day = weekdayName(off as Weekday)
+        showToast(`The series starts on a ${day}: add ${day} to the repeat days or move the start`, 5000)
+        return
+      }
       const moved = !!orig && orig.calendar !== targetUri
       await CalendarAPI.saveEvent(targetUri, ics, uid, orig && !moved ? orig.href : undefined)
       if (moved && orig) await CalendarAPI.deleteEvent(orig.calendar, orig.uid, orig.href)
@@ -397,12 +485,67 @@
           <input type="checkbox" bind:checked={fAllDay} /> <span>All-day</span>
         </label>
         <div class="row">
-          <label><span>Start</span><input type="date" bind:value={fStart} /></label>
+          <label><span>Start</span><input type="date" bind:value={fStart} onchange={onStartChange} /></label>
           {#if !fAllDay}<label><span>Time</span><input type="time" bind:value={fTime} aria-label="Start time" /></label>{/if}
         </div>
         <div class="row">
           <label><span>End</span><input type="date" bind:value={fEnd} /></label>
           {#if !fAllDay}<label><span>Time</span><input type="time" bind:value={fEndTime} aria-label="End time" placeholder={fTime || '10:00'} /></label>{/if}
+        </div>
+        <div class="repeat" data-testid="repeat">
+          <div class="row">
+            <label>
+              <span>Repeat</span>
+              <select bind:value={fFreq} aria-label="Repeat">
+                <option value="NONE">Never</option>
+                <option value="DAILY">Daily</option>
+                <option value="WEEKLY">Weekly</option>
+                <option value="MONTHLY">Monthly{anchorDate ? ` (day ${Number(anchorDate.slice(8, 10))})` : ''}</option>
+                <option value="YEARLY">Yearly{anchorDate ? ` (${Number(anchorDate.slice(8, 10))} ${monthNames[Number(anchorDate.slice(5, 7)) - 1]?.slice(0, 3) ?? ''})` : ''}</option>
+                {#if fCustomRule}<option value="CUSTOM">Custom repeat</option>{/if}
+              </select>
+            </label>
+            {#if fFreq !== 'NONE' && fFreq !== 'CUSTOM'}
+              <label class="every">
+                <span>Every</span>
+                <span class="inline">
+                  <input type="number" min="1" max="999" step="1" bind:value={fRepeat.interval} aria-label="Repeat every" />
+                  <span class="unit">{unitNames[fFreq][fRepeat.interval === 1 ? 0 : 1]}</span>
+                </span>
+              </label>
+            {/if}
+          </div>
+          {#if fFreq === 'WEEKLY'}
+            <fieldset class="days">
+              <legend>Repeat on</legend>
+              {#each WEEKDAYS as d (d)}
+                <label class="day" class:on={fRepeat.byDay.includes(d)}>
+                  <input type="checkbox" checked={fRepeat.byDay.includes(d)} onchange={() => toggleDay(d)} aria-label={weekdayName(d)} />
+                  <span aria-hidden="true">{shortDay(d)}</span>
+                </label>
+              {/each}
+            </fieldset>
+          {/if}
+          {#if fFreq !== 'NONE' && fFreq !== 'CUSTOM'}
+            <div class="row">
+              <label>
+                <span>Ends</span>
+                <select bind:value={fRepeat.end} aria-label="Ends">
+                  <option value="never">Never</option>
+                  <option value="count">After a number of times</option>
+                  <option value="until">On a date</option>
+                </select>
+              </label>
+              {#if fRepeat.end === 'count'}
+                <label><span>Occurrences</span><input type="number" min="1" max="9999" step="1" bind:value={fRepeat.count} /></label>
+              {:else if fRepeat.end === 'until'}
+                <label><span>Repeat until</span><input type="date" bind:value={fRepeat.until} min={fStart} /></label>
+              {/if}
+            </div>
+          {/if}
+          {#if fFreq === 'CUSTOM'}
+            <p class="custom-rule" data-testid="custom-repeat">Custom repeat <code>{fCustomRule}</code> is kept as it is. Pick another option to replace it.</p>
+          {/if}
         </div>
         <label><span>Location</span><input type="text" bind:value={fLocation} /></label>
         <label>
@@ -487,10 +630,25 @@
   .modal label { display: block; margin-bottom: 10px; font-size: 12px; color: var(--color-text-secondary); font-weight: 600; }
   .modal label.chk { display: flex; align-items: center; gap: 8px; }
   .modal label.chk span { font-size: 13px; color: var(--color-text); }
+  .modal label.chk input { display: inline-block; width: auto; margin: 0; }
+  .modal select { display: block; width: 100%; margin-top: 4px; padding: 7px 8px; border: 1px solid var(--color-border); border-radius: 6px; font-size: 13px; background: var(--color-bg); color: var(--color-text); }
+  .modal select:focus { outline: none; border-color: var(--color-accent); }
   .modal input, .modal textarea { display: block; width: 100%; margin-top: 4px; padding: 8px 10px; border: 1px solid var(--color-border); border-radius: 6px; font-size: 13px; background: var(--color-bg); color: var(--color-text); }
   .modal input:focus, .modal textarea:focus { outline: none; border-color: var(--color-accent); }
   .modal .row { display: flex; gap: 10px; }
   .modal .row > label { flex: 1; }
+  .repeat .every .inline { display: flex; align-items: center; gap: 6px; margin-top: 4px; }
+  .repeat .every input { width: 72px; margin-top: 0; }
+  .repeat .unit { font-size: 13px; font-weight: 400; color: var(--color-text); }
+  .repeat .days { border: none; padding: 0; margin: -2px 0 10px; display: flex; flex-wrap: wrap; gap: 4px; }
+  .repeat .days legend { font-size: 12px; font-weight: 600; color: var(--color-text-secondary); margin-bottom: 4px; padding: 0; }
+  .modal .repeat label.day { display: inline-flex; align-items: center; margin: 0; position: relative; }
+  .repeat .day input { position: absolute; opacity: 0; width: 100%; height: 100%; margin: 0; inset: 0; cursor: pointer; }
+  .repeat .day span { display: inline-block; min-width: 40px; text-align: center; padding: 5px 0; border: 1px solid var(--color-border); border-radius: 6px; font-size: 12px; font-weight: 500; color: var(--color-text); background: var(--color-bg-secondary); }
+  .repeat .day.on span { background: var(--color-accent); border-color: var(--color-accent); color: #fff; }
+  .repeat .day input:focus-visible + span { outline: 2px solid var(--color-accent); outline-offset: 1px; }
+  .custom-rule { font-size: 12px; color: var(--color-text-secondary); margin: -4px 0 10px; }
+  .custom-rule code { font-size: 11px; background: var(--color-bg-secondary); padding: 1px 4px; border-radius: 4px; word-break: break-all; color: var(--color-text); }
   .actions { display: flex; gap: 8px; margin-top: 6px; }
   .actions .spacer { flex: 1; }
   .actions button { padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--color-border); background: var(--color-bg-secondary); color: var(--color-text); }

@@ -219,3 +219,16 @@ describe('patchEventICS and the repeat rule', () => {
     expect(weeklyStartMismatch(seriesIcs('FREQ=MONTHLY'), 's1')).toBeNull()
   })
 })
+
+describe('masterStartLocalDate', () => {
+  it('is the series start in the browser zone, not the opened occurrence', async () => {
+    const { masterStartLocalDate } = await import('../lib/icsPatch')
+    const local = (ms: number) => { const d = new Date(ms); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
+    expect(masterStartLocalDate(seriesIcs('FREQ=MONTHLY'), 's1')).toBe(local(wallToUtc({ y: 2026, mo: 1, d: 5, h: 9, mi: 0, s: 0 }, 'Europe/Berlin')))
+    const day = ['BEGIN:VCALENDAR', 'BEGIN:VEVENT', 'UID:d', 'DTSTART;VALUE=DATE:20260102', 'RRULE:FREQ=YEARLY', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
+    expect(masterStartLocalDate(day, 'd')).toBe('2026-01-02')
+    const utc = ['BEGIN:VCALENDAR', 'BEGIN:VEVENT', 'UID:u', 'DTSTART:20260102T120000Z', 'RRULE:FREQ=DAILY', 'END:VEVENT', 'END:VCALENDAR'].join('\r\n')
+    expect(masterStartLocalDate(utc, 'u')).toBe(local(Date.UTC(2026, 0, 2, 12)))
+    expect(masterStartLocalDate(utc, 'nope')).toBeNull()
+  })
+})
