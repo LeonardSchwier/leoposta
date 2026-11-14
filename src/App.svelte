@@ -10,12 +10,13 @@
   import Settings from './components/Settings.svelte'
   import Calendar from './components/Calendar.svelte'
   import Contacts from './components/Contacts.svelte'
-  import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward, bootstrapRefreshMode } from './store'
+  import { type Folder, store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward, bootstrapRefreshMode } from './store'
   import { startRefresh, stopRefresh } from './refresh'
   import { MailAPI } from './api'
   import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
   import { beginSplitDrag } from './lib/splitHandle'
   import { specialFolderPath } from './lib/specialFolders'
+  import { isSameOrBelow, movedPath } from './lib/folderTree'
 
   let activeView = $state('inbox')
   let appMode = $state<'mail' | 'calendar' | 'contacts'>('mail')
@@ -208,28 +209,49 @@
   }
 
   function handleNewFolder() {
-    const name = prompt('Folder name:')
+    const name = prompt('New folder name:')
     if (name?.trim()) {
       MailAPI.addFolder(name.trim()).then(() => loadFolders()).catch(e => setError(e.message))
     }
   }
 
   function handleNewSubFolder(parentId: string) {
-    const name = prompt(`New subfolder under "${parentId}":`)
+    const parent = getState().folders.find(f => f.id === parentId)
+    const name = prompt(`New subfolder in "${parent?.name || parentId}":`)
     if (name?.trim()) {
       MailAPI.addFolder(name.trim(), parentId).then(() => loadFolders()).catch(e => setError(e.message))
     }
   }
 
-  function handleRenameFolder(folder: any) {
-    const newPath = prompt(`Rename folder "${folder.name || folder.id}" (new full IMAP path):`, folder.id)
-    if (!newPath?.trim() || newPath.trim() === folder.id) return
-    MailAPI.renameFolder(folder.id, newPath.trim()).then(() => loadFolders()).catch(e => setError(e.message))
+  /** Resolves to the folder's new path, or null when cancelled or refused. */
+  async function handleRenameFolder(folder: Folder): Promise<string | null> {
+    const current = folder.name || folder.id
+    const name = prompt(`Rename folder "${current}" to:`, current)
+    if (!name?.trim() || name.trim() === current) return null
+    try {
+      const { path } = await MailAPI.renameFolder(folder.id, name.trim())
+      // The open folder (or one inside the renamed one) moved with it.
+      const active = getState().activeFolder
+      if (isSameOrBelow(active, folder.id, folder.delimiter)) {
+        handleFolderSelect(movedPath(active, folder.id, path, folder.delimiter))
+      }
+      await loadFolders()
+      return path
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      return null
+    }
   }
 
-  function handleDeleteFolder(folder: any) {
-    if (!confirm(`Delete folder "${folder.name || folder.id}" and all its messages?`)) return
-    MailAPI.deleteFolder(folder.id).then(() => loadFolders()).catch(e => setError(e.message))
+  function handleDeleteFolder(folder: Folder) {
+    const hasChildren = getState().folders.some(f => f.id !== folder.id && isSameOrBelow(f.id, folder.id, folder.delimiter))
+    const what = hasChildren ? 'its subfolders and all their messages' : 'all its messages'
+    if (!confirm(`Delete folder "${folder.name || folder.id}" with ${what}? This cannot be undone.`)) return
+    MailAPI.deleteFolder(folder.id).then(() => {
+      // The open folder no longer exists: go back to the Inbox.
+      if (isSameOrBelow(getState().activeFolder, folder.id, folder.delimiter)) handleFolderSelect('inbox')
+      return loadFolders()
+    }).catch(e => setError(e.message))
   }
 
   function handleFolderSelect(folder: string) {

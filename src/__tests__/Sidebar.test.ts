@@ -101,6 +101,55 @@ describe('Sidebar folder tree', () => {
     expect(selected).toEqual([])
   })
 
+  it('offers "New Folder" even when there are no custom folders yet', () => {
+    unmount(app)
+    target.innerHTML = ''
+    let created = 0
+    app = mount(Sidebar, {
+      target,
+      props: { ...handlers, onNewFolder: () => { created++ }, folders: [folders[0]], onFolderSelect: () => {} }
+    })
+    flushSync()
+    const add = target.querySelector('button[aria-label="New folder"]') as HTMLButtonElement
+    expect(add).toBeTruthy()
+    add.click(); flushSync()
+    expect(created).toBe(1)
+    const label = [...target.querySelectorAll('.section-label')].find((e) => e.textContent!.includes('Folders'))!
+    label.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    flushSync()
+    const item = [...target.querySelectorAll('.context-menu-item')].find((e) => e.textContent!.includes('New Folder')) as HTMLElement
+    expect(item).toBeTruthy()
+    item.click(); flushSync()
+    expect(created).toBe(2)
+  })
+
+  it('a renamed folder keeps its children expanded under the new path', async () => {
+    unmount(app)
+    target.innerHTML = ''
+    const before = [
+      { id: 'Old', name: 'Old', parentId: null, delimiter: '/' },
+      { id: 'Old/Child', name: 'Child', parentId: 'Old', delimiter: '/' }
+    ]
+    const after = [
+      { id: 'New', name: 'New', parentId: null, delimiter: '/' },
+      { id: 'New/Child', name: 'Child', parentId: 'New', delimiter: '/' }
+    ]
+    app = mount(Sidebar, { target, props: { ...handlers, folders: before, onFolderSelect: () => {}, onRenameFolder: async () => 'New' } })
+    flushSync()
+    toggleFor('Old').click(); flushSync()
+    expect(names()).toEqual(['Old', 'Child'])
+    const row = target.querySelector('.folder-tree .folder-row') as HTMLElement
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+    flushSync()
+    ;([...target.querySelectorAll('.context-menu-item')].find((e) => e.textContent!.includes('Rename')) as HTMLElement).click()
+    await new Promise((r) => setTimeout(r, 0))
+    unmount(app)
+    target.innerHTML = ''
+    app = mount(Sidebar, { target, props: { ...handlers, folders: after, onFolderSelect: () => {} } })
+    flushSync()
+    expect(names()).toEqual(['New', 'Child'])
+  })
+
   it('persists expansion state to localStorage', () => {
     toggleFor('Projects').click(); flushSync()
     unmount(app)

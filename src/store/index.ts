@@ -70,6 +70,9 @@ export interface Folder {
   name: string
   parentId?: string
   specialUse?: string
+  /** The server's hierarchy delimiter ("/", "."), from /api/folders. */
+  delimiter?: string | null
+  noselect?: boolean
 }
 
 export interface State {
