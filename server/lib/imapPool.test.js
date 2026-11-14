@@ -26,6 +26,25 @@ test('pool.run reuses a connected (usable) ImapFlow client instead of reconnecti
   }
 })
 
+test('a reused client with a selected mailbox is synced (NOOP) before each request', async () => {
+  const pool = getPoolFor(acct)
+  const live = flow()
+  live.usable = true
+  live.mailbox = { path: 'INBOX', exists: 0 }
+  const calls = []
+  // Stand-in for the server's untagged EXISTS that NOOP brings in.
+  live.noop = async () => { calls.push('noop'); live.mailbox.exists++ }
+  pool.client = live
+  try {
+    const exists = await pool.run(async (c) => { calls.push('fn'); return c.mailbox.exists }, 1)
+    assert.deepEqual(calls, ['noop', 'fn'])
+    assert.equal(exists, 1, 'the request sees mail that arrived since the last command')
+  } finally {
+    pool.client = null
+    dropPool(acct.email)
+  }
+})
+
 test('pool.run reconnects when the client is no longer usable', async () => {
   const pool = getPoolFor(acct)
   const dead = flow()
