@@ -290,7 +290,7 @@ test.describe('state on the server', () => {
 test.describe('a message deleted elsewhere', () => {
   // The 404 for the vanished message is the expected answer, not a failure
   // (Chromium also logs every 4xx response as a console error).
-  test.use({ allowApiErrors: [/GET \/api\/message\/\d+\?folder=INBOX -> 404 .*message_not_found/, /Failed to load resource: .*status of 404/] })
+  test.use({ allowApiErrors: [[/GET \/api\/message\/\d+\?folder=INBOX -> 404 .*message_not_found/, /Failed to load resource: .*status of 404/], { scope: 'test' }] })
 
   async function deleteOnServer(mailbox: Mailbox, subject: string) {
     await mailbox.with(async (c) => {
