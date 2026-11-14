@@ -94,6 +94,7 @@ test('parseCard: folded lines, item groups, vCard 4 URIs, escapes and unicode', 
   assert.equal(c.org, 'Größe GmbH')
   assert.equal(c.notes, 'Line one\nline two that is folded and continues')
   assert.equal(c.address, 'Hauptstr. 1, Köln, 50667, DE')
+  assert.deepEqual(c.adr, { street: 'Hauptstr. 1', locality: 'Köln', region: '', postalCode: '50667', country: 'DE' })
 })
 
 test('parseCard: vCard 3.0 with only N gets a display name', async () => {
