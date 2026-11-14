@@ -231,24 +231,30 @@ test.describe('moves', () => {
 })
 
 test.describe('message deleted by another client', () => {
-  test.use({ allowApiErrors: [/-> 404 \{"error":"message_not_found"\}/] })
+  // Deliberately provoked: the API answers 404 for the expunged messages, and
+  // the browser logs every 4xx response as a console error.
+  test.use({ allowApiErrors: [[/-> 404 \{"error":"message_not_found"\}/, /status of 404 \(Not Found\)/], { scope: 'test' }] })
 
   test('acting on it drops it with a notice; opening it does too', async ({ mailbox, app }) => {
-    await mailbox.seed('INBOX', [{ subject: 'Ghost' }, { subject: 'Ghost two' }, { subject: 'Alive' }])
+    await mailbox.seed('INBOX', [{ subject: 'Ghost one' }, { subject: 'Ghost two' }, { subject: 'Alive' }])
     await app.reload()
     await expect(row(app, 'Ghost two')).toBeVisible()
     // Another client expunges both.
     await mailbox.with(async (c) => {
       const lock = await c.getMailboxLock('INBOX')
       try {
+        // Collect first: issuing a command inside a fetch iterator deadlocks ImapFlow.
+        const ghosts: number[] = []
         for await (const m of c.fetch('1:*', { uid: true, envelope: true })) {
-          if (m.envelope?.subject?.startsWith('Ghost')) await c.messageDelete(String(m.uid), { uid: true })
+          if (m.envelope?.subject?.startsWith('Ghost')) ghosts.push(m.uid)
         }
+        expect(ghosts).toHaveLength(2)
+        expect(await c.messageDelete(ghosts.join(','), { uid: true })).toBe(true)
       } finally { lock.release() }
     })
-    await contextAction(app, 'Ghost', 'Archive')
+    await contextAction(app, 'Ghost one', 'Archive')
     await expect(toast(app)).toContainText('no longer exists')
-    await expect(row(app, 'Ghost')).toHaveCount(0)
+    await expect(row(app, 'Ghost one')).toHaveCount(0)
     expect(await subjects(mailbox, 'Archive')).toEqual([])
 
     await row(app, 'Ghost two').locator('.message-subject').click()
