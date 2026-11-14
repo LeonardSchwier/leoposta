@@ -220,7 +220,9 @@ router.get('/folders', async (req, res) => {
     const pool = getPoolFor(acct)
 
     const folders = await pool.run(async (client) => {
-      const mailboxes = await client.list()
+      // Unread counts per folder for the sidebar badges (LIST-STATUS, or one
+      // STATUS per folder on servers without it).
+      const mailboxes = await client.list({ statusQuery: { messages: true, unseen: true } })
       return mailboxes.map(toFolderEntry)
     })
     res.json({ folders })

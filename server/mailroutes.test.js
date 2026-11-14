@@ -99,7 +99,7 @@ function makeFakeClient({ messages = [], addResult = true, removeResult = true, 
     },
     async messageFlagsAdd(range, flags, opts) { calls.push(['messageFlagsAdd', range, flags, opts]); return addResult },
     async messageFlagsRemove(range, flags, opts) { calls.push(['messageFlagsRemove', range, flags, opts]); return removeResult },
-    async list() { calls.push(['list']); return mailboxes },
+    async list(opts) { calls.push(['list', opts]); return mailboxes },
     async mailboxCreate(p) { calls.push(['mailboxCreate', p]); return { path: p, created: true } },
     async mailboxRename(p, to) { calls.push(['mailboxRename', p, to]); return { path: p, newPath: to } },
     async mailboxDelete(p) {
@@ -571,4 +571,16 @@ test('listing a mailbox the pooled connection already had open still shows mail 
   assert.deepEqual(messages.map((m) => m.subject).sort(), ['Arrived later', 'Subject 1'])
   assert.ok(names(c).indexOf('noop') > names(c).indexOf('lock'), 'NOOP after the lock')
   assert.ok(names(c).indexOf('noop') < names(c).indexOf('fetch'), 'NOOP before the FETCH range is computed')
+})
+
+test("the folder list carries each folder's unread and total count (LIST-STATUS)", async () => {
+  const inbox = { ...mailbox('INBOX', '/'), status: { path: 'INBOX', messages: 5, unseen: 2 } }
+  const work = { ...mailbox('Work', '/'), status: { path: 'Work', messages: 3, unseen: 0 } }
+  const c = useClient({ mailboxes: [inbox, work] })
+  const res = await fetch(`${base}/api/folders`, { headers: authed })
+  const { folders } = await res.json()
+  assert.deepEqual(find(c, 'list')[1], { statusQuery: { messages: true, unseen: true } })
+  assert.equal(folders[0].unseen, 2)
+  assert.equal(folders[0].exists, 5)
+  assert.equal(folders[1].unseen, 0)
 })

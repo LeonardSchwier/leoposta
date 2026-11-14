@@ -36,8 +36,9 @@ export function toFolderEntry(mb) {
     delimiter: mb.delimiter || null,
     noselect: flags.has('\\Noselect') || flags.has('\\NonExistent'),
     specialUse: mb.specialUse || undefined,
-    exists: mb.exists,
-    unseen: mb.unseen
+    // From LIST-STATUS (or STATUS) when the folder list was asked for it.
+    exists: mb.status?.messages ?? mb.exists,
+    unseen: mb.status?.unseen ?? mb.unseen
   }
 }
 
