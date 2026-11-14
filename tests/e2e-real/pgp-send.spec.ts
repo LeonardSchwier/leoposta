@@ -33,13 +33,15 @@ async function waitSource(mb: Mailbox, folder: string, subject: string): Promise
   return msg.source ?? ''
 }
 
-async function decryptWith(raw: string, privateArmored: string, verifyArmored: string) {
+async function decryptWith(raw: string, privateArmored: string, verifyArmored: string, passphrase?: string) {
   const parsed = await simpleParser(raw)
   const blob = parsed.attachments.find((a) => /-----BEGIN PGP MESSAGE-----/.test(a.content.toString()))
   expect(blob, 'the encrypted part').toBeTruthy()
   const { data, signatures } = await openpgp.decrypt({
     message: await openpgp.readMessage({ armoredMessage: blob!.content.toString() }),
-    decryptionKeys: await openpgp.readPrivateKey({ armoredKey: privateArmored }),
+    decryptionKeys: passphrase
+      ? await openpgp.decryptKey({ privateKey: await openpgp.readPrivateKey({ armoredKey: privateArmored }), passphrase })
+      : await openpgp.readPrivateKey({ armoredKey: privateArmored }),
     verificationKeys: await openpgp.readKey({ armoredKey: verifyArmored }),
     expectSigned: true
   })
@@ -120,10 +122,11 @@ test.describe('pgp send', () => {
       expect(carolMail.attachments.map((a) => a.filename)).toEqual(['plan.txt'])
 
       // The Sent copy on the server is the encrypted message, readable in the app.
-      const sentSrc = await waitSource(mailbox, await sentPath(mailbox), subject)
+      await sentPath(mailbox) // asserts the \Sent mailbox is the layout's "Sent"
+      const sentSrc = await waitSource(mailbox, 'Sent', subject)
       expect(sentSrc).toMatch(/multipart\/encrypted/)
       expect(sentSrc).not.toContain('Streng geheim')
-      expect((await decryptWith(sentSrc, meKey.privateKey, meKey.publicKey)).text).toContain('Streng geheim')
+      expect((await decryptWith(sentSrc, meKey.privateKey, meKey.publicKey, PASS)).text).toContain('Streng geheim')
       await specialItem(app, 'Sent').click()
       await openMessage(app, subject)
       await expect(app.locator('.pgp-banner')).toContainText('decrypted')
@@ -185,7 +188,8 @@ test.describe('pgp send', () => {
 
     const src = await waitSource(bobMb, 'INBOX', subject)
     expect(src.replace(/\r\n[ \t]+/g, ' ')).toMatch(/Content-Type: multipart\/signed; micalg=pgp-sha\d+; protocol="application\/pgp-signature"/)
-    expect(await waitSource(mailbox, await sentPath(mailbox), subject)).toMatch(/multipart\/signed/)
+    await sentPath(mailbox)
+    expect(await waitSource(mailbox, 'Sent', subject)).toMatch(/multipart\/signed/)
 
     await switchTo(app, request, baseURL!, bobMb.email)
     await openMessage(app, subject)
