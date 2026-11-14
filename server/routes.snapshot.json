@@ -3,6 +3,7 @@
   "DELETE /accounts/:email",
   "DELETE /calendar/event",
   "DELETE /contact",
+  "DELETE /drafts/:uid",
   "DELETE /folder",
   "DELETE /message/:id",
   "DELETE /pgp",

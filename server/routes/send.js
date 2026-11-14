@@ -1,8 +1,8 @@
 import express, { Router } from 'express'
 import { state, saveScheduled, resolveAccount, getActiveAccount } from '../lib/state.js'
 import { createSmtpTransporter, saveToSentFolder, getPoolFor } from '../lib/imap.js'
-import { buildDraftSource, ensureDraftsPath, appendDraft } from '../lib/drafts.js'
-import { MailActionError } from '../lib/removal.js'
+import { buildDraftSource, ensureDraftsPath, appendDraft, discardDraft } from '../lib/drafts.js'
+import { MailActionError, parseUid } from '../lib/removal.js'
 import { scrubOutboundHtml } from '../lib/sanitize.js'
 
 const router = Router()
@@ -74,34 +74,77 @@ router.post('/send', express.json({ limit: '35mb' }), async (req, res) => {
   }
 })
 
-// POST /api/drafts
+// A refusal by the server is returned as a value, not thrown: an error thrown
+// inside pool.run makes the pool log the shared IMAP client out.
+const asOutcome = (fn) => async (client) => {
+  try { return await fn(client) } catch (err) {
+    if (err instanceof MailActionError) return { error: err.message }
+    throw err
+  }
+}
+
+/** `replaceUid` / `:uid` of a draft: a positive integer (string or number), or null. */
+function draftUid(raw) {
+  return parseUid(typeof raw === 'number' ? String(raw) : raw)
+}
+
+// POST /api/drafts  { to, cc, bcc, subject, body, attachments, replaceUid? }
 // Saves the compose window as a draft: APPENDs it to the account's Drafts
 // mailbox (SPECIAL-USE \Drafts, else "Drafts", created if missing) flagged
-// \Draft \Seen. Recipients and subject are optional. See lib/drafts.js.
+// \Draft \Seen. Recipients and subject are optional. With `replaceUid` (the
+// draft that was reopened) the old draft is removed once the new one is
+// stored, so saving again never leaves duplicates; if that removal fails the
+// new draft is kept and `replaced: false` says so. See lib/drafts.js.
 router.post('/drafts', express.json({ limit: '35mb' }), async (req, res) => {
   try {
     const acct = resolveAccount(req)
     if (!acct) return res.status(400).json({ error: 'No account configured' })
-    const source = await buildDraftSource(acct, req.body || {})
+    const body = req.body || {}
+    const replaceUid = body.replaceUid === undefined || body.replaceUid === null ? null : draftUid(body.replaceUid)
+    if (body.replaceUid != null && replaceUid === null) return res.status(400).json({ error: 'invalid replaceUid' })
+    const source = await buildDraftSource(acct, body)
     const pool = getPoolFor(acct)
 
-    // A refusal by the server is returned as a value, not thrown: an error thrown
-    // inside pool.run makes the pool log the shared IMAP client out.
-    const asOutcome = (fn) => async (client) => {
-      try { return await fn(client) } catch (err) {
-        if (err instanceof MailActionError) return { error: err.message }
-        throw err
-      }
-    }
     const found = await pool.run(asOutcome(async (client) => ({ folder: await ensureDraftsPath(client) })))
     if (found.error) return res.status(500).json({ error: found.error })
     // One attempt only: retrying an APPEND whose reply was lost would store the draft twice.
     const saved = await pool.run(asOutcome((client) => appendDraft(client, found.folder, source)), 1)
     if (saved.error) return res.status(500).json({ error: saved.error })
     console.log(`[drafts] saved draft to ${acct.email} :: ${saved.folder} (uid=${saved.uid ?? 'unknown'})`)
-    res.json({ success: true, folder: saved.folder, uid: saved.uid })
+
+    const out = { success: true, folder: saved.folder, uid: saved.uid }
+    if (replaceUid !== null && replaceUid !== saved.uid) {
+      try {
+        const gone = await pool.run(asOutcome((client) => discardDraft(client, saved.folder, replaceUid)))
+        out.replaced = !gone.error
+        if (gone.error) console.error(`[drafts] could not remove the replaced draft ${replaceUid}: ${gone.error}`)
+      } catch (err) {
+        out.replaced = false
+        console.error(`[drafts] could not remove the replaced draft ${replaceUid}:`, err && err.message)
+      }
+    }
+    res.json(out)
   } catch (err) {
     console.error('Error saving draft:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// DELETE /api/drafts/:uid
+// Removes a draft from the Drafts mailbox for good, e.g. once it has been sent.
+// Only a message flagged \Draft is removed; one that is already gone is a success.
+router.delete('/drafts/:uid', async (req, res) => {
+  try {
+    const uid = draftUid(req.params.uid)
+    if (uid === null) return res.status(400).json({ error: 'invalid draft id' })
+    const acct = resolveAccount(req)
+    if (!acct) return res.status(400).json({ error: 'No account configured' })
+    const pool = getPoolFor(acct)
+    const out = await pool.run(asOutcome(async (client) => discardDraft(client, await ensureDraftsPath(client), uid)))
+    if (out.error) return res.status(500).json({ error: out.error })
+    res.json({ success: true, discarded: out.discarded })
+  } catch (err) {
+    console.error('Error deleting draft:', err)
     res.status(500).json({ error: err.message })
   }
 })

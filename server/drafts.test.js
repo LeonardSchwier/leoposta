@@ -53,7 +53,7 @@ const DEFAULT_MAILBOXES = [
   { path: 'Sent', specialUse: '\\Sent' }
 ]
 
-function makeFakeClient({ mailboxes = DEFAULT_MAILBOXES, appendError, appendResult, createResult } = {}) {
+function makeFakeClient({ mailboxes = DEFAULT_MAILBOXES, appendError, appendResult, createResult, stored = { 7: ['\\Draft', '\\Seen'] }, deleteResult = true } = {}) {
   const calls = []
   return {
     user: 'tester',
@@ -72,6 +72,13 @@ function makeFakeClient({ mailboxes = DEFAULT_MAILBOXES, appendError, appendResu
       if (appendError) throw appendError
       return appendResult || { destination: p, uid: 42 }
     },
+    async getMailboxLock(p) { calls.push(['lock', p]); return { path: p, release() { calls.push(['release']) } } },
+    // ImapFlow: fetchOne resolves false for an unknown UID; flags are a Set.
+    async fetchOne(range, query, opts) {
+      calls.push(['fetchOne', range, opts])
+      return stored[range] ? { uid: Number(range), flags: new Set(stored[range]) } : false
+    },
+    async messageDelete(range, opts) { calls.push(['messageDelete', range, opts]); return deleteResult },
     logout() { calls.push(['logout']); return Promise.resolve() }
   }
 }
@@ -191,4 +198,74 @@ test('without an account the route answers 400 and touches no mailbox', async ()
   } finally {
     state.accounts = saved
   }
+})
+
+// ── reopening a draft: saving again replaces it, sending removes it ─────────
+
+test('saving a reopened draft appends the new one first, then removes the old UID from Drafts', async () => {
+  const c = useClient()
+  const res = await saveDraft({ subject: 'v2', body: 'better', replaceUid: 7 })
+  assert.equal(res.status, 200)
+  assert.deepEqual(res.body, { success: true, folder: 'INBOX.Entwürfe', uid: 42, replaced: true })
+  const order = names(c).filter((n) => n === 'append' || n === 'messageDelete')
+  assert.deepEqual(order, ['append', 'messageDelete'], 'the old draft is only removed once the new one is stored')
+  assert.deepEqual(find(c, 'lock'), ['lock', 'INBOX.Entwürfe'])
+  assert.deepEqual(find(c, 'messageDelete').slice(1), ['7', { uid: true }])
+})
+
+test('if the new draft cannot be stored, the old one is kept', async () => {
+  const c = useClient({ appendError: Object.assign(new Error('Command failed'), { responseText: 'Over quota' }) })
+  const res = await saveDraft({ subject: 'v2', replaceUid: 7 })
+  assert.equal(res.status, 500)
+  assert.ok(!names(c).includes('messageDelete'))
+})
+
+test('a replaced draft that is already gone (deleted elsewhere) is fine; the new one is saved', async () => {
+  const c = useClient({ stored: {} })
+  const res = await saveDraft({ subject: 'v2', replaceUid: 7 })
+  assert.equal(res.status, 200)
+  assert.equal(res.body.replaced, true)
+  assert.ok(!names(c).includes('messageDelete'))
+})
+
+test('replaceUid never removes a message that is not flagged \\Draft', async () => {
+  const c = useClient({ stored: { 7: ['\\Seen'] } })
+  const res = await saveDraft({ subject: 'v2', replaceUid: 7 })
+  assert.equal(res.status, 200, 'the new draft is saved either way')
+  assert.equal(res.body.replaced, false)
+  assert.ok(!names(c).includes('messageDelete'))
+  assert.ok(!names(c).includes('logout'))
+})
+
+test('a replaceUid that is not a UID is rejected before anything is stored', async () => {
+  const c = useClient()
+  for (const replaceUid of ['abc', 0, -1, '1e3']) {
+    const res = await saveDraft({ subject: 'x', replaceUid })
+    assert.equal(res.status, 400, String(replaceUid))
+  }
+  assert.ok(!names(c).includes('append'))
+})
+
+test('DELETE /api/drafts/:uid removes that draft from the Drafts mailbox for good', async () => {
+  const c = useClient()
+  const res = await fetch(`${base}/api/drafts/7`, { method: 'DELETE', headers: json })
+  assert.equal(res.status, 200)
+  assert.deepEqual(await res.json(), { success: true, discarded: true })
+  assert.deepEqual(find(c, 'lock'), ['lock', 'INBOX.Entwürfe'])
+  assert.deepEqual(find(c, 'messageDelete').slice(1), ['7', { uid: true }])
+})
+
+test('DELETE /api/drafts/:uid refuses a message that is not a draft and keeps the connection', async () => {
+  const c = useClient({ stored: { 7: ['\\Seen'] } })
+  const res = await fetch(`${base}/api/drafts/7`, { method: 'DELETE', headers: json })
+  assert.equal(res.status, 500)
+  assert.ok(!names(c).includes('messageDelete'))
+  assert.ok(!names(c).includes('logout'))
+})
+
+test('DELETE /api/drafts/:uid for a draft that is already gone succeeds with discarded: false', async () => {
+  useClient({ stored: {} })
+  const res = await fetch(`${base}/api/drafts/7`, { method: 'DELETE', headers: json })
+  assert.equal(res.status, 200)
+  assert.deepEqual(await res.json(), { success: true, discarded: false })
 })
