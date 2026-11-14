@@ -83,7 +83,7 @@ export function parseVcf(blob) {
  * escapes and vCard 4 URI values (TEL:tel:+49…) handled.
  */
 export function parseCard(vcf) {
-  const c = { uid: '', name: '', emails: [], phones: [], org: '', notes: '', website: '', address: '' }
+  const c = { uid: '', name: '', emails: [], phones: [], org: '', notes: '', website: '', address: '', adr: null }
   let n = ''
   for (const line of unfoldLines(vcf)) {
     const p = parseProperty(line)
@@ -99,7 +99,12 @@ export function parseCard(vcf) {
       case 'NOTE': c.notes = unescapeText(v).trim(); break
       case 'URL': if (!c.website) c.website = v.trim(); break
       case 'ADR':
-        if (!c.address) c.address = v.split(/(?<!\\);/).map(unescapeText).map(x => x.trim()).filter(Boolean).join(', ')
+        if (!c.adr) {
+          // pobox;extended;street;locality;region;postalCode;country (RFC 6350 §6.3.1)
+          const f = v.split(/(?<!\\);/).map(unescapeText).map(x => x.trim())
+          c.address = f.filter(Boolean).join(', ')
+          c.adr = { street: [f[2], f[1]].filter(Boolean).join(' '), locality: f[3] || '', region: f[4] || '', postalCode: f[5] || '', country: f[6] || '' }
+        }
         break
     }
   }
