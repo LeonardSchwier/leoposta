@@ -16,8 +16,7 @@ delete process.env.LEOPOSTA_IMAP_PASS
 delete process.env.LEOPOSTA_SMTP_PASS
 
 // Fake DAV upstream: bind a real http server on 127.0.0.1:0, read its port,
-// and point server/lib/dav.js (DAV_HOST / DAV_PORT / DAV_TLS are module-load
-// constants) at it. The fake records the last path + Authorization header it
+// and give the test accounts a davUrl pointing at it. The fake records the last path + Authorization header it
 // saw, which is what the DAV-account-resolution test asserts on.
 let davLastPath = null
 let davLastAuth = null
@@ -31,9 +30,7 @@ await new Promise((resolve, reject) => {
   fakeDav.once('error', reject)
   fakeDav.listen(0, '127.0.0.1', () => resolve())
 })
-process.env.DAV_HOST = '127.0.0.1'
-process.env.DAV_PORT = String(fakeDav.address().port)
-process.env.DAV_TLS = 'false'
+const davBase = `http://127.0.0.1:${fakeDav.address().port}`
 
 const { createApp, processPgp } = await import('./index.js')
 
@@ -293,7 +290,8 @@ test('DAV (calendar + contacts) routes follow the x-account header, not accounts
     headers: { ...authed, 'content-type': 'application/json' },
     body: JSON.stringify({
       email, imapHost: 'localhost', imapUser, imapPass: 'p',
-      smtpHost: 'localhost', smtpUser: imapUser, smtpPass: 'p'
+      smtpHost: 'localhost', smtpUser: imapUser, smtpPass: 'p',
+      davUrl: `${davBase}/dav/${imapUser}/`
     })
   })
   const a = await postAcct('a@example.com', 'user-a')
@@ -323,6 +321,55 @@ test('DAV (calendar + contacts) routes follow the x-account header, not accounts
   assert.equal(contactsB.status, 200)
   assert.match(davLastPath, /\/dav\/user-b/, `contacts x-account path should be user-b, got ${davLastPath}`)
   assert.equal(davLastAuth, authB, `contacts x-account auth should be user-b, got ${davLastAuth}`)
+})
+
+test('DAV: an account without davUrl gets configured:false and no request leaves the server (no placeholder host)', async () => {
+  const { state } = await import('./lib/state.js')
+  const saved = state.accounts
+  state.accounts = [{ id: 'acct-nodav', email: 'nodav@example.com', imapHost: 'localhost', imapUser: 'nodav', imapPass: 'secret-imap' }]
+  try {
+    davLastPath = null
+    const cal = await fetch(`${base}/api/calendar/calendars`, { headers: authed })
+    assert.equal(cal.status, 200)
+    assert.deepEqual(await cal.json(), { configured: false, calendars: [] })
+    const books = await fetch(`${base}/api/contacts/calendars`, { headers: authed })
+    assert.equal(books.status, 200)
+    assert.deepEqual(await books.json(), { configured: false, addressBooks: [] })
+    const ev = await fetch(`${base}/api/calendar/events?calendar=/x/`, { headers: authed })
+    assert.equal(ev.status, 409)
+    assert.equal((await ev.json()).code, 'dav_not_configured')
+    assert.equal(davLastPath, null, 'nothing was sent to any DAV server')
+  } finally { state.accounts = saved }
+})
+
+test('DAV: with no account at all the list routes answer 200 configured:false (first run makes no failing calls)', async () => {
+  const { state } = await import('./lib/state.js')
+  const saved = state.accounts
+  state.accounts = []
+  try {
+    for (const p of ['/api/calendar/calendars', '/api/contacts/calendars']) {
+      const r = await fetch(`${base}${p}`, { headers: authed })
+      assert.equal(r.status, 200, p)
+      assert.equal((await r.json()).configured, false)
+    }
+  } finally { state.accounts = saved }
+})
+
+test('DAV: an unreachable DAV server is a 502 with a message naming the host, not a raw 500', async () => {
+  const { state } = await import('./lib/state.js')
+  const saved = state.accounts
+  const dead = http.createServer()
+  await new Promise(r => dead.listen(0, '127.0.0.1', r))
+  const port = dead.address().port
+  await new Promise(r => dead.close(r))
+  state.accounts = [{ id: 'acct-dead', email: 'dead@example.com', imapUser: 'd', imapPass: 'p', davUrl: `http://127.0.0.1:${port}/dav/d/` }]
+  try {
+    const r = await fetch(`${base}/api/calendar/calendars`, { headers: authed })
+    assert.equal(r.status, 502)
+    const body = await r.json()
+    assert.equal(body.code, 'dav_unreachable')
+    assert.match(body.error, new RegExp(`127\\.0\\.0\\.1:${port}`))
+  } finally { state.accounts = saved }
 })
 
 test('PGP: repeated wrong passphrases lock /api/pgp/unlock with 429 and Retry-After, even for the right one', async () => {

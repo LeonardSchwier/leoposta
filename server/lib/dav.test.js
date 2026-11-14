@@ -38,15 +38,56 @@ test('resolveDavTarget: davUrl http (no TLS) defaults port to 80', () => {
   assert.equal(t.hostname, 'dav.example.com')
 })
 
-test('resolveDavTarget: no davUrl falls back to DAV_HOST env (default port 443)', () => {
-  // DAV_HOST defaults to 'dav.example.com'; DAV_TLS defaults to false
-  // (it only auto-enables when DAV_HOST is explicitly set via env)
-  const t = resolveDavTarget({ imapUser: 'j', imapPass: 'p' })
-  assert.equal(t.hostname, 'dav.example.com')
-  assert.equal(t.port, 443)
-  assert.equal(t.basePath, '/dav/j')
-  assert.equal(t.user, 'j')
-  assert.equal(t.pass, 'p')
+test('resolveDavTarget: no davUrl (or a non-http one) means "not configured" — no placeholder host', () => {
+  assert.equal(resolveDavTarget({ imapUser: 'j', imapPass: 'p' }), null)
+  assert.equal(resolveDavTarget({ davUrl: '', imapUser: 'j' }), null)
+  assert.equal(resolveDavTarget({ davUrl: 'not a url' }), null)
+  assert.equal(resolveDavTarget({ davUrl: 'ftp://dav.example.test/' }), null)
+  assert.equal(resolveDavTarget(null), null)
+})
+
+test('davRequest / resolveDavBase without a davUrl reject with DavNotConfiguredError and open no socket', async () => {
+  const { davRequest, DavNotConfiguredError } = await import('./dav.js')
+  const net = await import('node:net')
+  const orig = net.Socket.prototype.connect
+  let connects = 0
+  net.Socket.prototype.connect = function (...a) { connects++; return orig.apply(this, a) }
+  try {
+    await assert.rejects(davRequest('PROPFIND', '/', '', null, { imapUser: 'j', imapPass: 'p' }), DavNotConfiguredError)
+    await assert.rejects(davRequest('PROPFIND', '/', '', null, undefined), DavNotConfiguredError)
+    await assert.rejects(resolveDavBase({ imapUser: 'j' }, 'calendar'), DavNotConfiguredError)
+  } finally { net.Socket.prototype.connect = orig }
+  assert.equal(connects, 0)
+})
+
+test('resolveDavBase: Radicale-style discovery (default namespace, encoded hrefs, addressbook-home-set)', async () => {
+  clearDavBaseCache()
+  const seen = []
+  const server = http.createServer((req, res) => {
+    const chunks = []
+    req.on('data', c => chunks.push(c))
+    req.on('end', () => {
+      const body = Buffer.concat(chunks).toString()
+      seen.push(`${req.method} ${req.url} depth=${req.headers.depth} ${/addressbook-home-set/.test(body) ? 'ab' : ''}`)
+      res.writeHead(207, { 'content-type': 'text/xml' })
+      if (req.url === '/') return res.end('<?xml version="1.0"?><multistatus xmlns="DAV:"><response><href>/</href><propstat><prop><current-user-principal><href>/u%40x.test/</href></current-user-principal></prop></propstat></response></multistatus>')
+      if (req.url === '/u%40x.test/') {
+        if (!/addressbook-home-set|calendar-home-set/.test(body)) return res.end('<multistatus xmlns="DAV:"/>')
+        return res.end('<?xml version="1.0"?><multistatus xmlns="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav" xmlns:CR="urn:ietf:params:xml:ns:carddav"><response><href>/u%40x.test/</href><propstat><prop>' +
+          (/addressbook-home-set/.test(body) ? '<CR:addressbook-home-set><href>/u%40x.test/</href></CR:addressbook-home-set>' : '<C:calendar-home-set><href>http://127.0.0.1/u%40x.test/</href></C:calendar-home-set>') +
+          '</prop></propstat></response></multistatus>')
+      }
+      res.end('<multistatus xmlns="DAV:"/>')
+    })
+  })
+  await new Promise(r => server.listen(0, '127.0.0.1', r))
+  try {
+    const acct = { davUrl: `http://127.0.0.1:${server.address().port}/`, davUser: 'u@x.test', davPass: 'p' }
+    assert.equal((await resolveDavBase(acct, 'cards')).basePath, '/u%40x.test/')
+    assert.equal((await resolveDavBase(acct, 'calendar')).basePath, '/u%40x.test/')
+    assert.ok(seen.every(l => /depth=0/.test(l)), seen.join('\n'))
+    assert.ok(seen.some(l => / ab$/.test(l)), 'asks for the RFC 6352 property name')
+  } finally { await new Promise(r => server.close(r)) }
 })
 
 // ---- accountPayloadFrom threads davUrl/davUser/davPass through ----
@@ -101,7 +142,7 @@ function startFakeDavServer({ counts } = {}) {
           `<D:response><D:href>/principals/u/42</D:href><D:propstat><D:prop>` +
           (isCal
             ? `<c:calendar-home-set><D:href>/caldav/</D:href></c:calendar-home-set>`
-            : `<crd:address-book-home-set><D:href>/carddav/</D:href></crd:address-book-home-set>`) +
+            : `<crd:addressbook-home-set><D:href>/carddav/</D:href></crd:addressbook-home-set>`) +
           `</D:prop></D:propstat></D:response></D:multistatus>`
         )
       } else {

@@ -60,7 +60,7 @@ export const state = {
 // Drop every cached DAV read for one account (contacts, calendar list, events).
 export function invalidateAccountDavCache(acctId) {
   state.davCache.invalidatePrefix(`contacts|${acctId}|`)
-  state.davCache.invalidate(`calendars|${acctId}`)
+  state.davCache.invalidate(`books|${acctId}`)
   state.davCache.invalidatePrefix(`events|${acctId}|`)
 }
 
