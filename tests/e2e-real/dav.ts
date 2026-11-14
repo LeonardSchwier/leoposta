@@ -62,7 +62,12 @@ export class Dav {
     const r = await this.ok('PROPFIND', collection, `<?xml version="1.0"?><d:propfind xmlns:d="DAV:"><d:prop><d:getetag/></d:prop></d:propfind>`, { Depth: '1', 'Content-Type': 'application/xml' })
     const hrefs = [...r.text.matchAll(/<(?:\w+:)?href>([^<]+)<\/(?:\w+:)?href>/g)].map(m => m[1]).filter(h => h.replace(/\/$/, '') !== collection.replace(/\/$/, ''))
     const out: Record<string, string> = {}
-    for (const h of hrefs) out[h] = (await this.ok('GET', h)).text
+    for (const h of hrefs) {
+      const r = await this.req('GET', h)
+      if (r.status === 404) continue // removed between PROPFIND and GET (the app is still writing)
+      if (r.status >= 300) throw new Error(`GET ${h} -> ${r.status}`)
+      out[h] = r.text
+    }
     return out
   }
 }

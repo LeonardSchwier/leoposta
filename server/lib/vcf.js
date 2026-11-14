@@ -1,4 +1,4 @@
-import { unfoldLines, parseProperty, unescapeText } from './ics.js'
+import { unfoldLines, parseProperty, unescapeText, escapeText } from './ics.js'
 
 // Pure RFC 6350 vCard 3.0/4.0 parsing + validation helpers for
 // /api/contacts/import and PUT /api/contact. No network, no I/O.
@@ -61,6 +61,13 @@ export function parseVcf(blob) {
     // without a UID the one we use for its file name (servers require one).
     let card = raw.replace(/\r?\n/g, '\r\n')
     if (!um) card = card.replace(/^(BEGIN:[ \t]*VCARD\r\n)/i, `$1UID:${uid}\r\n`)
+    // FN is required (RFC 6350 §6.2.1, RFC 2426 §3.1.1) and servers such as
+    // Radicale reject a card without it; older exports often only have N.
+    if (!/(?:^|\r\n)(?:[\w-]+\.)?FN[;:]/i.test(card)) {
+      const c = parseCard(card)
+      const fn = c.name || c.email || c.org || c.phone || uid
+      card = card.replace(/(\r\n)(END:[ \t]*VCARD)\s*$/i, `$1FN:${escapeText(fn)}$1$2`)
+    }
     cards.push({ uid, raw: card + '\r\n' })
   }
 

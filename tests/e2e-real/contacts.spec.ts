@@ -81,8 +81,9 @@ test.describe('contacts', () => {
       card('imp-3', ['N:Suzuki;Hanako;;;', 'item1.EMAIL:hanako@example.test', 'ORG:株式会社テスト'])
     ].join('')
     await openContacts(app)
+    await expect(app.locator('.c-item', { hasText: 'People' })).toBeVisible()
     await app.locator('input[type=file][accept*=".vcf"]').setInputFiles({ name: 'people.vcf', mimeType: 'text/vcard', buffer: Buffer.from(vcf, 'utf8') })
-    await expect(app.locator('.toast, [role=status]').filter({ hasText: 'Imported 3 of 3' }).first()).toBeVisible()
+    await expect(app.getByTestId('toast')).toContainText('Imported 3 of 3 contact(s)')
     for (const n of ['Ærøskøbing Ånd', 'Иван Петров', 'Hanako Suzuki']) await expect(app.locator('.row .nm', { hasText: n })).toBeVisible()
     expect(Object.keys(await dav.list(book))).toHaveLength(3)
 
