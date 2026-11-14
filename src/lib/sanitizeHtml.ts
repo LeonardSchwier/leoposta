@@ -6,7 +6,12 @@ let allowRemote = false
 
 purify.addHook('afterSanitizeAttributes', (node: Element) => {
   if (node.tagName === 'A') {
+    // A link in a mail must never navigate the app itself (the sender's
+    // target="_self"/"_top" included): it always opens a new browsing context
+    // that cannot reach back through window.opener.
     node.setAttribute('rel', 'noopener noreferrer')
+    if (node.hasAttribute('href')) node.setAttribute('target', '_blank')
+    else node.removeAttribute('target')
   }
   if (!allowRemote && node.tagName === 'IMG') {
     const src = node.getAttribute('src') || ''
