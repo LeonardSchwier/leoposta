@@ -13,6 +13,8 @@ if (!process.env.VITE_LEOPOSTA_TOKEN) {
   if (t) process.env.VITE_LEOPOSTA_TOKEN = t
 }
 
+const API_TARGET = process.env.LEOPOSTA_API_URL || 'http://localhost:3001'
+
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
@@ -73,7 +75,12 @@ export default defineConfig({
   server: {
     port: 3000,
     proxy: {
-      '/api': process.env.LEOPOSTA_API_URL || 'http://localhost:3001'
+      // The API trusts only its own origin (server/lib/state.js): present the
+      // proxied requests as coming from it.
+      '/api': {
+        target: API_TARGET,
+        headers: { origin: new URL(API_TARGET).origin }
+      }
     }
   }
 })
