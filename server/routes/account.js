@@ -1,4 +1,5 @@
 import { Router } from 'express'
+import rateLimit from 'express-rate-limit'
 import {
   state, getAccount, getActiveAccount,
   addAccount, updateAccount, removeAccount, accountPayloadFrom, mergeAccount
@@ -7,6 +8,20 @@ import { dropPool, verifyAccount } from '../lib/imap.js'
 import { clearDavBaseCache } from '../lib/dav.js'
 
 const router = Router()
+
+// Adding or changing an account can make the server log in to IMAP and SMTP
+// (verify: true). Cap it so a stolen token can't use the server to try
+// passwords against a mail provider at full speed.
+const accountWriteLimit = rateLimit({
+  windowMs: 60_000,
+  limit: 20,
+  // Only verify:true makes outbound logins; plain stores (API clients,
+  // scripts, the e2e suites) are not limited.
+  skip: (req) => !(req.body && req.body.verify === true),
+  standardHeaders: 'draft-8',
+  legacyHeaders: false,
+  message: { error: 'too_many_requests' }
+})
 
 function sanitize(acct) {
   const { imapPass, smtpPass, davPass, ...safe } = acct
@@ -44,7 +59,7 @@ async function verifyOr400(res, candidate) {
   }
 }
 
-router.post('/accounts', async (req, res) => {
+router.post('/accounts', accountWriteLimit, async (req, res) => {
   try {
     const { email } = req.body || {}
     if (!email) return res.status(400).json({ error: 'email is required' })
@@ -61,7 +76,7 @@ router.post('/accounts', async (req, res) => {
   }
 })
 
-router.put('/accounts/:email', async (req, res) => {
+router.put('/accounts/:email', accountWriteLimit, async (req, res) => {
   try {
     const existing = getAccount(req.params.email)
     if (!existing) return res.status(404).json({ error: 'account not found' })

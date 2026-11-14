@@ -58,7 +58,7 @@ describe('quoteOriginal', () => {
     const q = quoteOriginal({ ...base, body: '', bodyHtml: '<p>Hello <b>you</b></p><p>Bye</p><script>x()</script>' }, 'reply')
     expect(q).toContain('> Hello you')
     expect(q).toContain('> Bye')
-    expect(q).not.toMatch(/<\/?(p|b|script)>|x\(\)/)
+    expect(q).not.toMatch(/<\/?(p|b|script)>|x\(\)/i)
   })
   it('forward: header block and unquoted text', () => {
     const q = quoteOriginal(base, 'forward')
