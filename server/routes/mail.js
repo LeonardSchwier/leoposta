@@ -9,6 +9,7 @@ import {
   MailActionError, MessageNotFoundError, MOVE_TARGETS, ensureSpecialUsePath, moveChecked, parseUid,
   removeMessage, requireMessage
 } from '../lib/removal.js'
+import { addSnippets } from '../lib/snippet.js'
 import { changeFlags, parseFlagList } from '../lib/flags.js'
 import {
   childPath,
@@ -83,6 +84,7 @@ router.get('/messages', async (req, res) => {
         const start = range.start
 
         const messages = []
+        const previews = []
         const result = client.fetch(
           `${start}:${end}`,
           {
@@ -120,7 +122,9 @@ router.get('/messages', async (req, res) => {
             attachmentCount: attachments.length,
             attachments, folder, headers: {}
           })
+          previews.push({ entry: messages[messages.length - 1], uid: msg.uid, bodyStructure: msg.bodyStructure })
         }
+        await addSnippets(client, previews)
 
         messages.sort((a, b) => new Date(b.date) - new Date(a.date))
         // `total` lets the client offer "load more" for the older messages.
@@ -136,9 +140,14 @@ router.get('/messages', async (req, res) => {
 })
 
 // GET /api/message/:id
+// Only the fetch (and marking the message read) runs under the mailbox lock and
+// inside pool.run; parsing a large message there would block the account's other
+// IMAP work. A message that is gone is a 404 returned as a value: an error thrown
+// inside pool.run makes the pool log the shared IMAP client out.
 router.get('/message/:id', async (req, res) => {
   try {
-    const { id } = req.params
+    const uid = parseUid(req.params.id)
+    if (uid === null) return res.status(400).json({ error: 'invalid message id' })
     const folder = folderParam(req.query.folder)
     if (folder === null) return res.status(400).json({ error: INVALID_FOLDER })
 
@@ -148,98 +157,88 @@ router.get('/message/:id', async (req, res) => {
     }
     const pool = getPoolFor(acct)
 
-    const uid = parseUid(id)
-    if (uid === null) return res.status(400).json({ error: 'invalid message id' })
-
-    // "Not found" is returned as a value, not thrown: an error thrown inside
-    // pool.run makes the pool log the shared IMAP client out (see asOutcome).
-    await pool.run(async (client) => {
+    const fetched = await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
       try {
         const msg = await client.fetchOne(String(uid), {
           uid: true, internalDate: true, flags: true, envelope: true,
           bodyStructure: true, source: true
         }, { uid: true })
-        if (!msg) {
-          res.status(404).json({ error: 'message_not_found' })
-          return
-        }
-
-        const from = parseFromAddr(msg.from?.[0] || msg.envelope?.from?.[0])
-        const to = (msg.to || msg.envelope?.to || []).map(t => t.address)
-        const cc = (msg.cc || msg.envelope?.cc || []).map(c => c.address)
-        // IMAP envelopes carry Bcc only for messages that kept the header (drafts, sent copies).
-        const bcc = (msg.envelope?.bcc || []).map(b => b.address)
-
-        let body = ''
-        let bodyHtml = ''
-        let attachments = []
-        let pgpPayload = null
-        // Threading ids, for replies (In-Reply-To / References).
-        let messageId = msg.envelope?.messageId || ''
-        let references = []
-        let replyTo = []
-
-        if (msg.source) {
-          try {
-            const parsed = await parseMessageSource(msg.source)
-            if (parsed.messageId) messageId = parsed.messageId
-            if (parsed.references) references = [].concat(parsed.references)
-            if (parsed.replyTo) replyTo = parsed.replyTo.value.filter(a => a.address).map(a => (a.name ? `"${a.name.replace(/(["\\])/g, '\\$1')}" <${a.address}>` : a.address))
-            if (parsed.html) bodyHtml = parsed.html
-            if (parsed.text) body = parsed.text
-            attachments.push(...listAttachments(parsed.attachments))
-            pgpPayload = findPgpPayload(parsed)
-            // RFC 3156's "Version: 1" control part and the encrypted blob are
-            // not attachments the user sent.
-            if (pgpPayload && pgpPayload.hide.length) attachments = attachments.filter((_, i) => !pgpPayload.hide.includes(i))
-          } catch (parseErr) {
-            const raw = msg.source.toString('utf-8')
-            if (raw.includes('<html') || raw.includes('<div') || raw.includes('<p')) {
-              bodyHtml = raw
-            } else {
-              body = raw
-            }
-          }
-        }
-
+        if (!msg) return { status: 404, error: 'message_not_found' }
         const flags = normalizeFlags(msg.flags)
-        const isRead = flags.includes('\\Seen') || flags.includes('Seen')
-        if (!isRead && msg.uid) {
+        if (!flags.includes('\\Seen') && !flags.includes('Seen')) {
+          // Best effort: the message is shown either way (a read-only mailbox refuses).
           try {
-            await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true })
-          } catch (e) { /* the message is shown either way; marking it read is best effort */ }
+            if (await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true })) flags.push('\\Seen')
+          } catch (e) { /* see above */ }
         }
-
-        const pgpResult = pgpPayload ? await processPgp(pgpPayload) : await processPgp(body)
-        // Decrypted attachment bytes stay on the server (served by the
-        // attachment route as id "pgp-<n>").
-        const { parts: _parts, ...pgp } = pgpResult || {}
-        const locked = !!(pgpResult && pgpResult.encrypted && !pgpResult.decrypted)
-        // Undecryptable: show no ciphertext as the body (the banner asks for
-        // the key or passphrase; the armor is under "show encrypted data").
-        const finalBody = pgpResult?.decrypted ? pgp.text : (locked ? '' : body)
-        const finalHtml = pgpResult?.decrypted ? (pgp.html || '') : (locked ? '' : bodyHtml)
-        const finalAttachments = pgpResult?.decrypted && pgp.attachments?.length
-          ? mergePgpAttachments(attachments, pgp.attachments)
-          : attachments
-        res.json({
-          id: msg.uid?.toString() || id,
-          from: from.name || from.address || '',
-          fromAddress: from.address || '',
-          to, cc, bcc,
-          subject: msg.subject || msg.envelope?.subject || '(No Subject)',
-          body: finalBody, bodyHtml: finalHtml,
-          pgp: pgpResult ? pgp : null,
-          date: messageDate(msg),
-          flags: normalizeFlags(msg.flags),
-          attachments: finalAttachments,
-          messageId, references, replyTo,
-          folder, headers: {}
-        })
+        return { msg, flags }
       } finally {
         lock.release()
       }
+    })
+    if (fetched.error) return res.status(fetched.status).json({ error: fetched.error })
+    const { msg, flags } = fetched
+
+    const from = parseFromAddr(msg.from?.[0] || msg.envelope?.from?.[0])
+    const to = (msg.to || msg.envelope?.to || []).map(t => t.address)
+    const cc = (msg.cc || msg.envelope?.cc || []).map(c => c.address)
+    // IMAP envelopes carry Bcc only for messages that kept the header (drafts, sent copies).
+    const bcc = (msg.bcc || msg.envelope?.bcc || []).map(b => b.address)
+
+    let body = ''
+    let bodyHtml = ''
+    let attachments = []
+    let pgpPayload = null
+    // Threading ids, for replies (In-Reply-To / References).
+    let messageId = msg.envelope?.messageId || ''
+    let references = []
+    let replyTo = []
+
+    if (msg.source) {
+      try {
+        const parsed = await parseMessageSource(msg.source)
+        if (parsed.messageId) messageId = parsed.messageId
+        if (parsed.references) references = [].concat(parsed.references)
+        if (parsed.replyTo) replyTo = parsed.replyTo.value.filter(a => a.address).map(a => (a.name ? `"${a.name.replace(/(["\\])/g, '\\$1')}" <${a.address}>` : a.address))
+        if (parsed.html) bodyHtml = parsed.html
+        if (parsed.text) body = parsed.text
+        attachments.push(...listAttachments(parsed.attachments))
+        pgpPayload = findPgpPayload(parsed)
+        // RFC 3156's "Version: 1" control part and the encrypted blob are
+        // not attachments the user sent.
+        if (pgpPayload && pgpPayload.hide.length) attachments = attachments.filter((_, i) => !pgpPayload.hide.includes(i))
+      } catch (parseErr) {
+        // Unparseable MIME: show the raw source as text (never as HTML).
+        body = msg.source.toString('utf-8')
+      }
+    }
+
+    const pgpResult = pgpPayload ? await processPgp(pgpPayload) : await processPgp(body)
+    // Decrypted attachment bytes stay on the server (served by the
+    // attachment route as id "pgp-<n>").
+    const { parts: _parts, ...pgp } = pgpResult || {}
+    const locked = !!(pgpResult && pgpResult.encrypted && !pgpResult.decrypted)
+    // Undecryptable: show no ciphertext as the body (the banner asks for
+    // the key or passphrase; the armor is under "show encrypted data").
+    const finalBody = pgpResult?.decrypted ? pgp.text : (locked ? '' : body)
+    const finalHtml = pgpResult?.decrypted ? (pgp.html || '') : (locked ? '' : bodyHtml)
+    const finalAttachments = pgpResult?.decrypted && pgp.attachments?.length
+      ? mergePgpAttachments(attachments, pgp.attachments)
+      : attachments
+    res.json({
+      id: msg.uid?.toString() || String(uid),
+      from: from.name || from.address || '',
+      fromAddress: from.address || '',
+      to, cc, bcc,
+      subject: msg.subject || msg.envelope?.subject || '(No Subject)',
+      body: finalBody, bodyHtml: finalHtml,
+      pgp: pgpResult ? pgp : null,
+      date: messageDate(msg),
+      flags,
+      attachments: finalAttachments,
+      messageId, references, replyTo,
+      folder, headers: {}
     })
   } catch (err) {
     console.error('Error fetching message:', err)

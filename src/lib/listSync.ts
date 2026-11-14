@@ -20,7 +20,7 @@ export function createLatest(): Latest {
 }
 
 /** Fields only the full message (GET /message/:id) has; the list endpoint sends them empty. */
-const LOADED_FIELDS = ['body', 'bodyHtml', 'pgp', 'attachments', 'cc', 'bcc'] as const
+const LOADED_FIELDS = ['body', 'bodyHtml', 'pgp', 'attachments', 'cc', 'bcc', 'bodyLoaded'] as const
 
 interface ListMessage {
   id: string
@@ -30,6 +30,8 @@ interface ListMessage {
   attachments?: unknown
   cc?: unknown
   bcc?: unknown
+  bodyLoaded?: boolean
+  loadError?: string
 }
 
 function copyField<M, K extends keyof M>(to: M, from: M, k: K) {
@@ -44,7 +46,7 @@ function copyField<M, K extends keyof M>(to: M, from: M, k: K) {
 export function mergeRefreshed<M extends ListMessage>(previous: readonly M[], fresh: readonly M[]): M[] {
   // Opened = has a body, or a PGP result: a locked PGP message has an empty
   // body but its banner (and unlock form) must survive a refresh too.
-  const loaded = new Map(previous.filter((m) => m.body || m.bodyHtml || m.pgp).map((m) => [m.id, m]))
+  const loaded = new Map(previous.filter((m) => (m.body || m.bodyHtml || m.pgp || m.bodyLoaded) && !m.loadError).map((m) => [m.id, m]))
   return fresh.map((m) => {
     const old = loaded.get(m.id)
     if (!old) return m

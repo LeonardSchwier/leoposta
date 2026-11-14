@@ -16,18 +16,50 @@ const GENERIC_TYPE = 'application/octet-stream'
 
 /** Parse a raw message. Pass the Buffer: converting it to a string first mangles
  * the bytes of 8bit and binary parts. */
-export function parseMessageSource(source) {
-  return simpleParser(source)
+export async function parseMessageSource(source) {
+  const parsed = await simpleParser(source)
+  if (parsed.text || parsed.html || parsed.attachments?.length) return parsed
+  const repaired = Buffer.isBuffer(source) ? repairBoundary(source) : null
+  return repaired ? simpleParser(repaired) : parsed
 }
 
-/** The attachments of a parsed message as the API shows them. */
+/** A multipart message whose parts use another delimiter than the declared
+ * boundary parses as all preamble: nothing to show. If the body opens with a
+ * delimiter line, return the source with that boundary declared instead. */
+export function repairBoundary(source) {
+  const text = source.toString('latin1')
+  const m = /\r?\n\r?\n/.exec(text)
+  if (!m) return null
+  const head = text.slice(0, m.index)
+  const ct = /^content-type:[^\n]*(?:\r?\n[ \t][^\n]*)*/im.exec(head)
+  if (!ct || !/^content-type:\s*multipart\//i.test(ct[0])) return null
+  const declared = /boundary\s*=\s*(?:"([^"]*)"|([^\s;]+))/i.exec(ct[0])
+  if (!declared) return null
+  const used = /^--([^\r\n]{1,200}?)[ \t]*\r?$/m.exec(text.slice(m.index + m[0].length))
+  const boundary = used?.[1].replace(/--$/, '')
+  if (!boundary || boundary === (declared[1] ?? declared[2]) || boundary.includes('"')) return null
+  const fixedCt = ct[0].replace(declared[0], `boundary="${boundary}"`)
+  const fixedHead = head.slice(0, ct.index) + fixedCt + head.slice(ct.index + ct[0].length)
+  return Buffer.concat([Buffer.from(fixedHead, 'latin1'), source.subarray(Buffer.byteLength(head, 'latin1'))])
+}
+
+/** An image embedded in the HTML body (multipart/related with a Content-ID):
+ * mailparser already inlines it as a data: URI, so it is part of the body and
+ * not a file the user was sent. */
+function isEmbedded(att) {
+  return att.related === true && !!att.contentId && att.contentDisposition !== 'attachment'
+}
+
+/** The attachments of a parsed message as the API shows them. Ids stay the
+ * index in `parsed.attachments`; embedded images are marked `inline`. */
 export function listAttachments(attachments = []) {
   return attachments.map((att, index) => ({
     id: String(index),
     filename: att.filename || `${FALLBACK_NAME}-${index + 1}`,
     contentType: att.contentType || '',
     size: att.content?.length ?? att.size ?? 0,
-    contentId: att.contentId || undefined
+    contentId: att.contentId || undefined,
+    ...(isEmbedded(att) ? { inline: true } : {})
   }))
 }
 
@@ -55,13 +87,15 @@ export function attachmentAt(attachments, id) {
  * No ids: see the note at the top of this file. */
 export function bodyStructureAttachments(root) {
   const found = []
-  const walk = (node) => {
+  const walk = (node, inRelated = false) => {
     if (!node || typeof node !== 'object') return
     const type = String(node.type || '')
     if (type.startsWith('multipart/')) {
-      for (const child of node.childNodes || []) walk(child)
+      for (const child of node.childNodes || []) walk(child, type === 'multipart/related')
       return
     }
+    // An image embedded in the HTML body is not a file the user was sent.
+    if (inRelated && node.id && node.disposition !== 'attachment') return
     const filename = node.dispositionParameters?.filename || node.parameters?.name
     if (filename || node.disposition === 'attachment' || type === 'message/rfc822') {
       found.push({

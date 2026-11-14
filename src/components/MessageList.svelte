@@ -4,6 +4,7 @@
   import ContextMenu from './ContextMenu.svelte'
   import { computeVirtualRange } from '../lib/virtualList'
   import { hasFlag, isSpecialFolder, type MessageAction } from '../lib/messageActions'
+  import { formatListDate } from '../lib/listDate'
 
   // onAction(id, action) / onMoveRequest(id): every row action names its own
   // message, so starring or right-clicking a row that is not the open one acts
@@ -87,17 +88,7 @@
     return items
   }
   
-  function formatDate(dateStr: string) {
-    if (!dateStr) return ''
-    const date = new Date(dateStr)
-    const now = new Date()
-    const diff = now.getTime() - date.getTime()
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-    if (days === 0) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    if (days === 1) return 'Yesterday'
-    if (days < 7) return date.toLocaleDateString([], { weekday: 'short' })
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
-  }
+  const formatDate = (dateStr: string) => formatListDate(dateStr)
   
   function isRead(message: any) { return hasFlag(message, '\\Seen') }
   function isFlagged(message: any) { return hasFlag(message, '\\Flagged') }
@@ -108,6 +99,7 @@
     return (message.flags || []).filter((f: string) => !f.startsWith('\\') && !HIDDEN_KEYWORDS.has(f.toLowerCase()))
   }
   function getPreview(message: any): string {
+    if (message.snippet) return message.snippet
     if (message.body) return message.body.substring(0, 100)
     if (message.bodyHtml) return message.bodyHtml.replace(/<[^>]*>/g, '').substring(0, 100)
     if (message.attachments?.length) return '📎 ' + message.attachments.length + ' attachment(s)'
@@ -190,7 +182,10 @@
           </div>
           <div class="message-info">
             <div class="message-top">
-              <span class="sender-name">{message.from}</span>
+              <span class="sender-name">{message.from || message.fromAddress || '(no sender)'}</span>
+              {#if message.hasAttachment || message.attachments?.length}
+                <span class="attachment-flag" role="img" aria-label="Has attachments" title="Has attachments">📎</span>
+              {/if}
               <span class="message-date">{formatDate(message.date)}</span>
             </div>
             <div class="message-subject">
@@ -440,6 +435,13 @@
     max-width: 65%;
   }
   
+  .attachment-flag {
+    margin-left: auto;
+    padding: 0 4px;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
   .message-date {
     font-size: 11px;
     color: var(--color-text-secondary);
