@@ -193,12 +193,21 @@
   let loadingMore = $state(false)
 
   /** `background`: a refresh of the folder on screen (no spinner, keep loaded bodies). */
+  // Bumped when a message action starts and when it ends: a background
+  // refresh that overlapped an action may carry the server state from before
+  // it (the request reached the IMAP queue first) and would undo the
+  // optimistic change on screen (a star, a removed row). Such an answer is
+  // dropped; the IDLE push for the action's own change refreshes again.
+  let actionEpoch = 0
+
   async function loadMessages(folder: string, { background = false } = {}) {
     const current = listLoads.begin()
+    const epoch = actionEpoch
     if (!background) setIsLoading(true)
     try {
       const data = await MailAPI.messages(folder, PAGE)
       if (!current() || getState().activeFolder !== folder) return
+      if (background && epoch !== actionEpoch) return
       if (data.messages) {
         // Rules moved or flagged new mail on the server: other folders' counts changed.
         if (data.ruleActions > 0) loadFolders()
@@ -453,7 +462,9 @@
   // Message actions name the message they act on (lib/messageActions.ts); the
   // keyboard shortcuts act on the open message.
   function act(id: string, action: MessageAction) {
+    actionEpoch++
     void runMessageAction(id, action, { notify: (t) => showToast(t), changed: () => { loadFolders() } }).then(() => {
+      actionEpoch++
       // Moved/deleted (and not rolled back): one message fewer in this folder.
       if (!getState().messages.some((m) => m.id === id)) listTotal = Math.max(0, listTotal - 1)
     })
