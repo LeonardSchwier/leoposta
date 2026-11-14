@@ -65,6 +65,10 @@ function makePool(acct) {
       for (let i = 0; i < retry; i++) {
         const c = await this.ensure()
         try {
+          // A reused connection only hears about mail other clients added
+          // (EXISTS/EXPUNGE) when it sends a command; without this a
+          // still-selected INBOX reports its old message count.
+          if (c.mailbox && typeof c.noop === 'function') await c.noop()
           return await fn(c)
         } catch (e) {
           lastErr = e
