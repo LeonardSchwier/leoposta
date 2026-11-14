@@ -101,6 +101,8 @@ function makeFakeClient({ messages = [], addResult = true, removeResult = true, 
     async messageFlagsRemove(range, flags, opts) { calls.push(['messageFlagsRemove', range, flags, opts]); return removeResult },
     async list() { calls.push(['list']); return mailboxes },
     async mailboxCreate(p) { calls.push(['mailboxCreate', p]); return { path: p, created: true } },
+    // The pool NOOPs a reused session before each request (server/lib/imap.js).
+    async noop() {},
     logout() { calls.push(['logout']); return Promise.resolve() }
   }
   return client
