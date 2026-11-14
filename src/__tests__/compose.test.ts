@@ -149,3 +149,77 @@ describe('Compose — shared RecipientAutocomplete in To field', () => {
     unmount(c)
   })
 })
+
+describe('Compose — sending and seeding', () => {
+  function stubSend(onSend: (body: any) => Promise<any>, extra: (url: string) => any = () => undefined) {
+    const origFetch = globalThis.fetch
+    globalThis.fetch = ((input: any, init?: any) => {
+      const url = String(input)
+      if (url.includes('/api/send')) return onSend(JSON.parse(init?.body || '{}'))
+      const r = extra(url)
+      if (r !== undefined) return Promise.resolve({ ok: true, status: 200, json: async () => r })
+      return origFetch(input)
+    }) as any
+    return () => { globalThis.fetch = origFetch }
+  }
+  const sendButton = () => Array.from(target.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'Send')!
+
+  it('a double click sends the message once', async () => {
+    setComposeTo(['alice@example.com'])
+    let calls = 0
+    let release: (v: any) => void = () => {}
+    const restore = stubSend(() => { calls++; return new Promise((r) => { release = r }) })
+    const c = mount(Compose as any, { target, props: { onClose: vi.fn() } } as any)
+    await sleep(250)
+    const btn = sendButton()
+    btn.click()
+    btn.click()
+    await sleep(50)
+    expect(calls).toBe(1)
+    release({ ok: true, status: 200, json: async () => ({ success: true }) })
+    await sleep(50)
+    restore()
+    unmount(c)
+  })
+
+  it('a reply sends In-Reply-To/References of the fetched original and quotes it', async () => {
+    const { setComposeOriginalMessage, setComposeReplyTo, setComposeSubject } = await import('../store')
+    setComposeTo(['erika@x.test'])
+    setComposeSubject('Re: Plan')
+    setComposeReplyTo('7')
+    setComposeOriginalMessage({ id: '7', from: 'Erika', fromAddress: 'erika@x.test', to: ['me@x.test'], subject: 'Plan', body: '', date: '2026-01-02T03:04:05Z', flags: [], folder: 'INBOX', headers: {} })
+    let sent: any = null
+    const restore = stubSend(async (b) => { sent = b; return { ok: true, status: 200, json: async () => ({ success: true }) } }, (url) =>
+      url.includes('/api/message/7') ? { id: '7', body: 'Original text', messageId: '<m7@x.test>', references: ['<m6@x.test>'], attachments: [] } : undefined)
+    const c = mount(Compose as any, { target, props: { onClose: vi.fn() } } as any)
+    await sleep(300)
+    const ta = target.querySelector('textarea#compose-body') as HTMLTextAreaElement
+    expect(ta.dataset.seeded).toBe('true')
+    expect(ta.value).toContain('> Original text')
+    sendButton().click()
+    await sleep(100)
+    restore()
+    expect(sent.inReplyTo).toBe('<m7@x.test>')
+    expect(sent.references).toBe('<m6@x.test> <m7@x.test>')
+    unmount(c)
+  })
+
+  it('text typed before the signature loads is kept', async () => {
+    let answer: (v: any) => void = () => {}
+    const origFetch = globalThis.fetch
+    globalThis.fetch = ((input: any) => {
+      if (String(input).includes('/api/account')) return new Promise((r) => { answer = r })
+      return origFetch(input)
+    }) as any
+    const c = mount(Compose as any, { target, props: { onClose: vi.fn() } } as any)
+    await sleep(50)
+    const ta = target.querySelector('textarea#compose-body') as HTMLTextAreaElement
+    ta.value = 'Typed early'
+    ta.dispatchEvent(new Event('input', { bubbles: true }))
+    answer({ ok: true, status: 200, json: async () => ({ connected: true, signature: { enabled: true, text: '-- Leo', position: 'standard' } }) })
+    await sleep(100)
+    globalThis.fetch = origFetch
+    expect(ta.value).toBe('Typed early\n\n-- Leo')
+    unmount(c)
+  })
+})
