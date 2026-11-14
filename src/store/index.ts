@@ -17,6 +17,13 @@ export interface MailMessage {
   subject: string
   body: string
   bodyHtml?: string
+  /** List preview text (server: lib/snippet.js); the full body comes on open. */
+  snippet?: string
+  hasAttachment?: boolean
+  /** Set once the full message has been fetched (lib/openMessage.ts). */
+  bodyLoaded?: boolean
+  /** Why the full message could not be shown (deleted on the server, ...). */
+  loadError?: string
   pgp?: {
     encrypted?: boolean
     decrypted?: boolean
