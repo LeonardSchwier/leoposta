@@ -219,7 +219,10 @@
       </button>
     {/each}
     
-    <!-- Always shown: it is where the first custom folder gets created. -->
+    <!-- Always shown, with a real button: "New folder" used to be only a
+         right-click on this label, which keyboard users could not reach and
+         which did not exist at all until the account had a custom folder.
+         The right-click menu stays as a shortcut. -->
     <div class="section-label section-label-row" role="presentation" oncontextmenu={(e) => showMenu(e, [newFolderItem])}>
       <span>Folders</span>
       <button type="button" class="section-add" title="New folder" aria-label="New folder" onclick={() => onNewFolder?.()}>+</button>
@@ -282,7 +285,7 @@
     width: 100%;
     padding: 8px 12px;
     background: var(--color-accent);
-    color: white;
+    color: var(--color-on-accent);
     border: none;
     border-radius: var(--radius-md);
     font-size: 13px;
@@ -317,8 +320,8 @@
   }
 
   .section-add {
-    width: 18px;
-    height: 18px;
+    width: 20px;
+    height: 20px;
     padding: 0;
     border: none;
     border-radius: 4px;
@@ -330,7 +333,7 @@
   }
 
   .section-add:hover {
-    background: var(--color-border);
+    background: var(--color-hover);
     color: var(--color-text);
   }
 
@@ -376,7 +379,7 @@
   
   .badge {
     background: var(--color-accent);
-    color: white;
+    color: var(--color-on-accent);
     font-size: 10px;
     font-weight: 600;
     min-width: 18px;

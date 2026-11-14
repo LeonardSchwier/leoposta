@@ -162,6 +162,10 @@
   }
 </script>
 
+<!-- Escape closes the editor dialog (unless an inner control, e.g. the
+     autocomplete list, already used that Escape). -->
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && showEditor && !e.defaultPrevented) { e.preventDefault(); showEditor = false } }} />
+
 <section class="contacts">
   <aside class="c-side">
     <div class="c-side-head">
@@ -208,7 +212,8 @@
       {:else}
         {#each contacts as c (c.uid)}
           {@const name = c.name || c.displayName || (c.emails && c.emails[0]) || '(unnamed)'}
-          <div class="row" class:sel={selectedUid === c.uid} onclick={() => openEdit(c)}>
+          <div class="row" class:sel={selectedUid === c.uid}>
+            <button type="button" class="row-open" onclick={() => openEdit(c)} aria-label={`Edit contact ${name}`}>
             <span class="av" class:unknown={!(c.emails || c.email)}>{initial(name) || '?'}</span>
             <div class="meta">
               <div class="nm">{name}</div>
@@ -218,6 +223,7 @@
               {#if c.address}<div class="d3">{c.address}</div>{/if}
               {#if c.notes}<div class="d3 d-notes" title={c.notes}>{c.notes}</div>{/if}
             </div>
+            </button>
             <button class="del" onclick={(e) => { e.stopPropagation(); deleteContact(c) }} title="Delete contact" aria-label={`Delete contact ${c.name || c.uid}`}>🗑</button>
           </div>
         {/each}
@@ -227,8 +233,9 @@
   </div>
 
   {#if showEditor}
-    <div class="modal-back" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }} role="dialog">
-      <div class="modal">
+    <!-- Backdrop click is a mouse shortcut; Escape closes for keyboard users (svelte:window below). -->
+    <div class="modal-back" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }}>
+      <div class="modal" role="dialog" aria-modal="true" aria-label={editingUid ? 'Edit contact' : 'New contact'} tabindex="-1">
         <h4>{editingUid ? 'Edit contact' : 'New contact'}</h4>
         <label>
           <span>{editingUid ? 'Address book' : 'Create in'}</span>
@@ -264,7 +271,7 @@
   .c-side { width: 220px; background: var(--color-sidebar); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; }
   .c-side-head { padding: 12px 12px 8px; display: flex; flex-direction: column; gap: 8px; }
   .c-side-head h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--color-text-secondary); margin: 0 0 4px; font-weight: 700; }
-  .add-c { background: var(--color-accent); color: #fff; border: none; padding: 7px 12px; border-radius: var(--radius-sm); font-weight: 600; font-size: 12px; cursor: pointer; }
+  .add-c { background: var(--color-accent); color: var(--color-on-accent); border: none; padding: 7px 12px; border-radius: var(--radius-sm); font-weight: 600; font-size: 12px; cursor: pointer; }
   .add-c:hover { background: var(--color-accent-hover); }
   .c-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
   .c-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border: none; background: transparent; color: var(--color-text); border-radius: 6px; font-size: 13px; cursor: pointer; text-align: left; margin-bottom: 2px; }
@@ -282,13 +289,14 @@
   .search { width: 100%; max-width: 420px; padding: 8px 14px; border: 1px solid var(--color-border); border-radius: 999px; font-size: 13px; background: var(--color-bg-secondary); color: var(--color-text); }
   .search:focus { outline: none; border-color: var(--color-accent); }
   .c-err { background: var(--danger-bg); color: var(--color-danger); padding: 10px 18px; font-size: 13px; display: flex; gap: 12px; align-items: center; justify-content: space-between; }
-  .c-err button { background: var(--color-danger); color: #fff; border: none; padding: 5px 10px; border-radius: 4px; font-size: 12px; }
+  .c-err button { background: var(--color-danger); color: var(--color-on-danger); border: none; padding: 5px 10px; border-radius: 4px; font-size: 12px; }
   .c-body { flex: 1; overflow-y: auto; padding: 6px; }
   .hint { text-align: center; color: var(--color-text-secondary); font-size: 13px; padding: 40px 16px; }
   .row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
   .row:hover { background: var(--color-hover); }
   .row.sel { background: var(--color-selected); }
-  .av { width: 38px; height: 38px; border-radius: 50%; background: var(--color-accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex: 0 0 auto; }
+  .row-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 0; border: none; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .av { width: 38px; height: 38px; border-radius: 50%; background: var(--color-accent); color: var(--color-on-accent); display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex: 0 0 auto; }
   .av.unknown { background: var(--color-border); color: var(--color-text-secondary); }
   .meta { flex: 1; min-width: 0; }
   .nm { font-size: 14px; font-weight: 500; color: var(--color-text); }
@@ -309,7 +317,7 @@
   .actions { display: flex; gap: 8px; margin-top: 6px; }
   .actions .spacer { flex: 1; }
   .actions button { padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--color-border); background: var(--color-bg-secondary); color: var(--color-text); }
-  .actions .primary { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
+  .actions .primary { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); }
   .actions .primary:hover { background: var(--color-accent-hover); }
   .actions .danger { background: transparent; color: var(--color-danger); border-color: var(--color-danger); }
   .actions .ghost { background: transparent; }

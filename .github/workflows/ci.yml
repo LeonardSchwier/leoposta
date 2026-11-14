@@ -40,3 +40,81 @@ jobs:
 
       - name: E2E tests
         run: npm run test:e2e
+
+  # The app against a real Dovecot / Radicale / SMTP sink (tests/stack/),
+  # both IMAP layouts, both the PWA and the desktop build.
+  e2e-real:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Install Playwright browser
+        run: npx playwright install --with-deps chromium
+
+      - name: Pull stack images
+        run: |
+          docker pull docker.io/dovecot/dovecot:latest
+          docker pull docker.io/tomsquest/docker-radicale:latest
+
+      - name: Real-stack e2e (docker)
+        run: npm run test:e2e:real
+
+      - name: Upload report
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: e2e-real-report
+          path: |
+            .e2e-real/report
+            .e2e-real/results
+          retention-days: 7
+
+  # The desktop build in the engine the Tauri shell really uses on Linux
+  # (WebKitGTK), against the bundled backend started like src-tauri/src/lib.rs
+  # does. Chromium-based e2e cannot see WebKitGTK-only failures (e.g. the
+  # blank white window from the 403'd crossorigin module script).
+  desktop-webkit-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install WebKitGTK, PyGObject, Xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gir1.2-webkit2-4.1 gir1.2-gtk-3.0 python3-gi python3-gi-cairo xvfb rsync
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Pull stack images
+        run: |
+          docker pull docker.io/dovecot/dovecot:latest
+          docker pull docker.io/tomsquest/docker-radicale:latest
+
+      - name: WebKitGTK desktop smoke (xvfb)
+        run: tests/desktop/run-desktop-smoke.sh
+
+      - name: Upload smoke artifacts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: desktop-webkit-smoke
+          path: .e2e-real/desktop
+          retention-days: 7

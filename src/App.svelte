@@ -167,7 +167,9 @@
       const data = await MailAPI.folders()
       if (data.folders) setFolders(data.folders)
     } catch (e) {
-      console.error('Failed to load folders:', e)
+      // Offline (PWA served from the SW cache) is an expected state with its
+      // own banner in the list, not an error: keep the folders we have.
+      if (navigator.onLine) console.error('Failed to load folders:', e)
     }
   }
 
@@ -705,7 +707,7 @@
     {:else if appMode === 'contacts'}
       <Contacts showToast={showToast} />
     {:else}
-      <div class="content" style:--list-w={listWidth}>
+      <div class="content" class:has-selection={!!$store.selectedMessageId} style:--list-w={listWidth}>
         <MessageList
           onCompose={openCompose}
           onSelectMessage={(id) => handleSelectMessage(id, true)}
@@ -827,9 +829,19 @@
     border: none;
     border-radius: var(--radius-sm);
     background: var(--color-accent);
-    color: #fff;
+    color: var(--color-on-accent);
     font-size: 14px;
     cursor: pointer;
+  }
+
+  /* Phone widths: there is no room for list + preview side by side (the
+     list keeps its 280px minimum and the preview was squeezed to a sliver,
+     wrapping the body one letter per line). Show one pane at a time: the
+     list, or the open message with its back button. */
+  @media (max-width: 640px) {
+    .content > .split-handle { display: none; }
+    .content :global(.message-list-container) { width: 100%; min-width: 0; }
+    .content.has-selection :global(.message-list-container) { display: none; }
   }
 
   .toast {
@@ -847,6 +859,9 @@
     animation: toast-in 200ms ease-out;
     z-index: 200;
     max-width: 90vw;
+    /* A status message, not a control: clicks go to what is underneath
+       (it sits over the compose/message action bars for seconds). */
+    pointer-events: none;
   }
 
   .queue-badge {
@@ -854,7 +869,7 @@
     bottom: 12px;
     right: 16px;
     background: var(--color-accent);
-    color: #fff;
+    color: var(--color-on-accent);
     padding: 6px 14px;
     border-radius: 999px;
     font-size: 12px;
@@ -862,5 +877,6 @@
     box-shadow: 0 4px 16px rgba(0,0,0,0.2);
     animation: toast-in 200ms ease-out;
     z-index: 200;
+    pointer-events: none;
   }
 </style>

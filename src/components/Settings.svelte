@@ -269,8 +269,11 @@
   }
 </script>
 
-<div class="settings-overlay" onclick={onClose}>
-  <div class="settings-modal" onclick={(e) => e.stopPropagation()}>
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); onClose() } }} />
+
+<!-- Backdrop click is a mouse shortcut; Escape closes for keyboard users. -->
+<div class="settings-overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onClose() }}>
+  <div class="settings-modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1">
     <div class="modal-header">
       <h2>Settings</h2>
       <button class="close-btn" aria-label="Close settings" onclick={onClose}>✕</button>
@@ -476,8 +479,8 @@
        <div class="form-section">
          <h3>Inbox sync</h3>
          <div class="form-group">
-           <label>Inbox auto-refresh</label>
-           <select value={$store.refreshInterval}
+           <label for="set-inbox-auto-refresh">Inbox auto-refresh</label>
+           <select id="set-inbox-auto-refresh" value={$store.refreshInterval}
                    onchange={onRefreshIntervalChange}>
              <option value="instant">Instant (push)</option>
              <option value="5m">Every 5 minutes</option>
@@ -733,21 +736,6 @@
     background: var(--color-bg-secondary);
   }
   
-  .btn-danger {
-    padding: 8px 16px;
-    background: transparent;
-    border: 1px solid var(--color-danger);
-    border-radius: var(--radius-sm);
-    font-size: 14px;
-    color: var(--color-danger);
-    cursor: pointer;
-    transition: all var(--transition);
-  }
-  
-  .btn-danger:hover {
-    background: rgba(255, 59, 48, 0.1);
-  }
-  
   .footer-right {
     display: flex;
     gap: 8px;
@@ -775,7 +763,7 @@
     border-radius: var(--radius-sm);
     font-size: 14px;
     font-weight: 500;
-    color: white;
+    color: var(--color-on-accent);
     cursor: pointer;
     transition: background var(--transition);
   }

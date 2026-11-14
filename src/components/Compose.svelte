@@ -968,7 +968,7 @@
     border-radius: var(--radius-sm);
     font-size: 14px;
     font-weight: 500;
-    color: white;
+    color: var(--color-on-accent);
     cursor: pointer;
     transition: background var(--transition);
   }
