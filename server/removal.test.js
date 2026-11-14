@@ -67,6 +67,8 @@ function makeFakeClient({
   const client = {
     user: 'tester',
     usable: true,
+    authenticated: 'tester',
+    async noop() {},
     capabilities: new Set(move ? ['IMAP4rev1', 'MOVE', 'UIDPLUS'] : ['IMAP4rev1', 'UIDPLUS']),
     calls,
     async list() { calls.push(['list']); return mailboxes },
