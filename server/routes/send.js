@@ -4,6 +4,7 @@ import { createSmtpTransporter, saveToSentFolder, getPoolFor } from '../lib/imap
 import { buildDraftSource, ensureDraftsPath, appendDraft, discardDraft } from '../lib/drafts.js'
 import { MailActionError, parseUid } from '../lib/removal.js'
 import { scrubOutboundHtml } from '../lib/sanitize.js'
+import { pgpOptions, buildPgpMail, PgpSendError } from '../lib/pgpSend.js'
 
 const router = Router()
 
@@ -64,6 +65,13 @@ router.post('/send', express.json({ limit: '35mb' }), async (req, res) => {
     }
 
     const messageData = buildMessageData(acct, req.body)
+    const pgp = pgpOptions(req.body.pgp)
+
+    if (pgp && scheduled) {
+      // A scheduled mail is sent when nobody is there to unlock the key.
+      return res.status(400).json({ error: 'Signed or encrypted mail cannot be scheduled yet. Send it now, or turn off Sign/Encrypt.', code: 'pgp_not_schedulable' })
+    }
+    if (pgp) return res.json(await sendPgp(acct, messageData, pgp))
 
     if (scheduled) {
       const at = new Date(scheduled)
@@ -92,10 +100,42 @@ router.post('/send', express.json({ limit: '35mb' }), async (req, res) => {
       res.json({ success: true, messageId })
     }
   } catch (err) {
+    if (err instanceof PgpSendError) {
+      return res.status(err.status).json({ error: err.message, code: err.code, ...(err.missing ? { missing: err.missing } : {}) })
+    }
     console.error('Error sending message:', err)
     res.status(500).json({ error: err.message })
   }
 })
+
+/**
+ * Send a signed and/or encrypted mail (lib/pgpSend.js) and keep its copy in
+ * Sent. Everything is built before anything is sent, so a missing key or a
+ * locked key sends nothing. A Bcc copy that fails after the main message
+ * went out is reported (`bccFailed`), not turned into a failed send that the
+ * user would repeat.
+ */
+async function sendPgp(acct, messageData, pgp) {
+  const date = new Date()
+  const built = await buildPgpMail(acct, messageData, pgp, { date })
+  const transporter = createSmtpTransporter(acct)
+  const [main, ...bccCopies] = built.sends
+  await transporter.sendMail({ envelope: main.envelope, raw: main.raw })
+  const bccFailed = []
+  for (const copy of bccCopies) {
+    try {
+      await transporter.sendMail({ envelope: copy.envelope, raw: copy.raw })
+    } catch (err) {
+      console.error(`[send] encrypted Bcc copy to ${copy.bcc} failed:`, err && err.message)
+      bccFailed.push(copy.bcc)
+    }
+  }
+  console.log(`[send] IMMEDIATE ${pgp.encrypt ? 'encrypted' : 'signed'} send to ${messageData.to} (id=${built.messageId})`)
+  saveToSentFolder(acct, messageData, { messageId: built.messageId, date, raw: built.sentRaw }).catch(err => {
+    console.error('[send] saveToSentFolder failed (pgp):', err && err.message)
+  })
+  return { success: true, messageId: built.messageId, ...(bccFailed.length ? { bccFailed } : {}) }
+}
 
 // A refusal by the server is returned as a value, not thrown: an error thrown
 // inside pool.run makes the pool log the shared IMAP client out.

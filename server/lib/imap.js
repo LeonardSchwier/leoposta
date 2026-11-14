@@ -199,11 +199,12 @@ export async function findOrCreateSentPath(client) {
   return (created && created.path) || 'Sent'
 }
 
-export async function saveToSentFolder(acct, messageData, { messageId, date } = {}) {
+export async function saveToSentFolder(acct, messageData, { messageId, date, raw: prebuilt } = {}) {
   if (!acct) return false
   let target = 'Sent'
   try {
-    const raw = await buildSentSource(messageData, { messageId, date })
+    // `prebuilt`: a PGP/MIME message is built (signed/encrypted) by the sender.
+    const raw = prebuilt || await buildSentSource(messageData, { messageId, date })
     const pool = getPoolFor(acct)
     // One attempt for the APPEND: retrying one whose reply was lost would
     // store the copy twice.

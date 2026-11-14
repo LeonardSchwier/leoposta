@@ -204,7 +204,7 @@ router.get('/message/:id', async (req, res) => {
         if (parsed.html) bodyHtml = parsed.html
         if (parsed.text) body = parsed.text
         attachments.push(...listAttachments(parsed.attachments))
-        pgpPayload = findPgpPayload(parsed)
+        pgpPayload = findPgpPayload(parsed, msg.source)
         // RFC 3156's "Version: 1" control part and the encrypted blob are
         // not attachments the user sent.
         if (pgpPayload && pgpPayload.hide.length) attachments = attachments.filter((_, i) => !pgpPayload.hide.includes(i))
@@ -214,7 +214,7 @@ router.get('/message/:id', async (req, res) => {
       }
     }
 
-    const pgpResult = pgpPayload ? await processPgp(pgpPayload) : await processPgp(body)
+    const pgpResult = pgpPayload ? await processPgp(pgpPayload, acct) : await processPgp(body, acct)
     // Decrypted attachment bytes stay on the server (served by the
     // attachment route as id "pgp-<n>").
     const { parts: _parts, ...pgp } = pgpResult || {}
@@ -593,7 +593,7 @@ router.get('/message/:id/attachment/:attachmentId', async (req, res) => {
       // An attachment inside a PGP-encrypted message: decrypt again (the
       // plaintext is never stored) and serve that part.
       const payload = findPgpPayload(parsed)
-      const r = payload ? await processPgp(payload) : null
+      const r = payload && payload.armored ? await processPgp(payload, acct) : null
       if (r && r.encrypted && !r.decrypted) return res.status(423).json({ error: r.error === 'pgp_locked' ? 'pgp_locked' : 'pgp_decrypt_failed' })
       const i = Number(pgpMatch[1])
       att = r && r.parts && r.parts[i] ? { ...r.attachments[i], content: r.parts[i] } : null
