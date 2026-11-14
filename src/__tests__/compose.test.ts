@@ -229,6 +229,24 @@ describe('Compose — sending and seeding', () => {
     unmount(c)
   })
 
+  it('Escape that closes the recipient suggestions does not close the window', async () => {
+    const onClose = vi.fn()
+    const c = mount(Compose as any, { target, props: { onClose } } as any)
+    await sleep(250)
+    const input = target.querySelector('#compose-to') as HTMLInputElement
+    input.value = 'j'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await sleep(250)
+    expect(target.querySelector('.suggestions')).not.toBeNull()
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await sleep(30)
+    expect(target.querySelector('.suggestions')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+    unmount(c)
+  })
+
   it('an invalid address is refused before sending', async () => {
     setComposeTo(['alice@example.com', 'bob'])
     let calls = 0
