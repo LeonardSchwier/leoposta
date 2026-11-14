@@ -91,3 +91,47 @@ test('splitIcsByUid groups overrides with their master, keeps escapes and adds t
   const anon = parts.find(p => p.uid.startsWith('leoposta-import-'))
   assert.match(anon.ics, new RegExp(`UID:${anon.uid}`))
 })
+
+// ── BYSETPOS and ordinal BYDAY (RFC 5545 §3.3.10) ───────────────────────────
+// A "first Monday" written as BYDAY=MO;BYSETPOS=1 used to show on every Monday.
+const series = (rrule, dtstart = 'DTSTART:20260101T090000Z') => cal('BEGIN:VEVENT', 'UID:s', dtstart, `RRULE:${rrule}`, 'SUMMARY:x', 'END:VEVENT')
+const days = (occ) => occ.map(o => o.start.slice(0, 8))
+const Y2026 = [boundToMs('2026-01-01'), boundToMs('2026-12-31', true)]
+
+test('MONTHLY first Monday: BYDAY=1MO and BYDAY=MO;BYSETPOS=1 agree, one per month', () => {
+  const want = ['20260105', '20260202', '20260302', '20260406', '20260504', '20260601', '20260706', '20260803', '20260907', '20261005', '20261102', '20261207']
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=1MO'), ...Y2026)), want)
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1'), ...Y2026)), want)
+})
+
+test('MONTHLY last Friday (-1FR) and second Tuesday (2TU)', () => {
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=-1FR'), boundToMs('2026-01-01'), boundToMs('2026-04-30', true))), ['20260130', '20260227', '20260327', '20260424'])
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=FR;BYSETPOS=-1'), boundToMs('2026-01-01'), boundToMs('2026-04-30', true))), ['20260130', '20260227', '20260327', '20260424'])
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=2TU'), boundToMs('2026-01-01'), boundToMs('2026-03-31', true))), ['20260113', '20260210', '20260310'])
+})
+
+test('MONTHLY last weekday: BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', () => {
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1'), boundToMs('2026-01-01'), boundToMs('2026-06-30', true))),
+    ['20260130', '20260227', '20260331', '20260430', '20260529', '20260630'])
+})
+
+test('COUNT and UNTIL count the BYSETPOS-selected occurrences only', () => {
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1;COUNT=3'), ...Y2026)), ['20260105', '20260202', '20260302'])
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=-1FR;UNTIL=20260331T235959Z'), ...Y2026)), ['20260130', '20260227', '20260327'])
+  // DTSTART after the month's first Monday: that one is not an occurrence and not counted.
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=1MO;COUNT=2', 'DTSTART:20260110T090000Z'), ...Y2026)), ['20260202', '20260302'])
+})
+
+test('YEARLY: ordinal BYDAY with BYMONTH counts in the month; without BYMONTH in the year', () => {
+  const last = expandForRange(series('FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU'), boundToMs('2026-01-01'), boundToMs('2028-12-31', true))
+  assert.deepEqual(days(last), ['20261025', '20271031', '20281029'])
+  const twentieth = expandForRange(series('FREQ=YEARLY;BYDAY=20MO'), boundToMs('2026-01-01'), boundToMs('2027-12-31', true))
+  assert.deepEqual(days(twentieth), ['20260518', '20270517'])
+  const first = expandForRange(series('FREQ=YEARLY;BYMONTH=1,7;BYDAY=MO;BYSETPOS=1'), ...Y2026)
+  assert.deepEqual(days(first), ['20260105'])
+})
+
+test('BYDAY with BYMONTHDAY intersects (Friday the 13th); a WEEKLY series is unchanged', () => {
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=FR;BYMONTHDAY=13'), boundToMs('2026-01-01'), boundToMs('2027-12-31', true))), ['20260213', '20260313', '20261113', '20270813'])
+  assert.deepEqual(days(expandForRange(series('FREQ=WEEKLY;BYDAY=MO,WE;COUNT=4', 'DTSTART:20260105T090000Z'), ...Y2026)), ['20260105', '20260107', '20260112', '20260114'])
+})

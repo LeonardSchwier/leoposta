@@ -246,7 +246,8 @@ function parseRrule(s) {
     until: r.UNTIL ? parseDateValue(r.UNTIL) : null,
     byday: r.BYDAY ? r.BYDAY.split(',').map(x => { const m = /^([+-]?\d+)?(SU|MO|TU|WE|TH|FR|SA)$/.exec(x.trim().toUpperCase()); return m ? { n: m[1] ? parseInt(m[1], 10) : 0, day: DAYS.indexOf(m[2]) } : null }).filter(Boolean) : null,
     bymonthday: r.BYMONTHDAY ? r.BYMONTHDAY.split(',').map(Number).filter(Number.isFinite) : null,
-    bymonth: r.BYMONTH ? r.BYMONTH.split(',').map(Number).filter(Number.isFinite) : null
+    bymonth: r.BYMONTH ? r.BYMONTH.split(',').map(Number).filter(Number.isFinite) : null,
+    bysetpos: r.BYSETPOS ? r.BYSETPOS.split(',').map(Number).filter(n => Number.isInteger(n) && n !== 0) : null
   }
 }
 
@@ -255,8 +256,76 @@ function withDate(parts, y, mo, d) { return { ...parts, y, mo, d } }
 function keyOf(p) { return `${p.y}-${p.mo}-${p.d}T${p.h}:${p.mi}:${p.s}` }
 function dateKey(p) { return `${p.y}-${p.mo}-${p.d}` }
 
-/** Candidate dates of one period (week/month/year) in chronological order. */
+/** Candidate dates of one period (week/month/year) in chronological order,
+ * after BYSETPOS (RFC 5545 §3.3.10: it selects from the period's set). */
 function periodDates(rule, start, py, pmo, pd) {
+  const set = periodSet(rule, start, py, pmo, pd)
+  if (!rule.bysetpos || rule.freq === 'DAILY' || set.length === 0) return set
+  const picked = new Set()
+  for (const pos of rule.bysetpos) {
+    const i = pos > 0 ? pos - 1 : set.length + pos
+    if (i >= 0 && i < set.length) picked.add(i)
+  }
+  return [...picked].sort((x, y) => x - y).map(i => set[i])
+}
+
+const weekday = (y, mo, d) => new Date(Date.UTC(y, mo - 1, d)).getUTCDay()
+
+/** Days 1..n of the month that BYMONTHDAY names (negative counts from the end). */
+function monthDaysOf(rule, n) {
+  const out = new Set()
+  for (const md of rule.bymonthday) {
+    const d = md > 0 ? md : n + md + 1
+    if (d >= 1 && d <= n) out.add(d)
+  }
+  return out
+}
+
+/**
+ * BYDAY within a span of days (a month, or a whole year): every listed
+ * weekday, or only the n-th (counted from the start, or from the end when
+ * negative) occurrence of that weekday inside the span.
+ * `days`: the span's dates as [y, mo, d] in order.
+ */
+function bydayIn(rule, days) {
+  const byWd = new Map()
+  days.forEach((t, i) => {
+    const wd = weekday(...t)
+    if (!byWd.has(wd)) byWd.set(wd, [])
+    byWd.get(wd).push(i)
+  })
+  const hit = new Set()
+  for (const b of rule.byday) {
+    const list = byWd.get(b.day) || []
+    if (!b.n) { for (const i of list) hit.add(i); continue }
+    const i = b.n > 0 ? list[b.n - 1] : list[list.length + b.n]
+    if (i !== undefined) hit.add(i)
+  }
+  return [...hit].sort((x, y) => x - y).map(i => days[i])
+}
+
+function monthSpan(y, mo) {
+  const n = daysInMonth(y, mo)
+  return Array.from({ length: n }, (_, i) => [y, mo, i + 1])
+}
+
+/** The dates of one month as MONTHLY (or YEARLY with BYMONTH) expands them. */
+function monthDates(rule, start, y, mo) {
+  const n = daysInMonth(y, mo)
+  let days
+  if (rule.byday) {
+    days = bydayIn(rule, monthSpan(y, mo))
+    if (rule.bymonthday) { const md = monthDaysOf(rule, n); days = days.filter(t => md.has(t[2])) }
+  } else if (rule.bymonthday) {
+    const md = monthDaysOf(rule, n)
+    days = [...md].sort((a, b) => a - b).map(d => [y, mo, d])
+  } else {
+    days = start.d <= n ? [[y, mo, start.d]] : []
+  }
+  return days
+}
+
+function periodSet(rule, start, py, pmo, pd) {
   const out = []
   if (rule.freq === 'DAILY') return [withDate(start, py, pmo, pd)]
   if (rule.freq === 'WEEKLY') {
@@ -264,44 +333,43 @@ function periodDates(rule, start, py, pmo, pd) {
     const base = new Date(Date.UTC(py, pmo - 1, pd))
     const dow = (base.getUTCDay() + 6) % 7
     const monday = new Date(base.getTime() - dow * 86400000)
-    const days = rule.byday ? rule.byday.map(b => b.day) : [new Date(Date.UTC(start.y, start.mo - 1, start.d)).getUTCDay()]
+    const days = rule.byday ? rule.byday.map(b => b.day) : [weekday(start.y, start.mo, start.d)]
     for (let i = 0; i < 7; i++) {
       const d = new Date(monday.getTime() + i * 86400000)
+      if (rule.bymonth && !rule.bymonth.includes(d.getUTCMonth() + 1)) continue
       if (days.includes(d.getUTCDay())) out.push(withDate(start, d.getUTCFullYear(), d.getUTCMonth() + 1, d.getUTCDate()))
     }
     return out
   }
-  const monthDates = (y, mo) => {
-    const n = daysInMonth(y, mo)
-    const res = []
-    if (rule.byday) {
-      for (let d = 1; d <= n; d++) {
-        const wd = new Date(Date.UTC(y, mo - 1, d)).getUTCDay()
-        for (const b of rule.byday) {
-          if (b.day !== wd) continue
-          if (!b.n) { res.push(d); continue }
-          const nth = Math.floor((d - 1) / 7) + 1
-          const nthFromEnd = Math.floor((n - d) / 7) + 1
-          if ((b.n > 0 && nth === b.n) || (b.n < 0 && nthFromEnd === -b.n)) res.push(d)
-        }
-      }
-    } else if (rule.bymonthday) {
-      for (const md of rule.bymonthday) {
-        const d = md > 0 ? md : n + md + 1
-        if (d >= 1 && d <= n) res.push(d)
-      }
-    } else if (start.d <= n) {
-      res.push(start.d)
-    }
-    return [...new Set(res)].sort((a, b) => a - b).map(d => withDate(start, y, mo, d))
+  if (rule.freq === 'MONTHLY') {
+    if (rule.bymonth && !rule.bymonth.includes(pmo)) return []
+    return monthDates(rule, start, py, pmo).map(t => withDate(start, ...t))
   }
-  if (rule.freq === 'MONTHLY') return monthDates(py, pmo)
   if (rule.freq === 'YEARLY') {
-    const months = rule.bymonth || [start.mo]
-    for (const mo of months) {
-      if (rule.byday || rule.bymonthday) out.push(...monthDates(py, mo))
-      else if (start.d <= daysInMonth(py, mo)) out.push(withDate(start, py, mo, start.d))
+    if (rule.bymonth) {
+      for (const mo of [...rule.bymonth].sort((a, b) => a - b)) {
+        if (mo < 1 || mo > 12) continue
+        out.push(...monthDates(rule, start, py, mo).map(t => withDate(start, ...t)))
+      }
+      return out
     }
+    if (rule.byday) {
+      // No BYMONTH: an ordinal BYDAY counts within the whole year (20MO = the
+      // 20th Monday of the year); BYMONTHDAY then filters.
+      const year = []
+      for (let mo = 1; mo <= 12; mo++) year.push(...monthSpan(py, mo))
+      let days = bydayIn(rule, year)
+      if (rule.bymonthday) days = days.filter(t => monthDaysOf(rule, daysInMonth(t[0], t[1])).has(t[2]))
+      return days.map(t => withDate(start, ...t))
+    }
+    if (rule.bymonthday) {
+      for (let mo = 1; mo <= 12; mo++) {
+        const md = monthDaysOf(rule, daysInMonth(py, mo))
+        for (const d of [...md].sort((a, b) => a - b)) out.push(withDate(start, py, mo, d))
+      }
+      return out
+    }
+    if (start.d <= daysInMonth(py, start.mo)) out.push(withDate(start, py, start.mo, start.d))
     return out
   }
   return []
