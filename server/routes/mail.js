@@ -57,7 +57,7 @@ router.get('/messages', async (req, res) => {
                         : (mailbox.recent || 0)
         const range = messageRange(exists, limitN, offsetN)
         if (range.empty) {
-          res.json({ messages: applyRules([], state.rules), unreadCount })
+          res.json({ messages: applyRules([], state.rules), unreadCount, total: exists })
           return
         }
         const end = range.end
@@ -104,7 +104,8 @@ router.get('/messages', async (req, res) => {
         }
 
         messages.sort((a, b) => new Date(b.date) - new Date(a.date))
-        res.json({ messages: applyRules(messages, state.rules), unreadCount })
+        // `total` lets the client offer "load more" for the older messages.
+        res.json({ messages: applyRules(messages, state.rules), unreadCount, total: exists })
       } finally {
         lock.release()
       }
@@ -232,6 +233,11 @@ router.get('/folders', async (req, res) => {
   }
 })
 
+/** IMAP SEARCH for `q` in the subject, sender, recipients or body. */
+export function searchCriteria(q) {
+  return { or: [{ subject: q }, { from: q }, { to: q }, { body: q }] }
+}
+
 // GET /api/search
 router.get('/search', async (req, res) => {
   try {
@@ -248,15 +254,17 @@ router.get('/search', async (req, res) => {
     await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
       try {
-        const searchCriteria = { SUBJECT: q }
-        const uids = await client.search(searchCriteria, { uid: true })
-        const searchUids = Array.isArray(uids) ? uids : [uids]
+        // Subject, sender, recipients or body text, not only the subject.
+        const found = await client.search(searchCriteria(String(q)), { uid: true })
+        const searchUids = Array.isArray(found) ? found : []
 
         if (searchUids.length === 0) {
           return res.json({ messages: [], total: 0 })
         }
 
-        const resultUids = searchUids.slice(0, limit)
+        // The newest matches (highest UIDs), not the oldest ones.
+        const limitN = Math.min(Math.max(1, Number(limit) || 50), 200)
+        const resultUids = [...searchUids].sort((a, b) => a - b).slice(-limitN)
         const result = client.fetch(resultUids, {
           uid: true, internalDate: true, from: true, to: true,
           subject: true, flags: true, envelope: true
@@ -281,6 +289,7 @@ router.get('/search', async (req, res) => {
           })
         }
 
+        messages.sort((a, b) => new Date(b.date) - new Date(a.date))
         res.json({ messages: applyRules(messages, state.rules), total: searchUids.length })
       } finally {
         lock.release()
