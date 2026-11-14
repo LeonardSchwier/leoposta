@@ -29,14 +29,20 @@ async function seedAccount(request: APIRequestContext) {
 
 test('adds the dummy account in Settings', async ({ page }) => {
   await page.goto('/')
+  const goaAnswer = page.waitForResponse((r) => r.url().includes('/api/goa/accounts'))
   await page.getByText('Settings').first().click()
+  // The e2e server runs with LEOPOSTA_GOA=off: the host's own GNOME Online
+  // Accounts never show up, whatever machine runs the test.
+  expect(await (await goaAnswer).json()).toEqual({ available: false, accounts: [] })
+  await expect(page.locator('.goa-import-sec')).toHaveCount(0)
+  await expect(page.getByText('Import from GNOME Online Accounts')).toHaveCount(0)
   await page.getByPlaceholder('you@example.com').fill('me@example.test')
   await page.locator('.form-section').filter({ hasText: 'IMAP (Incoming)' }).locator('input[type="text"]').fill('127.0.0.1')
   await page.locator('input[type="number"]').first().fill('1243')
-  await page.getByRole('checkbox', { name: 'IMAP SSL/TLS' }).uncheck()
+  await page.getByLabel('IMAP SSL/TLS').uncheck()
   await page.locator('#smtp-host').fill('127.0.0.1')
   await page.locator('#smtp-port').fill('2525')
-  await page.getByRole('checkbox', { name: 'SMTP SSL/TLS' }).uncheck()
+  await page.getByLabel('SMTP SSL/TLS').uncheck()
   await page.getByPlaceholder('••••••••').fill('dummy')
   const saved = page.waitForResponse((r) => r.url().endsWith('/api/accounts') && r.request().method() === 'POST')
   await page.getByRole('button', { name: 'Add Account', exact: true }).click()

@@ -13,7 +13,8 @@
   import { type Folder, store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, adjustUnseen, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setComposeDraft, bootstrapRefreshMode } from './store'
   import { startReply } from './lib/reply'
   import { startRefresh, stopRefresh } from './refresh'
-  import { loadAccounts } from './lib/accountsBootstrap'
+  import { loadAccounts, rememberActiveAccount } from './lib/accountsBootstrap'
+  import { globalShortcut, KEYBOARD_HELP } from './lib/shortcuts'
   import { loadMessageBody, keepLoadedBodies } from './lib/openMessage'
   import { ApiError, MailAPI } from './api'
   import MovePicker from './components/MovePicker.svelte'
@@ -77,26 +78,6 @@
 
   function togglePalette() {
     showPalette = !showPalette
-  }
-
-  // Open the palette in "search" mode (prefilled with 'go to').
-  function openPaletteSearch() {
-    if (showPalette) { showPalette = false; return }
-    showPalette = true
-    // Pre-fill the search after the palette input mounts.
-    requestAnimationFrame(() => {
-      setTimeout(() => {
-        const input = document.querySelector<HTMLInputElement>('.palette .palette-input')
-        if (input) {
-          input.value = 'go to '
-          input.dispatchEvent(new Event('input', { bubbles: true }))
-          input.focus()
-          // move caret to end
-          const len = input.value.length
-          input.setSelectionRange(len, len)
-        }
-      }, 0)
-    })
   }
 
   function viewLabel(view: string): string {
@@ -497,16 +478,17 @@
 
   function handleKeydown(e: KeyboardEvent) {
     const key = e.key.toLowerCase()
-    // Command palette: Ctrl/Cmd+K. Works even while typing.
-    if ((e.ctrlKey || e.metaKey) && key === 'k') {
+    // Ctrl/Cmd+K: the command palette (even while typing). '?': the keyboard
+    // help (not while typing: there '?' is a character).
+    const global = globalShortcut(e, isTyping(e))
+    if (global === 'palette') {
       e.preventDefault()
       togglePalette()
       return
     }
-    // '?' opens the palette in "go to" mode so users can discover it.
-    if (e.key === '?' && !e.ctrlKey && !e.metaKey && !(e.target as HTMLElement | null)?.closest?.('.palette')) {
+    if (global === 'help') {
       e.preventDefault()
-      openPaletteSearch()
+      showToast(KEYBOARD_HELP, 6000)
       return
     }
     const isN = key === 'n'
@@ -583,10 +565,6 @@
         }, 0)
         break
       }
-      case '?':
-        e.preventDefault()
-        showToast('? palette · n new · Ctrl+Enter send · r reply · a archive · d delete · s star · u read/unread · v move · / search · Esc close', 6000)
-        break
       case 'Escape':
         e.preventDefault()
         if (s.selectedMessageId) selectMessage(null)
@@ -603,6 +581,7 @@
   // Skips the initial mount (tracker seeded from the same initial null),
   // so the onMount load below isn't double-fired.
   let prevAccountId = $store.activeAccountId
+  let stopRememberingAccount: () => void = () => {}
   // false until the account list arrived: avoids flashing the first-run
   // screen while it loads.
   let accountsLoaded = $state(false)
@@ -637,6 +616,9 @@
     loadAccounts().then(({ accounts, reachable }) => {
       // Seed the switch tracker first so the effect above does not load twice.
       prevAccountId = getState().activeAccountId
+      // Only now: the start-up fallback to the first account must not
+      // overwrite the remembered choice before it was restored.
+      stopRememberingAccount = rememberActiveAccount()
       accountsReachable = reachable
       accountsLoaded = true
       // Unreachable (offline PWA): load anyway, the list falls back to the
@@ -651,7 +633,7 @@
     window.addEventListener('offline', () => refreshQueueCount())
     window.addEventListener(QUEUE_CHANGED, refreshQueueCount)
     window.addEventListener('keydown', handleKeydown)
-    return () => stopRefresh()
+    return () => { stopRefresh(); stopRememberingAccount() }
   })
 
   // Refresh controller: react only to the three values that change the
@@ -742,6 +724,7 @@
             onMoveRequest={requestMove}
             onEditDraft={isDraftsFolder($store.activeFolder) ? (id) => openDraft(id, $store.activeFolder) : undefined}
             onReply={handleReplyKeyboard}
+            onGone={messageGone}
           />
         {/if}
       </div>

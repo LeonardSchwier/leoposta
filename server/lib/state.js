@@ -32,6 +32,10 @@ export const SCHEDULED_FILE = path.join(DATA_DIR, 'scheduled.json')
 export const RULES_FILE = path.join(DATA_DIR, 'rules.json')
 // Per account: the highest INBOX UID the rules have already seen (lib/rules.js).
 export const RULE_CURSORS_FILE = path.join(DATA_DIR, 'rule-cursors.json')
+// The account the user last chose in the UI. Kept here (not only in the
+// page's localStorage) because the desktop shell serves the app on a new
+// random port per launch, i.e. a new origin with an empty localStorage.
+export const UI_STATE_FILE = path.join(DATA_DIR, 'ui-state.json')
 export const DEV_TOKEN_FILE = path.join(SERVER_DIR, '.dev-token')
 
 // Read the shared local dev token (server/.dev-token) if present. Created once
@@ -107,6 +111,17 @@ if (fs.existsSync(RULES_FILE)) {
 }
 if (fs.existsSync(RULE_CURSORS_FILE)) {
   try { state.ruleCursors = JSON.parse(fs.readFileSync(RULE_CURSORS_FILE, 'utf-8')) || {} } catch { state.ruleCursors = {} }
+}
+
+/** The remembered active account's email, or null (none / unreadable file). */
+export function getRememberedAccount() {
+  try {
+    const v = JSON.parse(fs.readFileSync(UI_STATE_FILE, 'utf-8'))?.activeAccount
+    return typeof v === 'string' && v ? v : null
+  } catch { return null }
+}
+export function setRememberedAccount(email) {
+  fs.writeFileSync(UI_STATE_FILE, JSON.stringify({ activeAccount: email }, null, 2), { mode: 0o600 })
 }
 
 // ── Accessors ────────────────────────────────────────────────────────────────
