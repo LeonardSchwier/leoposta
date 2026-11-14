@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { CalendarAPI } from '../api'
   import { eventToICS } from '../lib/vcf'
+  import { patchEventICS } from '../lib/icsPatch'
   import { loadSelection, saveSelection, STORAGE_KEY } from '../lib/calSelection'
   import {
     fmtISODate, eventOnDay, timeLabel, icsToLocalParts, localToIcsUtc, dateToIcsDate,
@@ -16,6 +17,7 @@
     uid: string; summary: string; start: string; end?: string; allDay?: boolean
     location?: string; description?: string; attendees?: string[]
     calendar: string; href?: string; recurring?: boolean; rrule?: string; recurrenceId?: string
+    ics?: string
   }
   let calendars = $state<Cal[]>([])
   let configured = $state(true)
@@ -204,11 +206,17 @@
       busy = true
       const uid = orig?.uid || ('leoposta-' + crypto.randomUUID())
       const attendees = fAttendees.split(/[,\s;]+/).map(s => s.trim()).filter(s => s && s.includes('@'))
-      const ics = eventToICS({
+      // An existing event is patched in its own object (keeps TZID, RRULE,
+      // EXDATE, overrides, alarms; one occurrence moved shifts the series);
+      // a new one is built from the form.
+      const patched = orig?.ics ? patchEventICS(orig.ics, orig.uid, {
+        summary: fSummary, location: fLocation, description: fDescription, attendees, allDay: fAllDay,
+        occurrenceStart: orig.start, start: times.start, end: times.end
+      }) : null
+      const ics = patched ?? eventToICS({
         summary: fSummary, start: times.start, end: times.end,
         location: fLocation, description: fDescription, allDay: fAllDay,
         attendees: attendees.length ? attendees : undefined,
-        // Editing one occurrence edits the series: keep its rule.
         rrule: orig?.recurring ? orig.rrule : undefined
       }, uid)
       const moved = !!orig && orig.calendar !== targetUri
