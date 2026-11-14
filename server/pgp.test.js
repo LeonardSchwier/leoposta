@@ -13,7 +13,10 @@ process.env.LEOPOSTA_TOKEN = TOKEN
 process.env.LEOPOSTA_DATA_DIR = DATA_DIR
 
 const { createApp } = await import('./index.js')
-const { processPgp, findPgpPayload, pgpLock } = await import('./lib/pgp.js')
+const { processPgp: processFor, findPgpPayload, pgpLock } = await import('./lib/pgp.js')
+const { getAccount } = await import('./lib/state.js')
+// Keys belong to accounts: these tests use the one account they create.
+const processPgp = (input) => processFor(input, getAccount('me@example.test'))
 const { parseMessageSource } = await import('./lib/attachments.js')
 const { makeKey, inlineEncrypted, pgpMimeEncrypted } = await import('./fixtures/pgpMail.js')
 
@@ -25,6 +28,8 @@ let ecc, eccPlain, rsa, sender
 before(async () => {
   await new Promise((resolve) => { server = createApp().listen(0, '127.0.0.1', resolve) })
   base = `http://127.0.0.1:${server.address().port}`
+  const r = await fetch(`${base}/api/accounts`, { method: 'POST', headers: json, body: JSON.stringify({ email: 'me@example.test', imapHost: '127.0.0.1', smtpHost: '127.0.0.1', imapPass: 'x', smtpPass: 'x' }) })
+  assert.equal(r.status, 200)
   ;[ecc, eccPlain, rsa, sender] = await Promise.all([
     makeKey({ type: 'ecc', passphrase: PASS }),
     makeKey({ type: 'ecc' }),
@@ -49,9 +54,13 @@ async function decryptRaw(raw) {
   return { payload, r: await processPgp(payload) }
 }
 
+const keyFile = () => path.join(DATA_DIR, 'pgp-keys', `${getAccount('me@example.test').id}.asc`)
+
 function noPassphraseOnDisk() {
-  for (const f of fs.readdirSync(DATA_DIR)) {
-    const c = fs.readFileSync(path.join(DATA_DIR, f), 'utf-8')
+  for (const f of fs.readdirSync(DATA_DIR, { recursive: true })) {
+    const p = path.join(DATA_DIR, f)
+    if (!fs.statSync(p).isFile()) continue
+    const c = fs.readFileSync(p, 'utf-8')
     assert.ok(!c.includes(PASS), `${f} contains the passphrase`)
   }
 }
@@ -129,11 +138,11 @@ test('PGP/MIME with an encrypted attachment: attachment listed with bytes; signe
 test('saving a protected key with a wrong passphrase: 400 "Wrong passphrase", previous key and unlock state untouched, nothing written', async () => {
   await fetch(`${base}/api/pgp`, { method: 'DELETE', headers: json })
   await put({ privateAsc: eccPlain.privateKey })
-  const before = fs.readFileSync(path.join(DATA_DIR, 'pgp_private.asc'), 'utf-8')
+  const before = fs.readFileSync(keyFile(), 'utf-8')
   const bad = await put({ privateAsc: rsa.privateKey, passphrase: 'wrong' })
   assert.equal(bad.status, 400)
   assert.match((await bad.json()).error, /Wrong passphrase/)
-  assert.equal(fs.readFileSync(path.join(DATA_DIR, 'pgp_private.asc'), 'utf-8'), before)
+  assert.equal(fs.readFileSync(keyFile(), 'utf-8'), before)
   const junk = await put({ privateAsc: 'not a key' })
   assert.equal(junk.status, 400)
   assert.match((await junk.json()).error, /Not a valid OpenPGP private key/)
@@ -141,7 +150,7 @@ test('saving a protected key with a wrong passphrase: 400 "Wrong passphrase", pr
 
 test('no key configured: error pgp_no_key (UI says "add your key"), not "locked"', async () => {
   await fetch(`${base}/api/pgp`, { method: 'DELETE', headers: json })
-  pgpLock()
+  await pgpLock()
   const raw = await inlineEncrypted({ from: 'a@example.test', to: 'me@example.test', subject: 'x', text: 'y', publicKey: ecc.publicKey })
   const { r } = await decryptRaw(raw)
   assert.equal(r.error, 'pgp_no_key')
