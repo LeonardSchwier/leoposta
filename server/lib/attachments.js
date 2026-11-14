@@ -16,8 +16,31 @@ const GENERIC_TYPE = 'application/octet-stream'
 
 /** Parse a raw message. Pass the Buffer: converting it to a string first mangles
  * the bytes of 8bit and binary parts. */
-export function parseMessageSource(source) {
-  return simpleParser(source)
+export async function parseMessageSource(source) {
+  const parsed = await simpleParser(source)
+  if (parsed.text || parsed.html || parsed.attachments?.length) return parsed
+  const repaired = Buffer.isBuffer(source) ? repairBoundary(source) : null
+  return repaired ? simpleParser(repaired) : parsed
+}
+
+/** A multipart message whose parts use another delimiter than the declared
+ * boundary parses as all preamble: nothing to show. If the body opens with a
+ * delimiter line, return the source with that boundary declared instead. */
+export function repairBoundary(source) {
+  const text = source.toString('latin1')
+  const m = /\r?\n\r?\n/.exec(text)
+  if (!m) return null
+  const head = text.slice(0, m.index)
+  const ct = /^content-type:[^\n]*(?:\r?\n[ \t][^\n]*)*/im.exec(head)
+  if (!ct || !/^content-type:\s*multipart\//i.test(ct[0])) return null
+  const declared = /boundary\s*=\s*(?:"([^"]*)"|([^\s;]+))/i.exec(ct[0])
+  if (!declared) return null
+  const used = /^--([^\r\n]{1,200}?)[ \t]*\r?$/m.exec(text.slice(m.index + m[0].length))
+  const boundary = used?.[1].replace(/--$/, '')
+  if (!boundary || boundary === (declared[1] ?? declared[2]) || boundary.includes('"')) return null
+  const fixedCt = ct[0].replace(declared[0], `boundary="${boundary}"`)
+  const fixedHead = head.slice(0, ct.index) + fixedCt + head.slice(ct.index + ct[0].length)
+  return Buffer.concat([Buffer.from(fixedHead, 'latin1'), source.subarray(Buffer.byteLength(head, 'latin1'))])
 }
 
 /** An image embedded in the HTML body (multipart/related with a Content-ID):

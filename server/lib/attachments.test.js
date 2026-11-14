@@ -262,3 +262,27 @@ test('bodyStructureAttachments does not count an image embedded in multipart/rel
   }
   assert.deepEqual(bodyStructureAttachments(root).map((a) => a.filename), ['real.pdf'])
 })
+
+// ── a multipart whose parts use another boundary than declared ──────────────
+
+const WRONG_BOUNDARY = crlf([
+  'From: a@example.test', 'Subject: wrong boundary', 'MIME-Version: 1.0',
+  'Content-Type: multipart/mixed;', '\tboundary="declared"', '',
+  '--other', 'Content-Type: text/plain', '', 'Visible despite the wrong boundary.',
+  '--other', 'Content-Type: application/octet-stream', 'Content-Disposition: attachment; filename="f.bin"', '', 'xyz',
+  '--other--', ''
+])
+
+test('a multipart whose parts use an undeclared boundary still shows its text and attachments', async () => {
+  const parsed = await parseMessageSource(WRONG_BOUNDARY)
+  assert.equal(parsed.text.trim(), 'Visible despite the wrong boundary.')
+  assert.deepEqual(parsed.attachments.map((a) => a.filename), ['f.bin'])
+  // The download route parses the same way, so ids match.
+  assert.equal(listAttachments((await parseMessageSource(WRONG_BOUNDARY)).attachments)[0].id, '0')
+})
+
+test('a well-formed multipart with only a preamble is not rewritten', async () => {
+  const raw = crlf(['Content-Type: multipart/mixed; boundary="b"', '', 'just a preamble', '--b--', ''])
+  const parsed = await parseMessageSource(raw)
+  assert.ok(!parsed.text)
+})
