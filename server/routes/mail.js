@@ -3,7 +3,7 @@ import { state, resolveAccount } from '../lib/state.js'
 import { getPoolFor } from '../lib/imap.js'
 import { normalizeFlags, parseFromAddr, toISO, messageDate } from '../lib/address.js'
 import { messageRange } from '../lib/mailRange.js'
-import { processPgp } from '../lib/pgp.js'
+import { processPgp, findPgpPayload } from '../lib/pgp.js'
 import { applyRules } from '../lib/rules.js'
 import { MailActionError, moveChecked, parseUid, removeMessage } from '../lib/removal.js'
 import { changeFlags, parseFlagList } from '../lib/flags.js'
@@ -143,7 +143,8 @@ router.get('/message/:id', async (req, res) => {
 
         let body = ''
         let bodyHtml = ''
-        const attachments = []
+        let attachments = []
+        let pgpPayload = null
 
         if (msg.source) {
           try {
@@ -151,6 +152,10 @@ router.get('/message/:id', async (req, res) => {
             if (parsed.html) bodyHtml = parsed.html
             if (parsed.text) body = parsed.text
             attachments.push(...listAttachments(parsed.attachments))
+            pgpPayload = findPgpPayload(parsed)
+            // RFC 3156's "Version: 1" control part and the encrypted blob are
+            // not attachments the user sent.
+            if (pgpPayload && pgpPayload.hide.length) attachments = attachments.filter((_, i) => !pgpPayload.hide.includes(i))
           } catch (parseErr) {
             const raw = msg.source.toString('utf-8')
             if (raw.includes('<html') || raw.includes('<div') || raw.includes('<p')) {
@@ -169,10 +174,16 @@ router.get('/message/:id', async (req, res) => {
           } catch (e) { /* the message is shown either way; marking it read is best effort */ }
         }
 
-        const pgp = await processPgp(body || msg.source?.toString('utf-8') || '')
-        const finalBody = pgp?.decrypted ? pgp.text : body
-        const finalHtml = pgp?.decrypted ? (pgp.html || '') : bodyHtml
-        const finalAttachments = pgp?.decrypted && pgp.attachments?.length
+        const pgpResult = pgpPayload ? await processPgp(pgpPayload) : await processPgp(body)
+        // Decrypted attachment bytes stay on the server (served by the
+        // attachment route as id "pgp-<n>").
+        const { parts: _parts, ...pgp } = pgpResult || {}
+        const locked = !!(pgpResult && pgpResult.encrypted && !pgpResult.decrypted)
+        // Undecryptable: show no ciphertext as the body (the banner asks for
+        // the key or passphrase; the armor is under "show encrypted data").
+        const finalBody = pgpResult?.decrypted ? pgp.text : (locked ? '' : body)
+        const finalHtml = pgpResult?.decrypted ? (pgp.html || '') : (locked ? '' : bodyHtml)
+        const finalAttachments = pgpResult?.decrypted && pgp.attachments?.length
           ? mergePgpAttachments(attachments, pgp.attachments)
           : attachments
         res.json({
@@ -182,7 +193,7 @@ router.get('/message/:id', async (req, res) => {
           to, cc, bcc,
           subject: msg.subject || msg.envelope?.subject || '(No Subject)',
           body: finalBody, bodyHtml: finalHtml,
-          pgp: pgp || null,
+          pgp: pgpResult ? pgp : null,
           date: messageDate(msg),
           flags: normalizeFlags(msg.flags),
           attachments: finalAttachments,
@@ -473,7 +484,19 @@ router.get('/message/:id/attachment/:attachmentId', async (req, res) => {
     })
     if (fetched.error) return res.status(fetched.status).json({ error: fetched.error })
     const parsed = await parseMessageSource(fetched.source)
-    const att = attachmentAt(parsed.attachments, req.params.attachmentId)
+    const pgpMatch = /^pgp-(\d{1,4})$/.exec(String(req.params.attachmentId))
+    let att
+    if (pgpMatch) {
+      // An attachment inside a PGP-encrypted message: decrypt again (the
+      // plaintext is never stored) and serve that part.
+      const payload = findPgpPayload(parsed)
+      const r = payload ? await processPgp(payload) : null
+      if (r && r.encrypted && !r.decrypted) return res.status(423).json({ error: r.error === 'pgp_locked' ? 'pgp_locked' : 'pgp_decrypt_failed' })
+      const i = Number(pgpMatch[1])
+      att = r && r.parts && r.parts[i] ? { ...r.attachments[i], content: r.parts[i] } : null
+    } else {
+      att = attachmentAt(parsed.attachments, req.params.attachmentId)
+    }
     if (!att) return res.status(404).json({ error: 'attachment_not_found' })
 
     // The bytes come from whoever sent the mail: always a download, never
