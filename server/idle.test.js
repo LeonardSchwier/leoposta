@@ -190,3 +190,25 @@ test('idle: a failed connect ends the stream with an error event and logs out', 
     assert.equal(fake.calls.logout >= 1, true, 'a half-open client must be closed after a failed connect')
   })
 })
+
+test('idle: the IMAP connection closing during IDLE ends the stream so the browser reconnects', async () => {
+  const fake = makeFakeClient()
+  await withIdleServer(fake, async (port) => {
+    const ended = deferred()
+    const req = http.get({ host: '127.0.0.1', port, path: '/api/idle' }, (res) => {
+      res.on('data', () => {})
+      res.on('end', ended.resolve)
+      res.on('error', ended.resolve)
+    })
+    req.on('error', () => {})
+    fake.connectD.resolve()
+    fake.lockD.resolve(fake.lock)
+    assert.equal(await waitFor(() => fake.calls.idle === 1), true)
+    // Server restart: the socket closes, idle() stays pending (as ImapFlow may).
+    fake.client.emit('close')
+    const r = await Promise.race([ended.promise.then(() => 'ended'), settle(1000).then(() => 'still open')])
+    assert.equal(r, 'ended')
+    assert.equal(fake.calls.release, 1)
+    assert.equal(await waitFor(() => fake.calls.logout === 1), true)
+  })
+})
