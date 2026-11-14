@@ -26,7 +26,7 @@ export default defineConfig({
     },
     {
       command: 'rm -rf .e2e-data && mkdir -p .e2e-data && node server/index.js',
-      env: { LEOPOSTA_TOKEN: TOKEN, LEOPOSTA_DATA_DIR: '.e2e-data', PORT: String(API_PORT), ALLOWED_ORIGINS: `http://127.0.0.1:${WEB_PORT}` },
+      env: { LEOPOSTA_TOKEN: TOKEN, LEOPOSTA_DATA_DIR: '.e2e-data', PORT: String(API_PORT), ALLOWED_ORIGINS: `http://127.0.0.1:${WEB_PORT},http://127.0.0.1:${API_PORT}` },
       url: `http://127.0.0.1:${API_PORT}/api/health`,
       reuseExistingServer: false
     },
