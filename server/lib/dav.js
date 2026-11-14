@@ -226,10 +226,23 @@ export function sameHref(a, b) {
 // (REPORT / PROPFIND on the collection itself) must append '/' themselves,
 // since OX 400s on a bare (non-collection) href there; file-PUT/DELETE sites
 // rely on this no-slash form so `+ '/uid.ics'` does not double-slash.
+// Trim leading/trailing '/' with index scans, not /\/+$/: a regex anchored
+// at the end is quadratic on a user-supplied path made of many '/'.
+function trimSlashesEnd(str) {
+  let end = str.length
+  while (end > 0 && str[end - 1] === '/') end--
+  return str.slice(0, end)
+}
+function trimSlashes(str) {
+  let start = 0
+  while (start < str.length && str[start] === '/') start++
+  return trimSlashesEnd(str.slice(start))
+}
+
 export function joinDavPath(basePath, sub) {
-  if (sub && sub.startsWith('/')) return sub.replace(/\/+$/, '')
-  const base = (basePath || '').replace(/\/+$/, '')
-  const s = (sub || '').replace(/^\/+|\/+$/g, '')
+  if (sub && sub.startsWith('/')) return trimSlashesEnd(sub)
+  const base = trimSlashesEnd(basePath || '')
+  const s = trimSlashes(sub || '')
   return s ? base + '/' + s : base
 }
 

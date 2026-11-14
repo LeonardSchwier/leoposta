@@ -50,6 +50,7 @@
     "cors": "^2.8.6",
     "dompurify": "^3.4.17",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.7.4",
     "imapflow": "^1.0.190",
     "mailparser": "^3.9.39",
     "nodemailer": "10.4.0",
