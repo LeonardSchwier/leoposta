@@ -5,7 +5,7 @@
   } from '../store'
   import type { MailAccount } from '../store'
   import type { RefreshMode } from '../refresh'
-  import { pgpUnlock, pgpLock } from '../lib/pgp'
+  import { pgpUnlock, pgpLock, pgpStatus, pgpPublicKeys, pgpRemovePublicKey, type PgpStatus, type PgpPublicKey } from '../lib/pgp'
   import { accountSavePayload } from '../lib/accountForm'
   import { RULE_FIELDS, RULE_OPERATORS, RULE_ACTIONS, ruleProblem } from '../lib/rules'
   import { moveTargets } from '../lib/moveTargets'
@@ -161,20 +161,33 @@
     goaImporting = null
   }
 
-  let pgpState = $state<{ hasPrivateKey: boolean, hasPublicKey: boolean, hasPassphrase: boolean, unlocked: boolean } | null>(null)
+  let pgpState = $state<PgpStatus | null>(null)
   let pgpUnlockPass = $state('')
+  let pgpPublics = $state<PgpPublicKey[]>([])
+  // Whose private key the PGP section shows: picked here, else the account
+  // being edited, else the active one. Keys belong to accounts.
+  let pgpPicked = $state<string | null>(null)
+  const pgpAccount = $derived.by(() => {
+    const list = $store.accounts
+    if (pgpPicked && list.some(a => a.email === pgpPicked)) return pgpPicked
+    const editing = editingId ? list.find(a => a.id === editingId) : null
+    if (editing) return editing.email
+    return (list.find(a => a.id === $store.activeAccountId) || list[0])?.email || null
+  })
 
   async function refreshPgpState() {
+    const account = pgpAccount
     try {
-      const r = await apiFetch('/api/pgp/status')
-      if (r.ok) pgpState = await r.json()
+      const st = await pgpStatus(account)
+      if (account === pgpAccount) pgpState = st
     } catch { /* backend unreachable: section shows no status */ }
+    try { pgpPublics = await pgpPublicKeys() } catch { /* as above */ }
   }
 
   async function handlePgpUnlock() {
     pgpErr = ''; pgpMsg = ''; pgpLoading = true
     try {
-      await pgpUnlock(pgpUnlockPass)
+      await pgpUnlock(pgpUnlockPass, pgpAccount)
       pgpUnlockPass = ''
       pgpMsg = 'Key unlocked (until you lock it, the server restarts, or 15 minutes pass unused)'
     } catch (e) { pgpErr = e instanceof Error ? e.message : String(e) }
@@ -184,22 +197,24 @@
 
   async function handlePgpLock() {
     pgpErr = ''; pgpMsg = ''
-    try { await pgpLock(); pgpMsg = 'Key locked' } catch (e) { pgpErr = e instanceof Error ? e.message : String(e) }
+    try { await pgpLock(pgpAccount); pgpMsg = 'Key locked' } catch (e) { pgpErr = e instanceof Error ? e.message : String(e) }
     await refreshPgpState()
   }
 
   async function handlePgpSave() {
     if (!pgpPrivate && !pgpPublic) { pgpErr = 'Paste a private key (or at least a public key)'; return }
+    if (pgpPrivate && !pgpAccount) { pgpErr = 'Add an account first: the private key belongs to an account'; return }
     pgpLoading = true; pgpErr = ''; pgpMsg = ''
     try {
       const r = await apiFetch('/api/pgp', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(pgpAccount ? { 'x-account': pgpAccount } : {}) },
         body: JSON.stringify({ privateAsc: pgpPrivate, publicAsc: pgpPublic, passphrase: pgpPassphrase })
       })
       const d = await r.json().catch(() => ({}))
       if (r.ok && d.success) {
-        pgpMsg = d.state?.unlocked ? 'PGP key saved and unlocked' : (d.state?.hasPassphrase ? 'PGP key saved (locked: unlock it to read encrypted mail)' : 'PGP key saved')
+        if (!pgpPrivate) pgpMsg = 'Public key added'
+        else pgpMsg = d.state?.unlocked ? 'PGP key saved and unlocked' : (d.state?.hasPassphrase ? 'PGP key saved (locked: unlock it to read encrypted mail)' : 'PGP key saved')
         pgpPrivate = ''; pgpPublic = ''; pgpPassphrase = ''
       }
       else pgpErr = d.error || `Saving the key failed (${r.status})`
@@ -209,13 +224,25 @@
   }
 
   async function handlePgpDelete() {
-    if (!confirm('Remove stored PGP keys?')) return
-    await apiFetch('/api/pgp', { method: 'DELETE' })
-    pgpPrivate = ''; pgpPublic = ''; pgpPassphrase = ''; pgpErr = ''; pgpMsg = 'PGP keys removed'
+    if (!confirm(`Remove the PGP private key of ${pgpAccount}?`)) return
+    pgpErr = ''; pgpMsg = ''
+    try {
+      const r = await apiFetch('/api/pgp', { method: 'DELETE', headers: pgpAccount ? { 'x-account': pgpAccount } : {} })
+      if (!r.ok) throw new Error(`Removing the key failed (${r.status})`)
+      pgpPrivate = ''; pgpPublic = ''; pgpPassphrase = ''; pgpMsg = 'PGP private key removed'
+    } catch (e) { pgpErr = e instanceof Error ? e.message : String(e) }
     await refreshPgpState()
   }
 
-  $effect(() => { refreshPgpState() })
+  async function handlePublicRemove(k: PgpPublicKey) {
+    if (!confirm(`Remove the public key of ${k.userIds.map(u => u.email || u.name).join(', ') || k.fingerprint}?`)) return
+    pgpErr = ''; pgpMsg = ''
+    try { await pgpRemovePublicKey(k.fingerprint); pgpMsg = 'Public key removed' } catch (e) { pgpErr = e instanceof Error ? e.message : String(e) }
+    await refreshPgpState()
+  }
+
+  // Again whenever the section switches to another account.
+  $effect(() => { void pgpAccount; refreshPgpState() })
 
   function handleSave() {
     if (!email) { error = 'Email is required'; return }
@@ -512,15 +539,25 @@
       </div>
 
       <div class="divider"></div>
-      <h3 class="section-title">🔐 PGP / S/MIME — import your private key to decrypt encrypted mail</h3>
-      <p class="hint">Paste your OpenPGP <b>private</b> key (armored, <code>-----BEGIN PGP PRIVATE KEY-----</code>). Optionally paste a public key and a passphrase if the private key is protected.</p>
+      <h3 class="section-title">🔐 PGP — your key for this account, and other people's public keys</h3>
+      {#if accounts.length > 1}
+        <div class="form-group">
+          <label for="pgp-account">Account</label>
+          <select id="pgp-account" value={pgpAccount} onchange={(e) => { pgpPicked = (e.currentTarget as HTMLSelectElement).value; pgpErr = ''; pgpMsg = '' }}>
+            {#each accounts as a (a.id)}<option value={a.email}>{a.email}</option>{/each}
+          </select>
+        </div>
+      {:else if pgpAccount}
+        <p class="hint">Key for <b>{pgpAccount}</b>.</p>
+      {/if}
+      <p class="hint">Paste the OpenPGP <b>private</b> key of this account (armored, <code>-----BEGIN PGP PRIVATE KEY-----</code>): it decrypts the mail of this account and signs what you send from it. Public keys of other people let you verify their signatures and encrypt to them.</p>
       <div class="form-group">
         <label for="pgp-private">Private key (armored)</label>
         <textarea id="pgp-private" rows="6" bind:value={pgpPrivate} placeholder="-----BEGIN PGP PRIVATE KEY----- ... -----END PGP PRIVATE KEY-----" spellcheck="false"></textarea>
       </div>
       <div class="form-group">
-        <label for="pgp-public">Public key (optional)</label>
-        <textarea id="pgp-public" rows="4" bind:value={pgpPublic} placeholder="-----BEGIN PGP PUBLIC KEY----- ... -----END PGP PUBLIC KEY-----" spellcheck="false"></textarea>
+        <label for="pgp-public">Public keys of other people (optional)</label>
+        <textarea id="pgp-public" rows="4" bind:value={pgpPublic} placeholder="-----BEGIN PGP PUBLIC KEY BLOCK----- ... -----END PGP PUBLIC KEY BLOCK-----" spellcheck="false"></textarea>
       </div>
       <div class="form-group">
         <label for="pgp-passphrase">Passphrase (optional)</label>
@@ -528,6 +565,9 @@
       </div>
       {#if pgpState?.hasPrivateKey}
         <div class="pgp-keystate" data-testid="pgp-state">
+          <div class="pgp-keyid">
+            {#if pgpState.userIds?.length}{pgpState.userIds.map(u => u.email || u.name).join(', ')} · {/if}<code>{pgpState.fingerprint}</code>
+          </div>
           {#if !pgpState.hasPassphrase}
             Key stored (not passphrase-protected): encrypted mail is decrypted automatically.
           {:else if pgpState.unlocked}
@@ -541,6 +581,20 @@
             </div>
           {/if}
         </div>
+      {:else if pgpState}
+        <p class="hint" data-testid="pgp-state">No private key for this account yet.</p>
+      {/if}
+      {#if pgpPublics.length}
+        <div class="pgp-publics" data-testid="pgp-publics">
+          <div class="pgp-publics-title">Public keys ({pgpPublics.length})</div>
+          {#each pgpPublics as k (k.fingerprint)}
+            <div class="pgp-public-row">
+              <span class="pgp-public-who">{k.userIds.map(u => u.email || u.name).join(', ') || '(no user ID)'}{k.canEncrypt ? '' : ' · cannot encrypt (expired or revoked)'}</span>
+              <code class="pgp-public-fp">{k.fingerprint.slice(-16)}</code>
+              <button class="btn-tiny btn-tiny-danger" onclick={() => handlePublicRemove(k)} aria-label={`Remove public key ${k.fingerprint}`}>Remove</button>
+            </div>
+          {/each}
+        </div>
       {/if}
       <div class="pgp-status" role="status">
         {#if pgpErr}<span class="pgp-err">{pgpErr}</span>{/if}
@@ -550,7 +604,7 @@
         <button class="btn-primary" onclick={handlePgpSave} disabled={pgpLoading}>
           {#if pgpLoading}Saving...{:else}Save PGP key{/if}
         </button>
-        <button class="btn-secondary" onclick={handlePgpDelete}>Remove</button>
+        {#if pgpState?.hasPrivateKey}<button class="btn-secondary" onclick={handlePgpDelete}>Remove private key</button>{/if}
       </div>
       {/if}
     </div>
@@ -576,6 +630,12 @@
 <style>
   .footer-error { flex: 1; min-width: 0; margin-right: 12px; color: var(--color-danger); font-size: 13px; }
   .pgp-keystate { font-size: 13px; margin: 8px 0 12px; color: var(--color-text); }
+  .pgp-keyid { font-size: 12px; color: var(--color-text-secondary); margin-bottom: 4px; word-break: break-all; }
+  .pgp-publics { margin: 8px 0 12px; font-size: 13px; }
+  .pgp-publics-title { font-weight: 600; margin-bottom: 4px; }
+  .pgp-public-row { display: flex; gap: 8px; align-items: center; padding: 3px 0; }
+  .pgp-public-who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .pgp-public-fp { font-size: 11px; color: var(--color-text-secondary); }
   .pgp-unlock-row { display: flex; gap: 8px; margin-top: 6px; }
   .pgp-unlock-row input { flex: 1; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text); }
   .settings-overlay {

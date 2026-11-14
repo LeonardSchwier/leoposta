@@ -9,6 +9,7 @@
   import { splitRecipients, recipientAddress } from '../lib/recipients'
   import { quoteOriginal, threadHeaders, type ReplyMode } from '../lib/reply'
   import type { MailMessage } from '../store'
+  import { pgpStatus, pgpLookup, pgpUnlock, pgpSendProblem, type PgpStatus } from '../lib/pgp'
 
   // onDraftSaved(folder): the draft is stored on the server in `folder` (the
   // real IMAP path of the Drafts mailbox), so the app can refresh that view.
@@ -182,6 +183,52 @@
   // with everything typed) instead of a blocking alert().
   let sendError = $state<string | null>(null)
 
+  // ---- OpenPGP: sign with the account's key / encrypt to the recipients ----
+  let pgpSign = $state(false)
+  let pgpEncrypt = $state(false)
+  let ownPgp = $state<PgpStatus | null>(null)
+  // The key is locked: the window asks for its passphrase, then sends.
+  let pgpAskPass = $state(false)
+  let pgpPassphrase = $state('')
+  let pgpPassError = $state<string | null>(null)
+  let pgpUnlocking = $state(false)
+  // Recipients without a public key while Encrypt is on (checked as you type).
+  let pgpMissing = $state<string[]>([])
+  const accountEmail = $derived($store.accounts.find(a => a.id === $store.activeAccountId)?.email || '')
+
+  onMount(() => {
+    pgpStatus().then(s => { ownPgp = s }).catch(() => { /* offline: checked again on send */ })
+  })
+
+  $effect(() => {
+    if (!pgpEncrypt) { pgpMissing = []; return }
+    const all = [...parseRecipients(toValue), ...parseRecipients(ccValue), ...parseRecipients(bccValue)]
+      .map(r => recipientAddress(r)).filter(a => /^[^\s@<>]+@[^\s@<>]+$/.test(a))
+    if (!all.length) { pgpMissing = []; return }
+    const t = setTimeout(() => {
+      pgpLookup(all).then(r => { pgpMissing = r.missing }).catch(() => { /* checked again on send */ })
+    }, 300)
+    return () => clearTimeout(t)
+  })
+
+  async function unlockAndSend(e: Event) {
+    e.preventDefault()
+    if (pgpUnlocking) return
+    pgpUnlocking = true
+    pgpPassError = null
+    try {
+      await pgpUnlock(pgpPassphrase)
+      pgpPassphrase = ''
+      pgpAskPass = false
+    } catch (err) {
+      pgpPassError = err instanceof Error ? err.message : String(err)
+      return
+    } finally {
+      pgpUnlocking = false
+    }
+    await handleSend()
+  }
+
   async function handleSend() {
     if (sending) return
     const to   = parseRecipients(toValue)
@@ -206,6 +253,35 @@
     sending = true
     sendError = null
 
+    const pgp = { sign: pgpSign, encrypt: pgpEncrypt }
+    const usePgp = pgp.sign || pgp.encrypt
+    if (usePgp) {
+      // Checked here first (fresh: the key may have been locked meanwhile),
+      // so a missing key or passphrase is explained before anything is sent.
+      // The server checks again and never sends unencrypted.
+      try {
+        const status = await pgpStatus()
+        ownPgp = status
+        const missing = pgp.encrypt ? (await pgpLookup([...to, ...cc, ...bcc].map(r => recipientAddress(r)))).missing : []
+        pgpMissing = missing
+        const problem = pgpSendProblem(pgp, status, missing, { scheduled: !!getState().composeScheduled, accountEmail })
+        if (problem === 'locked') {
+          pgpAskPass = true
+          sending = false
+          return
+        }
+        if (problem) {
+          sendError = problem
+          sending = false
+          return
+        }
+      } catch (err) {
+        sendError = 'Could not check the PGP keys: ' + (err instanceof Error ? err.message : String(err))
+        sending = false
+        return
+      }
+    }
+
     const message: Record<string, unknown> = {
       to,
       cc,
@@ -216,6 +292,7 @@
       ...(fullOriginal && mode ? threadHeaders(fullOriginal, mode) : {})
     }
     if (attachments.length) message.attachments = attachments
+    if (usePgp) message.pgp = pgp
 
     const done = () => {
       clearCompose()
@@ -231,7 +308,9 @@
           body: JSON.stringify(message)
         })
       } catch (err) {
-        if (navigator.onLine) throw err
+        // Signed/encrypted mail is not queued: the outbox sends it later in
+        // plain form, and it would sit unencrypted in the browser meanwhile.
+        if (navigator.onLine || usePgp) throw err
         // Offline: keep it in the outbox; App sends it when back online.
         const queued: Parameters<typeof addQueuedMessage>[0] = {
           to, cc, bcc,
@@ -260,8 +339,14 @@
             alert('The message was sent, but its draft could not be removed from Drafts: ' + (err instanceof Error ? err.message : String(err)))
           }
         }
+        if (Array.isArray(data.bccFailed) && data.bccFailed.length) {
+          alert('The message was sent, but the encrypted copy to these Bcc recipients failed: ' + data.bccFailed.join(', '))
+        }
         onSent?.()
         done()
+      } else if (res.status === 423 && data.code === 'pgp_locked') {
+        // The key was locked between the check and the send.
+        pgpAskPass = true
       } else sendError = 'Could not send: ' + (data.error || `server answered ${res.status}`)
     } catch (err) {
       sendError = 'Could not send: ' + (err instanceof Error ? err.message : String(err))
@@ -487,8 +572,27 @@
     </div>
   {/if}
 
+  {#if pgpAskPass}
+    <form class="pgp-pass" onsubmit={unlockAndSend}>
+      <label for="compose-pgp-pass">Your PGP key for {accountEmail || 'this account'} is locked. Enter its passphrase to sign this message.</label>
+      <div class="pgp-pass-row">
+        <!-- svelte-ignore a11y_autofocus -->
+        <input id="compose-pgp-pass" type="password" autocomplete="off" autofocus bind:value={pgpPassphrase} placeholder="Key passphrase" disabled={pgpUnlocking} />
+        <button type="submit" class="btn-primary" disabled={pgpUnlocking || !pgpPassphrase}>{pgpUnlocking ? 'Unlocking…' : 'Unlock and send'}</button>
+        <button type="button" class="btn-secondary" onclick={() => { pgpAskPass = false; pgpPassphrase = ''; pgpPassError = null }}>Cancel</button>
+      </div>
+      {#if pgpPassError}<p class="send-error" role="alert">{pgpPassError}</p>{/if}
+    </form>
+  {/if}
+
   <div class="compose-footer">
     <div class="footer-left">
+      <label class="pgp-toggle" title={ownPgp && !ownPgp.hasPrivateKey ? `Add your PGP key for ${accountEmail} in Settings → PGP to sign` : 'Sign with your PGP key (RFC 3156 PGP/MIME)'}>
+        <input type="checkbox" bind:checked={pgpSign} /> Sign
+      </label>
+      <label class="pgp-toggle" title="Encrypt to the recipients' PGP keys (and to your own, for Sent)">
+        <input type="checkbox" bind:checked={pgpEncrypt} /> Encrypt
+      </label>
       <button type="button" class="icon-btn" title="Attach file" aria-label="Attach file" onclick={() => attachFile?.click()}>
         <span>📎</span>
       </button>
@@ -521,6 +625,9 @@
         </span>
       {/if}
     </div>
+    {#if pgpEncrypt && pgpMissing.length}
+      <p class="pgp-missing" data-testid="pgp-missing">No PGP key for: {pgpMissing.join(', ')}</p>
+    {/if}
     {#if sendError}
       <p class="send-error" role="alert">{sendError}</p>
     {/if}
@@ -540,6 +647,12 @@
 </div>
 
 <style>
+  .pgp-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--color-text); cursor: pointer; white-space: nowrap; }
+  .pgp-missing { margin: 0; font-size: 12px; color: var(--color-star); }
+  .pgp-pass { padding: 10px 20px; border-top: 1px solid var(--color-border); background: var(--color-surface); display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+  .pgp-pass label { font-size: 13px; color: var(--color-text); }
+  .pgp-pass-row { display: flex; gap: 8px; }
+  .pgp-pass-row input { flex: 1; padding: 6px 10px; font-size: 13px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text); }
   .confirm-close {
     padding: 12px 20px;
     border-top: 1px solid var(--color-border);
