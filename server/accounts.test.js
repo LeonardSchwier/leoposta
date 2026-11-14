@@ -119,3 +119,23 @@ test('GET /api/accounts and /api/account never contain a password, the stored fi
   const file = path.join(DATA_DIR, 'accounts.json')
   assert.equal(fs.statSync(file).mode & 0o777, 0o600)
 })
+
+test('the active account is remembered on the server (the desktop app gets a new origin, so an empty localStorage, per launch)', async () => {
+  fs.rmSync(path.join(DATA_DIR, 'ui-state.json'), { force: true })
+  const get = async () => (await fetch(`${base}/api/active-account`, { headers: json })).json()
+  assert.deepEqual(await get(), { email: null }, 'nothing chosen yet')
+  for (const email of ['a@example.test', 'b@example.test']) {
+    await fetch(`${base}/api/accounts`, { method: 'POST', headers: json, body: JSON.stringify(body({ email })) })
+  }
+  const put = await fetch(`${base}/api/active-account`, { method: 'PUT', headers: json, body: JSON.stringify({ email: 'B@example.test' }) })
+  assert.equal(put.status, 200)
+  assert.deepEqual(await get(), { email: 'b@example.test' })
+  assert.equal(fs.statSync(path.join(DATA_DIR, 'ui-state.json')).mode & 0o777, 0o600)
+
+  const unknown = await fetch(`${base}/api/active-account`, { method: 'PUT', headers: json, body: JSON.stringify({ email: 'nobody@example.test' }) })
+  assert.equal(unknown.status, 404)
+  assert.deepEqual(await get(), { email: 'b@example.test' }, 'an unknown account is not stored')
+
+  await fetch(`${base}/api/accounts/b%40example.test`, { method: 'DELETE', headers: json })
+  assert.deepEqual(await get(), { email: null }, 'a removed account is not handed back')
+})

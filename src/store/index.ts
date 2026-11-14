@@ -168,13 +168,17 @@ export function addAccount(account: MailAccount) {
   store.update(s => ({ ...s, accounts: [...s.accounts, account], activeAccountId: account.id }))
   syncActiveHeader()
 }
-export function setAccounts(accounts: MailAccount[]) {
+/** Replace the account list. The active account stays if it is still in the
+ * list; otherwise `preferredId` (the remembered one, lib/activeAccountMemory)
+ * if it is, else the first account. */
+export function setAccounts(accounts: MailAccount[], preferredId: string | null = null) {
+  const has = (id: string | null) => !!id && accounts.some(a => a.id === id)
   store.update(s => ({
     ...s,
     accounts,
-    activeAccountId: s.activeAccountId && accounts.some(a => a.id === s.activeAccountId)
+    activeAccountId: has(s.activeAccountId)
       ? s.activeAccountId
-      : (accounts[0]?.id ?? null)
+      : has(preferredId) ? preferredId : (accounts[0]?.id ?? null)
   }))
   syncActiveHeader()
 }
