@@ -7,6 +7,8 @@ export interface Contact {
   uid: string
   name: string
   email: string
+  /** Every address of the card (the server sends them all; `email` is the first). */
+  emails?: string[]
   org?: string
 }
 
@@ -32,26 +34,48 @@ export interface ContactsCacheOptions {
 
 const DEFAULT_LIMIT = 8
 
+// Entry -> the card it came from (perAddress makes one entry per address).
+const sourceCard = new WeakMap<Contact, Contact>()
+
 function dedupe(contacts: Contact[]): Contact[] {
-  const seenUid = new Set<string>()
+  // One entry per address. A UID already taken by another card (the same
+  // contact copied into a second address book) is skipped; the further
+  // addresses of one card are all kept.
+  const cardOfUid = new Map<string, Contact>()
   const seenEmail = new Set<string>()
   const out: Contact[] = []
   for (const c of contacts) {
+    const card = sourceCard.get(c) ?? c
     const emailKey = c.email.toLowerCase()
-    if (c.uid && seenUid.has(c.uid)) continue
-    if (emailKey && seenEmail.has(emailKey)) continue
-    if (c.uid) seenUid.add(c.uid)
-    if (emailKey) seenEmail.add(emailKey)
+    if (!emailKey || seenEmail.has(emailKey)) continue
+    if (c.uid && cardOfUid.has(c.uid) && cardOfUid.get(c.uid) !== card) continue
+    if (c.uid) cardOfUid.set(c.uid, card)
+    seenEmail.add(emailKey)
     out.push(c)
   }
   return out
 }
 
 function matchesContact(c: Contact, q: string): boolean {
-  const name = c.name.toLowerCase()
+  const name = (c.name || '').toLowerCase()
   const email = c.email.toLowerCase()
   const org = (c.org ?? '').toLowerCase()
-  return name.startsWith(q) || email.includes(q) || org.includes(q)
+  // Any word of the name: "doe" finds "Jane Doe".
+  return name.startsWith(q) || name.split(/[\s,.-]+/).some((w) => w.startsWith(q)) || email.includes(q) || org.includes(q)
+}
+
+/** One suggestion per address; a card without any address is not a recipient. */
+function perAddress(cs: Contact[]): Contact[] {
+  const out: Contact[] = []
+  for (const c of cs) {
+    const all = (c.emails && c.emails.length ? c.emails : [c.email]).map((e) => (e || '').trim()).filter(Boolean)
+    for (const e of all) {
+      const entry = { ...c, email: e }
+      sourceCard.set(entry, c)
+      out.push(entry)
+    }
+  }
+  return out
 }
 
 export function createContactsCache({ fetcher }: ContactsCacheOptions): ContactsCache {
@@ -81,7 +105,7 @@ export function createContactsCache({ fetcher }: ContactsCacheOptions): Contacts
     const p = fetcher
       .fetchContacts(uri)
       .then((cs) => {
-        loaded.push(...(cs ?? []))
+        loaded.push(...perAddress(cs ?? []))
         return cs ?? []
       })
       .catch((err) => {

@@ -32,14 +32,9 @@
   onMount(() => {
     void (async () => {
       try {
+        // Every address book, not just the first one.
         const b = await fetcher.fetchBooks()
-        if (b.length) {
-          try {
-            await cache.loadContacts(b[0].uri)
-          } catch {
-            /* ignore */
-          }
-        }
+        await Promise.allSettled(b.map((book) => cache.loadContacts(book.uri)))
       } catch {
         /* ignore */
       }
