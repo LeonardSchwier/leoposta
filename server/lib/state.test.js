@@ -68,3 +68,25 @@ test('updateAccount: mail-only update (e.g. GOA imap_smtp import) does not blank
   assert.equal(acct.davPass, 'dav-secret')
   assert.equal(acct.imapHost, 'imap.example.test')
 })
+
+test('updateAccount: a null password (e.g. GOA keyring lookup failed) keeps the stored one', () => {
+  addAccount({ email: 'a@example.test', imapHost: 'imap', imapPass: 'keep-me', smtpPass: 'keep-smtp', davPass: 'keep-dav' })
+  updateAccount('a@example.test', { imapPass: null, smtpPass: null, davPass: null, davUrl: 'https://dav.example.test/' })
+  const acct = state.accounts[0]
+  assert.equal(acct.imapPass, 'keep-me')
+  assert.equal(acct.smtpPass, 'keep-smtp')
+  assert.equal(acct.davPass, 'keep-dav')
+})
+
+test('updateAccount / removeAccount drop the account\'s cached DAV reads', async () => {
+  const { removeAccount } = await import('./state.js')
+  const a = addAccount({ email: 'a@example.test', davUrl: 'https://old.example.test/' })
+  state.davCache.set(`books|${a.id}`, { addressBooks: [{ href: '/old/' }] })
+  state.davCache.set(`contacts|${a.id}|/old/`, [])
+  updateAccount('a@example.test', { davUrl: 'https://new.example.test/' })
+  assert.equal(state.davCache.get(`books|${a.id}`), undefined)
+  assert.equal(state.davCache.get(`contacts|${a.id}|/old/`), undefined)
+  state.davCache.set(`books|${a.id}`, { addressBooks: [] })
+  removeAccount('a@example.test')
+  assert.equal(state.davCache.get(`books|${a.id}`), undefined)
+})

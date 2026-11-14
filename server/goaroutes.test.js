@@ -129,3 +129,107 @@ test('POST /api/goa/import: 503 when GOA is not reachable', async () => {
   const res = await fetch(`${base}/api/goa/import`, { method: 'POST', headers: json, body: JSON.stringify({ goaId: 'account_mail1' }) })
   assert.equal(res.status, 503)
 })
+
+// ── WebDAV import, the owner's case ─────────────────────────────────────────
+import http from 'node:http'
+
+function webdavObjects(identity, davPort) {
+  return {
+    type: 'a{oa{sa{sv}}}',
+    data: [{
+      '/org/gnome/OnlineAccounts/Accounts/account_dav1': {
+        'org.gnome.OnlineAccounts.Account': {
+          Id: { type: 's', data: 'account_dav1' },
+          ProviderType: { type: 's', data: 'webdav' },
+          ProviderName: { type: 's', data: 'WebDAV' },
+          Identity: { type: 's', data: identity },
+          PresentationIdentity: { type: 's', data: identity }
+        },
+        'org.gnome.OnlineAccounts.Calendar': { Uri: { type: 's', data: `http://${encodeURIComponent(identity)}@127.0.0.1:${davPort}/caldav` } },
+        'org.gnome.OnlineAccounts.Contacts': { Uri: { type: 's', data: `http://127.0.0.1:${davPort}/carddav` } }
+      }
+    }]
+  }
+}
+
+// A DAV server root that only answers discovery + a calendar listing, and
+// records the Authorization it saw.
+async function fakeDavRoot() {
+  const seen = []
+  const s = http.createServer((req, res) => {
+    req.resume()
+    req.on('end', () => {
+      seen.push({ method: req.method, url: req.url, auth: req.headers.authorization })
+      res.writeHead(207, { 'content-type': 'application/xml' })
+      if (req.url === '/') return res.end('<d:multistatus xmlns:d="DAV:"><d:response><d:href>/</d:href><d:propstat><d:prop><d:current-user-principal><d:href>/principals/me/</d:href></d:current-user-principal></d:prop></d:propstat></d:response></d:multistatus>')
+      if (req.url === '/principals/me/') return res.end('<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response><d:href>/principals/me/</d:href><d:propstat><d:prop><c:calendar-home-set><d:href>/caldav/</d:href></c:calendar-home-set></d:prop></d:propstat></d:response></d:multistatus>')
+      if (req.url === '/caldav/') return res.end('<d:multistatus xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:caldav"><d:response><d:href>/caldav/</d:href><d:propstat><d:prop><d:resourcetype><d:collection/></d:resourcetype></d:prop></d:propstat></d:response><d:response><d:href>/caldav/work/</d:href><d:propstat><d:prop><d:displayname>Work</d:displayname><d:resourcetype><d:collection/><c:calendar/></d:resourcetype></d:prop></d:propstat></d:response></d:multistatus>')
+      res.end('<d:multistatus xmlns:d="DAV:"/>')
+    })
+  })
+  await new Promise(r => s.listen(0, '127.0.0.1', r))
+  return { port: s.address().port, seen, close: () => new Promise(r => s.close(r)) }
+}
+
+test('GOA mail + WebDAV import (same identity; re-import is idempotent) gives one complete account whose Calendar works via discovery', async () => {
+  const dav = await fakeDavRoot()
+  try {
+    const both = webdavObjects('goa-import@example.test', dav.port)
+    both.data[0] = { ...MAIL_ACCOUNT_OBJECTS.data[0], ...both.data[0] }
+    _setExecFileForTest(fakeExecAvailable({ busctlOut: both, password: 'dav-and-mail-pass' }))
+    const first = await fetch(`${base}/api/goa/import`, { method: 'POST', headers: json, body: JSON.stringify({ goaId: 'account_dav1' }) })
+    assert.equal(first.status, 409, 'WebDAV first: asks for the mail account instead of creating a mail-less one')
+    assert.equal(state.accounts.length, 0)
+    for (const goaId of ['account_mail1', 'account_dav1', 'account_dav1', 'account_mail1']) {
+      const r = await fetch(`${base}/api/goa/import`, { method: 'POST', headers: json, body: JSON.stringify({ goaId }) })
+      assert.equal(r.status, 200, await r.text())
+    }
+    assert.equal(state.accounts.length, 1)
+    const a = state.accounts[0]
+    assert.equal(a.imapHost, 'imap.example.test')
+    assert.equal(a.davUrl, `http://127.0.0.1:${dav.port}/`, 'host root, so discovery finds both home sets')
+    assert.equal(a.davUser, 'goa-import@example.test')
+    assert.equal(a.davPass, 'dav-and-mail-pass')
+
+    const cal = await fetch(`${base}/api/calendar/calendars`, { headers: authed })
+    assert.equal(cal.status, 200)
+    const body = await cal.json()
+    assert.deepEqual(body.calendars.map(c => [c.href, c.displayname]), [['/caldav/work/', 'Work']])
+    const expected = 'Basic ' + Buffer.from('goa-import@example.test:dav-and-mail-pass').toString('base64')
+    assert.ok(dav.seen.length >= 3 && dav.seen.every(s => s.auth === expected))
+  } finally { await dav.close() }
+})
+
+test('GOA WebDAV-only account with a different identity attaches to targetEmail, never creates a mail-less account', async () => {
+  const dav = await fakeDavRoot()
+  try {
+    state.accounts = [{ id: 'acct-m', email: 'me@example.test', imapHost: 'imap.example.test', imapPass: 'x', smtpHost: 's', smtpPass: 'x' }]
+    _setExecFileForTest(fakeExecAvailable({ busctlOut: webdavObjects('webdav-login', dav.port), password: 'dp' }))
+    const no = await fetch(`${base}/api/goa/import`, { method: 'POST', headers: json, body: JSON.stringify({ goaId: 'account_dav1' }) })
+    assert.equal(no.status, 409)
+    assert.equal((await no.json()).code, 'goa_needs_mail_account')
+    assert.equal(state.accounts.length, 1)
+    const ok = await fetch(`${base}/api/goa/import`, { method: 'POST', headers: json, body: JSON.stringify({ goaId: 'account_dav1', targetEmail: 'me@example.test' }) })
+    assert.equal(ok.status, 200)
+    assert.equal(state.accounts.length, 1)
+    assert.equal(state.accounts[0].email, 'me@example.test')
+    assert.equal(state.accounts[0].imapHost, 'imap.example.test')
+    assert.equal(state.accounts[0].davUser, 'webdav-login')
+    assert.equal(state.accounts[0].davPass, 'dp')
+  } finally { await dav.close() }
+})
+
+test('GOA import with no keyring password: 502, nothing created, an existing password is not wiped', async () => {
+  const noPass = (cmd, args, _o, cb) => {
+    if (args.includes('Ping')) return cb(null, '')
+    if (args.includes('GetManagedObjects')) return cb(null, JSON.stringify(MAIL_ACCOUNT_OBJECTS))
+    cb(new Error('Did not find imap-password'), '')
+  }
+  _setExecFileForTest(noPass)
+  const r = await fetch(`${base}/api/goa/import`, { method: 'POST', headers: json, body: JSON.stringify({ goaId: 'account_mail1' }) })
+  assert.equal(r.status, 502)
+  assert.equal(state.accounts.length, 0)
+  state.accounts = [{ id: 'acct-g', email: 'goa-import@example.test', imapHost: 'imap.example.test', imapPass: 'stored', smtpHost: 's', smtpPass: 'stored' }]
+  await fetch(`${base}/api/goa/import`, { method: 'POST', headers: json, body: JSON.stringify({ goaId: 'account_mail1' }) })
+  assert.equal(state.accounts[0].imapPass, 'stored')
+})

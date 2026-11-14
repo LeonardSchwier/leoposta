@@ -176,3 +176,57 @@ export async function saveToSentFolder(acct, messageData, { messageId, date } = 
 }
 
 
+
+// ── Credential check before an account is saved ─────────────────────────────
+const VERIFY_TIMEOUT_MS = Number(process.env.LEOPOSTA_VERIFY_TIMEOUT_MS) || 15_000
+
+function describeError(e) {
+  if (!e) return 'unknown error'
+  if (e.authenticationFailed || /AUTHENTICATIONFAILED|Authentication failed|Invalid credentials|535/i.test(`${e.responseText || ''} ${e.response || ''} ${e.message || ''}`)) {
+    return 'wrong user name or password'
+  }
+  if (e.code === 'ECONNREFUSED') return 'connection refused'
+  if (e.code === 'ENOTFOUND' || e.code === 'EAI_AGAIN') return 'host not found'
+  if (e.code === 'ETIMEDOUT' || /timeout/i.test(String(e.message))) return 'timed out'
+  if (/certificate|SSL|TLS|wrong version number/i.test(String(e.message))) return `TLS problem (${e.message})`
+  return e.message || String(e)
+}
+
+/**
+ * Log in to IMAP and SMTP with the account's settings and log out again.
+ * Resolves when both work; rejects with a user-facing message naming the
+ * server that failed (never the password). Seams for tests: `deps`.
+ */
+export async function verifyAccount(acct, deps = {}) {
+  const makeImap = deps.makeImap || ((a) => new ImapFlow({
+    host: a.imapHost, port: a.imapPort, secure: a.imapTls,
+    tls: { servername: /^[0-9.]+$/.test(a.imapHost || '') ? undefined : a.imapHost },
+    auth: { user: a.imapUser || a.email, pass: a.imapPass || '' },
+    logger: false,
+    connectionTimeout: VERIFY_TIMEOUT_MS, greetingTimeout: VERIFY_TIMEOUT_MS, socketTimeout: VERIFY_TIMEOUT_MS
+  }))
+  const makeSmtp = deps.makeSmtp || ((a) => nodemailer.createTransport({
+    host: a.smtpHost, port: a.smtpPort, secure: a.smtpTls,
+    auth: { user: a.smtpUser || a.email, pass: a.smtpPass || '' },
+    connectionTimeout: VERIFY_TIMEOUT_MS, greetingTimeout: VERIFY_TIMEOUT_MS, socketTimeout: VERIFY_TIMEOUT_MS
+  }))
+  if (!acct.imapHost) throw Object.assign(new Error('IMAP server is required'), { field: 'imap' })
+  if (!acct.smtpHost) throw Object.assign(new Error('SMTP server is required'), { field: 'smtp' })
+  const imap = makeImap(acct)
+  imap.on?.('error', () => {})
+  try {
+    await imap.connect()
+  } catch (e) {
+    safeLogout(imap)
+    throw Object.assign(new Error(`IMAP login to ${acct.imapHost}:${acct.imapPort} failed: ${describeError(e)}`), { field: 'imap' })
+  }
+  safeLogout(imap)
+  const smtp = makeSmtp(acct)
+  try {
+    await smtp.verify()
+  } catch (e) {
+    throw Object.assign(new Error(`SMTP login to ${acct.smtpHost}:${acct.smtpPort} failed: ${describeError(e)}`), { field: 'smtp' })
+  } finally {
+    smtp.close?.()
+  }
+}
