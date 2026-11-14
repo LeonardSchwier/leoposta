@@ -13,7 +13,7 @@
   import { type Folder, store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, adjustUnseen, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setComposeDraft, bootstrapRefreshMode } from './store'
   import { startReply } from './lib/reply'
   import { startRefresh, stopRefresh } from './refresh'
-  import { loadAccounts } from './lib/accountsBootstrap'
+  import { loadAccounts, rememberActiveAccount } from './lib/accountsBootstrap'
   import { loadMessageBody, keepLoadedBodies } from './lib/openMessage'
   import { ApiError, MailAPI } from './api'
   import MovePicker from './components/MovePicker.svelte'
@@ -603,6 +603,7 @@
   // Skips the initial mount (tracker seeded from the same initial null),
   // so the onMount load below isn't double-fired.
   let prevAccountId = $store.activeAccountId
+  let stopRememberingAccount: () => void = () => {}
   // false until the account list arrived: avoids flashing the first-run
   // screen while it loads.
   let accountsLoaded = $state(false)
@@ -637,6 +638,9 @@
     loadAccounts().then(({ accounts, reachable }) => {
       // Seed the switch tracker first so the effect above does not load twice.
       prevAccountId = getState().activeAccountId
+      // Only now: the start-up fallback to the first account must not
+      // overwrite the remembered choice before it was restored.
+      stopRememberingAccount = rememberActiveAccount()
       accountsReachable = reachable
       accountsLoaded = true
       // Unreachable (offline PWA): load anyway, the list falls back to the
@@ -651,7 +655,7 @@
     window.addEventListener('offline', () => refreshQueueCount())
     window.addEventListener(QUEUE_CHANGED, refreshQueueCount)
     window.addEventListener('keydown', handleKeydown)
-    return () => stopRefresh()
+    return () => { stopRefresh(); stopRememberingAccount() }
   })
 
   // Refresh controller: react only to the three values that change the
