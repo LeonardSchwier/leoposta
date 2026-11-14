@@ -93,6 +93,11 @@ export function davRequest(method, urlPath, body, contentType, acct, depth) {
       }
     }
     if (contentType === 'text/xml') opts.headers['Content-Type'] = contentType
+    // A fixed Content-Length, never chunked transfer encoding: WSGI servers
+    // such as Radicale do not read a chunked request body and act on an empty
+    // one (PUT -> 400, REPORT -> empty multistatus, PROPFIND -> allprop).
+    const payload = body ? Buffer.from(body, 'utf8') : null
+    opts.headers['Content-Length'] = String(payload ? payload.length : 0)
     const lib = t.tls ? https : http
     const timeoutMs = timeoutForMethod(method)
     const req = lib.request(opts, (res) => {
@@ -113,8 +118,7 @@ export function davRequest(method, urlPath, body, contentType, acct, depth) {
     req.setTimeout(timeoutMs, () => {
       req.destroy(new Error(`DAV ${method} times out after ${Math.round(timeoutMs / 1000)}s`))
     })
-    if (body) req.write(body)
-    req.end()
+    req.end(payload || undefined)
   })
 }
 
