@@ -104,6 +104,17 @@
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
   }
 
+  // A link in a message must never replace the app itself: in the desktop
+  // window there is no address bar or back button, so the linked page could
+  // pose as Leoposta. Web and mail links open outside the app instead.
+  function handleContentClick(e: MouseEvent) {
+    const link = (e.target as Element | null)?.closest?.('a[href]')
+    if (!link || !(e.currentTarget as Element).contains(link)) return
+    e.preventDefault()
+    const href = (link.getAttribute('href') || '').trim()
+    if (/^(?:https?:|mailto:)/i.test(href)) window.open(href, '_blank', 'noopener,noreferrer')
+  }
+
   function hasFlag(flags: string[], flag: string) {
     return flags.includes('\\' + flag) || flags.includes(flag)
   }
@@ -136,7 +147,9 @@
       </div>
     </div>
 
-      <div class="message-content">
+      <!-- Clicks are delegated from links inside sender HTML; keyboard activation of a link also fires click. -->
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <div class="message-content" onclick={handleContentClick}>
         {#if msg.pgp && msg.pgp.encrypted}
           <div class="pgp-banner" class:pgp-banner-decrypted={!!msg.pgp.decrypted}>
             <div class="pgp-banner-row">
