@@ -145,6 +145,10 @@
   }
 </script>
 
+<!-- Escape closes the editor dialog (unless an inner control, e.g. the
+     autocomplete list, already used that Escape). -->
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && showEditor && !e.defaultPrevented) { e.preventDefault(); showEditor = false } }} />
+
 <section class="contacts">
   <aside class="c-side">
     <div class="c-side-head">
@@ -185,7 +189,8 @@
       {:else}
         {#each contacts as c (c.uid)}
           {@const name = c.name || c.displayName || (c.emails && c.emails[0]) || '(unnamed)'}
-          <div class="row" class:sel={selectedUid === c.uid} onclick={() => openEdit(c)}>
+          <div class="row" class:sel={selectedUid === c.uid}>
+            <button type="button" class="row-open" onclick={() => openEdit(c)} aria-label={`Edit contact ${name}`}>
             <span class="av" class:unknown={!(c.emails || c.email)}>{initial(name) || '?'}</span>
             <div class="meta">
               <div class="nm">{name}</div>
@@ -195,6 +200,7 @@
               {#if c.address}<div class="d3">{c.address}</div>{/if}
               {#if c.notes}<div class="d3 d-notes" title={c.notes}>{c.notes}</div>{/if}
             </div>
+            </button>
             <button class="del" onclick={(e) => { e.stopPropagation(); deleteContact(c.uid) }} title="Delete contact" aria-label={`Delete contact ${c.name || c.uid}`}>🗑</button>
           </div>
         {/each}
@@ -203,8 +209,9 @@
   </div>
 
   {#if showEditor}
-    <div class="modal-back" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }} role="dialog">
-      <div class="modal">
+    <!-- Backdrop click is a mouse shortcut; Escape closes for keyboard users (svelte:window below). -->
+    <div class="modal-back" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }}>
+      <div class="modal" role="dialog" aria-modal="true" aria-label={editingUid ? 'Edit contact' : 'New contact'} tabindex="-1">
         <h4>{editingUid ? 'Edit contact' : 'New contact'}</h4>
         <label>
           <span>{editingUid ? 'Address book' : 'Create in'}</span>
@@ -264,6 +271,7 @@
   .row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
   .row:hover { background: var(--color-hover); }
   .row.sel { background: var(--color-selected); }
+  .row-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 0; border: none; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
   .av { width: 38px; height: 38px; border-radius: 50%; background: var(--color-accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex: 0 0 auto; }
   .av.unknown { background: var(--color-border); color: var(--color-text-secondary); }
   .meta { flex: 1; min-width: 0; }

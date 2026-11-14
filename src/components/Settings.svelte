@@ -250,8 +250,11 @@
   }
 </script>
 
-<div class="settings-overlay" onclick={onClose}>
-  <div class="settings-modal" onclick={(e) => e.stopPropagation()}>
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); onClose() } }} />
+
+<!-- Backdrop click is a mouse shortcut; Escape closes for keyboard users. -->
+<div class="settings-overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onClose() }}>
+  <div class="settings-modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1">
     <div class="modal-header">
       <h2>Settings</h2>
       <button class="close-btn" aria-label="Close settings" onclick={onClose}>✕</button>
@@ -364,24 +367,24 @@
          <h3>{editingId ? 'Edit account' : 'Add account'}</h3>
        </div>
        <div class="form-group">
-         <label>Account Name</label>
-         <input type="text" bind:value={accountName} placeholder="My Mail" />
+         <label for="set-account-name">Account Name</label>
+         <input id="set-account-name" type="text" bind:value={accountName} placeholder="My Mail" />
        </div>
        <div class="form-group">
-         <label>Email Address</label>
-          <input type="email" bind:value={email} placeholder="you@example.com" disabled={!!editingId} />
+         <label for="set-email-address">Email Address</label>
+          <input id="set-email-address" type="email" bind:value={email} placeholder="you@example.com" disabled={!!editingId} />
        </div>
       
       <div class="form-section">
         <h3>IMAP (Incoming)</h3>
         <div class="form-row">
           <div class="form-group">
-            <label>Server</label>
-            <input type="text" bind:value={imapHost} />
+            <label for="set-imap-host">Server</label>
+            <input id="set-imap-host" type="text" bind:value={imapHost} />
           </div>
           <div class="form-group">
-            <label>Port</label>
-            <input type="number" bind:value={imapPort} />
+            <label for="set-imap-port">Port</label>
+            <input id="set-imap-port" type="number" bind:value={imapPort} />
           </div>
         </div>
         <div class="form-row">
@@ -398,12 +401,12 @@
         <h3>SMTP (Outgoing)</h3>
         <div class="form-row">
           <div class="form-group">
-            <label>Server</label>
-            <input type="text" bind:value={smtpHost} />
+            <label for="set-smtp-host">Server</label>
+            <input id="set-smtp-host" type="text" bind:value={smtpHost} />
           </div>
           <div class="form-group">
-            <label>Port</label>
-            <input type="number" bind:value={smtpPort} />
+            <label for="set-smtp-port">Port</label>
+            <input id="set-smtp-port" type="number" bind:value={smtpPort} />
           </div>
         </div>
         <div class="form-row">
@@ -419,18 +422,18 @@
        <div class="mt-3 pt-3 border-t border-neutral-200 dark:border-neutral-700">
          <p class="text-xs text-neutral-500 mb-1.5 uppercase tracking-wide font-medium">CardDAV / CalDAV</p>
          <p class="text-xs text-neutral-400 mb-2">Optional — leave blank to use global DAV_HOST env config.</p>
-         <label class="block text-xs font-medium text-neutral-600 dark:text-neutral-300 mb-1">Base URL</label>
-         <input type="url" placeholder="https://dav.example.com/dav/you" bind:value={davUrl}
+         <label for="set-dav-url" class="block text-xs font-medium text-neutral-600 dark:text-neutral-300 mb-1">Base URL</label>
+         <input id="set-dav-url" type="url" placeholder="https://dav.example.com/dav/you" bind:value={davUrl}
                 class="w-full px-3 py-2 text-sm rounded-lg border border-neutral-300 dark:border-neutral-600 bg-transparent focus:outline-none focus:ring-2 focus:ring-blue-500" />
          <div class="grid grid-cols-2 gap-2 mt-2">
            <div>
-             <label class="block text-xs font-medium text-neutral-600 dark:text-neutral-300 mb-1">User</label>
-             <input type="text" placeholder="leave blank for IMAP user" bind:value={davUser}
+             <label for="set-dav-user" class="block text-xs font-medium text-neutral-600 dark:text-neutral-300 mb-1">User</label>
+             <input id="set-dav-user" type="text" placeholder="leave blank for IMAP user" bind:value={davUser}
                     class="w-full px-3 py-2 text-sm rounded-lg border border-neutral-300 dark:border-neutral-600 bg-transparent focus:outline-none focus:ring-2 focus:ring-blue-500" />
            </div>
            <div>
-             <label class="block text-xs font-medium text-neutral-600 dark:text-neutral-300 mb-1">Password</label>
-             <input type="password" placeholder="leave blank for IMAP pass" bind:value={davPass}
+             <label for="set-dav-pass" class="block text-xs font-medium text-neutral-600 dark:text-neutral-300 mb-1">Password</label>
+             <input id="set-dav-pass" type="password" placeholder="leave blank for IMAP pass" bind:value={davPass}
                     class="w-full px-3 py-2 text-sm rounded-lg border border-neutral-300 dark:border-neutral-600 bg-transparent focus:outline-none focus:ring-2 focus:ring-blue-500" />
            </div>
          </div>
@@ -449,8 +452,8 @@
        <div class="form-section">
          <h3>Inbox sync</h3>
          <div class="form-group">
-           <label>Inbox auto-refresh</label>
-           <select value={$store.refreshInterval}
+           <label for="set-inbox-auto-refresh">Inbox auto-refresh</label>
+           <select id="set-inbox-auto-refresh" value={$store.refreshInterval}
                    onchange={onRefreshIntervalChange}>
              <option value="instant">Instant (push)</option>
              <option value="5m">Every 5 minutes</option>
@@ -466,8 +469,8 @@
        </div>
       
       <div class="form-group">
-        <label>Password</label>
-        <input type="password" bind:value={password} placeholder="••••••••" />
+        <label for="set-password">Password</label>
+        <input id="set-password" type="password" bind:value={password} placeholder="••••••••" />
       </div>
 
       <div class="form-section">
@@ -479,12 +482,12 @@
           </label>
         </div>
         <div class="form-group">
-          <label>Signature text</label>
-          <textarea rows="3" bind:value={sigText} placeholder="Best regards&#10;Leo" spellcheck="true"></textarea>
+          <label for="set-signature-text">Signature text</label>
+          <textarea id="set-signature-text" rows="3" bind:value={sigText} placeholder="Best regards&#10;Leo" spellcheck="true"></textarea>
         </div>
         <div class="form-group">
-          <label>Position in replies</label>
-          <select bind:value={sigPosition}>
+          <label for="set-position-in-replies">Position in replies</label>
+          <select id="set-position-in-replies" bind:value={sigPosition}>
             <option value="standard">Above the quoted message</option>
             <option value="after_quote">Below the quoted message</option>
           </select>
@@ -495,16 +498,16 @@
       <h3 class="section-title">🔐 PGP / S/MIME — import your private key to decrypt encrypted mail</h3>
       <p class="hint">Paste your OpenPGP <b>private</b> key (armored, <code>-----BEGIN PGP PRIVATE KEY-----</code>). Optionally paste a public key and a passphrase if the private key is protected.</p>
       <div class="form-group">
-        <label>Private key (armored)</label>
-        <textarea rows="6" bind:value={pgpPrivate} placeholder="-----BEGIN PGP PRIVATE KEY----- ... -----END PGP PRIVATE KEY-----" spellcheck="false"></textarea>
+        <label for="set-private-key-armored">Private key (armored)</label>
+        <textarea id="set-private-key-armored" rows="6" bind:value={pgpPrivate} placeholder="-----BEGIN PGP PRIVATE KEY----- ... -----END PGP PRIVATE KEY-----" spellcheck="false"></textarea>
       </div>
       <div class="form-group">
-        <label>Public key (optional)</label>
-        <textarea rows="4" bind:value={pgpPublic} placeholder="-----BEGIN PGP PUBLIC KEY----- ... -----END PGP PUBLIC KEY-----" spellcheck="false"></textarea>
+        <label for="set-public-key-optional">Public key (optional)</label>
+        <textarea id="set-public-key-optional" rows="4" bind:value={pgpPublic} placeholder="-----BEGIN PGP PUBLIC KEY----- ... -----END PGP PUBLIC KEY-----" spellcheck="false"></textarea>
       </div>
       <div class="form-group">
-        <label>Passphrase (optional)</label>
-        <input type="password" bind:value={pgpPassphrase} placeholder="Used to unlock your private key" />
+        <label for="set-passphrase-optional">Passphrase (optional)</label>
+        <input id="set-passphrase-optional" type="password" bind:value={pgpPassphrase} placeholder="Used to unlock your private key" />
       </div>
       <div class="pgp-status" role="status">
         {#if pgpErr}<span class="pgp-err">{pgpErr}</span>{/if}
@@ -683,21 +686,6 @@
     padding: 16px 24px;
     border-top: 1px solid var(--color-border);
     background: var(--color-bg-secondary);
-  }
-  
-  .btn-danger {
-    padding: 8px 16px;
-    background: transparent;
-    border: 1px solid var(--color-danger);
-    border-radius: var(--radius-sm);
-    font-size: 14px;
-    color: var(--color-danger);
-    cursor: pointer;
-    transition: all var(--transition);
-  }
-  
-  .btn-danger:hover {
-    background: rgba(255, 59, 48, 0.1);
   }
   
   .footer-right {
