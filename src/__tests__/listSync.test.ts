@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createLatest, mergeRefreshed } from '../lib/listSync'
+import { appendPage, createLatest, keepOlderPages, mergeRefreshed } from '../lib/listSync'
 
 describe('createLatest', () => {
   it('only the newest load may apply, whatever order responses arrive in', async () => {
@@ -31,5 +31,21 @@ describe('mergeRefreshed', () => {
     expect(out[1].bodyHtml).toBe('<p>x</p>')
     expect(out[1].flags).toEqual(['\\Seen']) // server flags win
     expect(out[0].body).toBe('')
+  })
+})
+
+describe('paging', () => {
+  const m = (id: number) => ({ id: String(id) })
+  it('appendPage adds the older page without repeating a message', () => {
+    // New mail arrived between the pages, so the next page overlaps by one.
+    expect(appendPage([m(5), m(4), m(3)], [m(3), m(2), m(1)]).map((x) => x.id)).toEqual(['5', '4', '3', '2', '1'])
+  })
+  it('keepOlderPages keeps loaded older pages under a refreshed newest page', () => {
+    const shown = [m(10), m(9), m(8), m(7), m(6), m(5)]
+    // Refresh: 11 arrived, 9 was deleted; the page holds 3 of 10 messages.
+    expect(keepOlderPages(shown, [m(11), m(10), m(8)], 10).map((x) => x.id)).toEqual(['11', '10', '8', '7', '6', '5'])
+  })
+  it('keepOlderPages takes the refreshed list as is when it is the whole folder', () => {
+    expect(keepOlderPages([m(3), m(2), m(1)], [m(3), m(1)], 2).map((x) => x.id)).toEqual(['3', '1'])
   })
 })

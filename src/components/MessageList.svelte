@@ -3,7 +3,7 @@
   import ContextMenu from './ContextMenu.svelte'
   import { computeVirtualRange } from '../lib/virtualList'
 
-  let { onCompose, onSelectMessage, onDelete, onArchive, onStar, onSearch, searchQuery = '', isLoading = false, error = null } = $props()
+  let { onCompose, onSelectMessage, onDelete, onArchive, onStar, onSearch, onLoadMore, hasMore = false, loadingMore = false, searchQuery = '', isLoading = false, error = null } = $props()
 
   // Virtualisation: pure math lives in lib/virtualList.ts (unit-tested).
   // The math assumes a constant row height — enforced in the .message-row
@@ -193,6 +193,11 @@
         </div>
       {/each}
       <div class="virtual-spacer" style={`height:${virtual.paddingBottom}px`}></div>
+      {#if hasMore}
+        <button type="button" class="load-more" disabled={loadingMore} onclick={() => onLoadMore?.()}>
+          {loadingMore ? 'Loading…' : 'Load more'}
+        </button>
+      {/if}
     </div>
   {/if}
 
@@ -332,6 +337,19 @@
     overflow-y: auto;
     position: relative;
   }
+
+  .load-more {
+    display: block;
+    width: calc(100% - 24px);
+    margin: 8px 12px 12px;
+    padding: 8px;
+    border: 1px solid var(--color-border, #ddd);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  .load-more:disabled { opacity: 0.6; cursor: default; }
 
   .virtual-spacer {
     width: 100%;
