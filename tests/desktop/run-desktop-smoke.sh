@@ -75,7 +75,8 @@ start_backend() {
   DATA_DIR="$(mktemp -d)"
   local env=(PORT="$PORT" HOST=127.0.0.1
              LD_LIBRARY_PATH="$BACKEND/libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-             LEOPOSTA_DATA_DIR="$DATA_DIR" LEOPOSTA_TOKEN="$TOKEN")
+             LEOPOSTA_DATA_DIR="$DATA_DIR" LEOPOSTA_TOKEN="$TOKEN"
+             LEOPOSTA_GOA=off) # never the host's real GNOME Online Accounts
   [[ "$1" == without-origins ]] || env+=(ALLOWED_ORIGINS="http://127.0.0.1:$PORT")
   # Only what lib.rs sets: drop anything a dev shell may export that would
   # change what the bundle does (ALLOWED_ORIGINS in particular).
