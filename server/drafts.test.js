@@ -57,6 +57,7 @@ function makeFakeClient({ mailboxes = DEFAULT_MAILBOXES, appendError, appendResu
   const calls = []
   return {
     user: 'tester',
+    usable: true, // what the pool checks (ImapFlow has no .user)
     calls,
     capabilities: new Map(),
     async list() {
