@@ -104,11 +104,8 @@
   
   function handleSelect(message: any) {
     selectMessage(message.id)
+    // App marks it read (locally and in the folder's unread count).
     if (onSelectMessage) onSelectMessage(message.id)
-    const flags = message.flags || []
-    if (!flags.includes('\\Seen') && !flags.includes('Seen')) {
-      updateMessage(message.id, { flags: [...flags, '\\Seen'] })
-    }
   }
   function handleReply(message: any) {
     const from = extractEmail(message.fromAddress || message.from)
