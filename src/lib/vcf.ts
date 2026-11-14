@@ -11,6 +11,7 @@ export interface CalEvent {
   href?: string
   ics?: string
   attendees?: string[] // email addresses; emitted as ATTENDEE;CN=... mailto:addr
+  rrule?: string // kept when an existing series is edited
 }
 
 function foldLine(line: string): string {
@@ -51,6 +52,7 @@ export function eventToICS(ev: Omit<CalEvent, 'uid'>, uid: string): string {
   if (ev.summary) lines.push(`SUMMARY:${escIcs(ev.summary)}`)
   if (ev.location) lines.push(`LOCATION:${escIcs(ev.location)}`)
   if (ev.description) lines.push(`DESCRIPTION:${escIcs(ev.description)}`)
+  if (ev.rrule && /^[A-Z0-9=;,:+-]+$/i.test(ev.rrule)) lines.push(`RRULE:${ev.rrule}`)
   if (ev.attendees && ev.attendees.length) {
     for (const rawAddr of ev.attendees) {
       const addr = (rawAddr || '').trim()

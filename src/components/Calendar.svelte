@@ -1,28 +1,39 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { CalendarAPI } from '../api'
-  import { eventToICS, parseICSBlocks } from '../lib/vcf'
+  import { eventToICS } from '../lib/vcf'
   import { loadSelection, saveSelection, STORAGE_KEY } from '../lib/calSelection'
+  import {
+    fmtISODate, eventOnDay, timeLabel, icsToLocalParts, localToIcsUtc, dateToIcsDate,
+    weekDays, monthGrid, isAllDay, eventRange
+  } from '../lib/calendarView'
   import RecipientAutocomplete from './RecipientAutocomplete.svelte'
 
   let { showToast } = $props()
 
   interface Cal { uri: string; name: string; color?: string }
+  interface Ev {
+    uid: string; summary: string; start: string; end?: string; allDay?: boolean
+    location?: string; description?: string; attendees?: string[]
+    calendar: string; href?: string; recurring?: boolean; rrule?: string; recurrenceId?: string
+  }
   let calendars = $state<Cal[]>([])
+  let configured = $state(true)
   let selectedCals = $state<string[]>([])
-  let events = $state<any[]>([])
+  let events = $state<Ev[]>([])
   let viewDate = $state(new Date())
-  let selectedUid = $state<string | null>(null)
+  let viewMode = $state<'month' | 'week'>('month')
+  let selectedKey = $state<string | null>(null)
   let loading = $state(false)
   let busy = $state(false)
   let err = $state('')
   let partialErrors = $state<string[]>([])
-  let monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December']
-  let weekdayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
+  const monthNames = ['January','February','March','April','May','June','July','August','September','October','November','December']
+  const weekdayNames = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun']
 
   // Editor form fields
   let showEditor = $state(false)
-  let editingUid = $state<string | null>(null)
+  let editing = $state<Ev | null>(null)
   let fSummary = $state('')
   let fStart = $state('') // yyyy-mm-dd
   let fTime = $state('')  // hh:mm
@@ -32,39 +43,38 @@
   let fDescription = $state('')
   let fAllDay = $state(false)
   let fAttendees = $state('') // comma/space separated emails
-  let fTargetCal = $state<string>('') // explicit target calendar uri (overrides firstSel)
+  let fTargetCal = $state<string>('')
 
-  function fmtISODate(d: Date): string {
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-  }
-  function eventDateStr(ev: string | undefined): string {
-    if (!ev) return ''
-    let s = ev.replace('Z', '').replace(/(\d{4})(\d{2})(\d{2})/g, '$1-$2-$3')
-    return s.slice(0, 10)
-  }
-  function monthStart(): Date { const d = new Date(viewDate); d.setDate(1); return d }
-  function monthEnd(): Date { const d = new Date(viewDate); d.setMonth(d.getMonth() + 1); d.setDate(0); return d }
-  function isoWeek(d: Date, extraDayOffset = 0): string {
-    const x = new Date(d); x.setDate(d.getDate() + extraDayOffset)
-    return fmtISODate(x)
-  }
+  const evKey = (ev: Ev) => `${ev.calendar}|${ev.uid}|${ev.recurrenceId || ev.start}`
 
-  let firstSel = $derived(
-    calendars.find(c => selectedCals.includes(c.uri)) || null
-  )
+  let firstSel = $derived(calendars.find(c => selectedCals.includes(c.uri)) || null)
+
+  function visibleRange(): { start: Date, end: Date } {
+    if (viewMode === 'week') {
+      const days = weekDays(viewDate)
+      return { start: days[0], end: days[6] }
+    }
+    const cells = monthGrid(viewDate)
+    return { start: cells[0].date, end: cells[cells.length - 1].date }
+  }
 
   async function loadCalendars() {
+    err = ''
     try {
       const data = await CalendarAPI.calendars()
+      configured = data.configured
       calendars = data.calendars || []
       selectedCals = loadSelection(localStorage, STORAGE_KEY, calendars)
-    } catch (e: any) { err = e.message }
+    } catch (e: any) { err = e.message; calendars = []; selectedCals = [] }
+  }
+
+  async function reload() {
+    await loadCalendars()
+    if (!err) await loadEvents()
   }
 
   function toggleCal(uri: string) {
-    const next = selectedCals.includes(uri)
-      ? selectedCals.filter(u => u !== uri)
-      : [...selectedCals, uri]
+    const next = selectedCals.includes(uri) ? selectedCals.filter(u => u !== uri) : [...selectedCals, uri]
     selectedCals = next
     saveSelection(localStorage, STORAGE_KEY, calendars, next)
     loadEvents()
@@ -80,47 +90,59 @@
     loadEvents()
   }
 
+  // Responses for an older view (fast navigation) must not overwrite a newer one.
+  let loadSeq = 0
   async function loadEvents() {
+    const seq = ++loadSeq
     if (!selectedCals.length) { events = []; partialErrors = []; return }
-    const s = isoWeek(monthStart(), -2)
-    const e = isoWeek(monthEnd(), 2)
+    const r = visibleRange()
+    // One day of margin each side: a UTC instant can fall on the neighbouring local day.
+    const s = fmtISODate(new Date(r.start.getFullYear(), r.start.getMonth(), r.start.getDate() - 1))
+    const e = fmtISODate(new Date(r.end.getFullYear(), r.end.getMonth(), r.end.getDate() + 1))
+    loading = true
     try {
-      loading = true
-      partialErrors = []
-      const results = await Promise.allSettled(
-        selectedCals.map(uri => CalendarAPI.events(uri, s, e))
-      )
-      const byUid = new Map<string, any>()
-      for (const r of results) {
-        if (r.status === 'rejected') { partialErrors.push(String((r.reason && r.reason.message) || r.reason)); continue }
-        for (const ev of (r.value.events || [])) {
-          if (!byUid.has(ev.uid)) byUid.set(ev.uid, ev)
+      const results = await Promise.allSettled(selectedCals.map(uri => CalendarAPI.events(uri, s, e)))
+      if (seq !== loadSeq) return
+      const errors: string[] = []
+      const byKey = new Map<string, Ev>()
+      results.forEach((res, i) => {
+        if (res.status === 'rejected') { errors.push(String((res.reason && res.reason.message) || res.reason)); return }
+        for (const ev of (res.value.events || [])) {
+          const full: Ev = { ...ev, calendar: ev.calendar || selectedCals[i] }
+          if (!byKey.has(evKey(full))) byKey.set(evKey(full), full)
         }
-      }
-      events = Array.from(byUid.values())
-    } catch (e2: any) {
-      err = e2.message
-    } finally { loading = false }
+      })
+      partialErrors = errors
+      events = Array.from(byKey.values())
+      if (errors.length && errors.length === results.length) err = errors[0]
+      else err = ''
+    } finally { if (seq === loadSeq) loading = false }
   }
 
-  function eventsForDay(dateStr: string): any[] {
-    return events.filter(ev => {
-      const d = eventDateStr(ev.start).replace(/[-:]/g, '').slice(0, 8)
-      return d === dateStr.replace(/[-]/g, '')
-    })
+  function eventsForDay(dateStr: string): Ev[] {
+    return events
+      .filter(ev => eventOnDay(ev, dateStr))
+      .sort((a, b) => (isAllDay(a) === isAllDay(b) ? (eventRange(a)?.start.getTime() ?? 0) - (eventRange(b)?.start.getTime() ?? 0) : isAllDay(a) ? -1 : 1))
   }
 
-  function shiftMonth(delta: number) {
-    viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth() + delta, 1)
+  function shift(delta: number) {
+    viewDate = viewMode === 'week'
+      ? new Date(viewDate.getFullYear(), viewDate.getMonth(), viewDate.getDate() + 7 * delta)
+      : new Date(viewDate.getFullYear(), viewDate.getMonth() + delta, 1)
     loadEvents()
   }
-  function goToday() {
-    viewDate = new Date()
-    loadEvents()
+  function goToday() { viewDate = new Date(); loadEvents() }
+  function setMode(m: 'month' | 'week') { if (viewMode !== m) { viewMode = m; loadEvents() } }
+
+  function title(): string {
+    if (viewMode === 'month') return `${monthNames[viewDate.getMonth()]} ${viewDate.getFullYear()}`
+    const d = weekDays(viewDate)
+    const f = (x: Date) => `${x.getDate()} ${monthNames[x.getMonth()].slice(0, 3)}`
+    return `${f(d[0])} – ${f(d[6])} ${d[6].getFullYear()}`
   }
 
   function openCreate(dateStr?: string) {
-    editingUid = null
+    editing = null
     fSummary = ''
     fStart = dateStr || fmtISODate(viewDate)
     fEnd = fStart
@@ -134,91 +156,98 @@
     showEditor = true
   }
 
-  function openEdit(ev: any) {
-    editingUid = ev.uid
+  function openEdit(ev: Ev) {
+    editing = ev
     fSummary = ev.summary || ''
-    fStart = eventDateStr(ev.start)
-    fEnd = eventDateStr(ev.end) || fStart
-    const raw0 = String(ev.start || '')
-    fAllDay = !!(ev.allDay ?? (raw0.replace(/[-T:Z]/g, '').length <= 8))
-    fTime = raw0.slice(8, 12).length === 4 ? raw0.slice(8, 10) + ':' + raw0.slice(10, 12) : ''
-    fEndTime = fTime || ''
+    fAllDay = isAllDay(ev)
+    const s = icsToLocalParts(ev.start)
+    fStart = s.date
+    fTime = s.time
+    if (fAllDay) {
+      // DTEND of an all-day event is exclusive; the editor shows the last day.
+      const r = eventRange(ev)
+      fEnd = r ? fmtISODate(new Date(r.end.getFullYear(), r.end.getMonth(), r.end.getDate() - 1)) : fStart
+      if (fEnd < fStart) fEnd = fStart
+      fEndTime = ''
+    } else {
+      const e = icsToLocalParts(ev.end || ev.start)
+      fEnd = e.date || fStart
+      fEndTime = e.time || fTime
+    }
     fLocation = ev.location || ''
     fDescription = ev.description || ''
-    fAttendees = (ev.attendees as string[] | undefined)?.join(', ') || ''
-    fTargetCal = firstSel?.uri || ''
+    fAttendees = ev.attendees?.join(', ') || ''
+    fTargetCal = ev.calendar
     showEditor = true
   }
 
-  function combinedStart(): string {
-    if (fAllDay) return fStart.replace(/-/g, '')
-    return fStart.replace(/-/g, '') + 'T' + (fTime || '0900').replace(':', '') + '00'
-  }
-  function combinedEnd(): string {
-    if (!fEnd) return ''
-    if (fAllDay) return fEnd.replace(/-/g, '')
-    const t = (fEndTime || fTime || '1000').replace(':', '')
-    return fEnd.replace(/-/g, '') + 'T' + (t.length >= 4 ? t.slice(0, 4) : '1000') + '00'
-  }
-
-  function targetCalUri(): string | null {
-    return fTargetCal || firstSel?.uri || (calendars[0] && calendars[0].uri) || null
+  function editorTimes(): { start: string, end: string } | string {
+    if (!fStart) return 'Pick a start date'
+    if (fAllDay) {
+      const endDate = fEnd && fEnd >= fStart ? fEnd : fStart
+      return { start: dateToIcsDate(fStart), end: dateToIcsDate(endDate, 1) }
+    }
+    const start = localToIcsUtc(fStart, fTime || '09:00')
+    const end = localToIcsUtc(fEnd || fStart, fEndTime || fTime || '10:00')
+    if (end < start) return 'The event ends before it starts'
+    return { start, end }
   }
 
   async function saveEvent() {
-    const targetUri = targetCalUri()
-    if (!targetUri) return
+    const targetUri = fTargetCal || firstSel?.uri || calendars[0]?.uri
+    if (!targetUri) { showToast('No calendar to save to'); return }
     if (!fSummary.trim() && !fDescription.trim()) { showToast('Add a title or description'); return }
+    const times = editorTimes()
+    if (typeof times === 'string') { showToast(times); return }
+    const orig = editing
     try {
       busy = true
-      const uid = editingUid || ('leoposta_' + Date.now())
-      const attendees = fAttendees
-        .split(/[,\s;]+/)
-        .map(s => s.trim())
-        .filter(s => s && s.includes('@'))
-      const ev = {
-        summary: fSummary,
-        start: combinedStart(),
-        end: combinedEnd() || undefined,
-        location: fLocation,
-        description: fDescription,
-        allDay: fAllDay,
+      const uid = orig?.uid || ('leoposta-' + crypto.randomUUID())
+      const attendees = fAttendees.split(/[,\s;]+/).map(s => s.trim()).filter(s => s && s.includes('@'))
+      const ics = eventToICS({
+        summary: fSummary, start: times.start, end: times.end,
+        location: fLocation, description: fDescription, allDay: fAllDay,
         attendees: attendees.length ? attendees : undefined,
-      }
-      const ics = eventToICS(ev, uid)
-      await CalendarAPI.saveEvent(targetUri, ics, editingUid || undefined)
+        // Editing one occurrence edits the series: keep its rule.
+        rrule: orig?.recurring ? orig.rrule : undefined
+      }, uid)
+      const moved = !!orig && orig.calendar !== targetUri
+      await CalendarAPI.saveEvent(targetUri, ics, uid, orig && !moved ? orig.href : undefined)
+      if (moved && orig) await CalendarAPI.deleteEvent(orig.calendar, orig.uid, orig.href)
       showEditor = false
+      editing = null
       await loadEvents()
-      showToast(editingUid ? 'Event updated' : 'Event created')
+      showToast(orig ? 'Event updated' : 'Event created')
     } catch (e: any) { showToast(e.message, 5000) } finally { busy = false }
   }
 
-  async function deleteEvent(uid: string) {
-    const targetUri = targetCalUri()
-    if (!targetUri) return
-    if (!confirm('Delete this event?')) return
+  async function deleteEvent(ev: Ev) {
+    if (!confirm(ev.recurring ? 'Delete this event and all its repetitions?' : 'Delete this event?')) return
     try {
       busy = true
-      await CalendarAPI.deleteEvent(targetUri, uid)
-      selectedUid = null
+      await CalendarAPI.deleteEvent(ev.calendar, ev.uid, ev.href)
+      selectedKey = null
+      showEditor = false
+      editing = null
       await loadEvents()
       showToast('Event deleted')
     } catch (e: any) { showToast(e.message, 5000) } finally { busy = false }
   }
 
   function handleImportIcs(file: File) {
+    const target = firstSel?.uri || calendars[0]?.uri
+    if (!target) { showToast('No calendar to import into'); return }
     const reader = new FileReader()
     reader.onload = async () => {
-      const ics = String(reader.result || '')
-      const blocks = parseICSBlocks(ics)
-      if (!firstSel) return
       try {
         busy = true
-        await CalendarAPI.importICS(firstSel.uri, ics)
+        const r = await CalendarAPI.importICS(target, String(reader.result || ''))
         await loadEvents()
-        showToast(`Imported ${Math.max(blocks.length, 1)} event(s)`);
+        const failed = r.failed?.length ? `, ${r.failed.length} rejected` : ''
+        showToast(`Imported ${r.imported} of ${r.total} event(s)${failed}`, failed ? 6000 : 3000)
       } catch (e: any) { showToast(e.message, 5000) } finally { busy = false }
     }
+    reader.onerror = () => showToast('Could not read the file', 5000)
     reader.readAsText(file)
   }
 
@@ -229,29 +258,21 @@
     input.value = ''
   }
 
-  // Build a 6x7 month grid (called as grid() in the template)
-  function grid() {
-    const first = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1)
-    // Monday-first offset: JS getDay() 0=Sun..6=Sat -> Mon=0
-    const offset = (first.getDay() + 6) % 7
-    const startDay = (1 - offset)
-    const start = new Date(viewDate.getFullYear(), viewDate.getMonth(), startDay)
-    const cells: { dateStr: string; inMonth: boolean; date: Date }[] = []
-    for (let i = 0; i < 42; i++) {
-      const d = new Date(start); d.setDate(start.getDate() + i)
-      cells.push({ dateStr: fmtISODate(d), inMonth: d.getMonth() === viewDate.getMonth(), date: d })
+  function cells() {
+    if (viewMode === 'week') {
+      return weekDays(viewDate).map(d => ({ dateStr: fmtISODate(d), inMonth: true, date: d }))
     }
-    return cells
+    return monthGrid(viewDate)
   }
 
-  onMount(() => { loadCalendars().then(() => loadEvents()) })
+  onMount(() => { reload() })
 </script>
 
 <section class="calendar">
   <aside class="cal-side">
     <div class="cal-side-head">
       <h2>Calendars</h2>
-      <button class="add-evt" onclick={() => openCreate()}>+ New event</button>
+      <button class="add-evt" onclick={() => openCreate()} disabled={!calendars.length}>+ New event</button>
     </div>
     <div class="cal-actions">
       <button class="cal-act" onclick={selectAll} disabled={!calendars.length}>All</button>
@@ -270,76 +291,86 @@
           <span class="cal-name">{cal.name}</span>
         </label>
       {/each}
-      {#if calendars.length === 0}<p class="empty">No calendars found.</p>{/if}
+      {#if calendars.length === 0 && configured && !err}<p class="empty">No calendars found on the server.</p>{/if}
     </div>
     <div class="cal-import">
       <label class="import-btn">
         Import .ics
-        <input type="file" accept=".ics,text/calendar" onchange={importIcsInput} disabled={busy} />
+        <input type="file" accept=".ics,text/calendar" onchange={importIcsInput} disabled={busy || !calendars.length} />
       </label>
     </div>
   </aside>
-
   <div class="cal-main">
+    {#if !configured}
+      <div class="not-configured" data-testid="dav-not-configured">
+        <h3>Calendar is not set up</h3>
+        <p>This account has no CalDAV server. Add a CalDAV/CardDAV URL to the account in <b>Settings → Account</b> to see and edit your calendars here.</p>
+      </div>
+    {:else}
     <header class="cal-top">
       <div class="cal-nav">
-        <button aria-label="Previous month" onclick={() => shiftMonth(-1)}>‹</button>
+        <button aria-label={viewMode === 'week' ? 'Previous week' : 'Previous month'} onclick={() => shift(-1)}>‹</button>
         <button onclick={goToday}>Today</button>
-        <button aria-label="Next month" onclick={() => shiftMonth(1)}>›</button>
-        <h3>{monthNames[viewDate.getMonth()]} {viewDate.getFullYear()}</h3>
+        <button aria-label={viewMode === 'week' ? 'Next week' : 'Next month'} onclick={() => shift(1)}>›</button>
+        <h3 data-testid="cal-title">{title()}</h3>
+      </div>
+      <div class="cal-mode" role="group" aria-label="View">
+        <button class:active={viewMode === 'month'} aria-pressed={viewMode === 'month'} onclick={() => setMode('month')}>Month</button>
+        <button class:active={viewMode === 'week'} aria-pressed={viewMode === 'week'} onclick={() => setMode('week')}>Week</button>
       </div>
     </header>
-
     {#if err}
-      <div class="cal-err">
+      <div class="cal-err" role="alert">
         <span>{err}</span>
-        <button onclick={loadEvents}>Retry</button>
+        <button onclick={reload} disabled={loading}>Retry</button>
       </div>
     {/if}
     {#if !err && partialErrors.length}
       <div class="cal-warn">Could not load {partialErrors.length} calendar(s): {partialErrors[0]}</div>
     {/if}
-
     <div class="weekdays">
       {#each weekdayNames as wd, i}<div class="wd">{wd}</div>{/each}
     </div>
-
-    <div class="grid" role="grid">
-      {#each grid() as cell, i (cell.dateStr)}
+    <div class="grid" class:week={viewMode === 'week'} role="grid">
+      {#each cells() as cell (cell.dateStr)}
         {@const dayEvents = eventsForDay(cell.dateStr)}
+        {@const max = viewMode === 'week' ? 12 : 3}
         <div
           class="cell"
           class:out={cell.inMonth === false}
           class:today={cell.dateStr === fmtISODate(new Date())}
-          onclick={() => openCreate(cell.dateStr)}
+          data-date={cell.dateStr}
+          onclick={() => { if (calendars.length) openCreate(cell.dateStr) }}
         >
           <div class="cell-head">
             <span class="daynum">{cell.date.getDate()}</span>
           </div>
           {#if dayEvents.length > 0}
             <div class="chips">
-              {#each dayEvents.slice(0, 3) as ev (ev.uid)}
+              {#each dayEvents.slice(0, max) as ev (evKey(ev))}
                 <button
                   class="chip"
-                  class:sel={selectedUid === ev.uid}
-                  onclick={(e) => { e.stopPropagation(); selectedUid = ev.uid; if (!showEditor) openEdit(ev) }}
-                  oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); deleteEvent(ev.uid) }}
+                  class:sel={selectedKey === evKey(ev)}
+                  title={ev.summary}
+                  onclick={(e) => { e.stopPropagation(); selectedKey = evKey(ev); if (!showEditor) openEdit(ev) }}
+                  oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); deleteEvent(ev) }}
                 >
-                  {ev.summary || '(untitled)'}
+                  {#if timeLabel(ev)}<span class="chip-time">{timeLabel(ev)}</span>{/if}{ev.summary || '(untitled)'}{#if ev.recurring} ↻{/if}
                 </button>
               {/each}
-              {#if dayEvents.length > 3}<span class="more">+{dayEvents.length - 3} more</span>{/if}
+              {#if dayEvents.length > max}<span class="more">+{dayEvents.length - max} more</span>{/if}
             </div>
           {/if}
         </div>
       {/each}
     </div>
+    {/if}
   </div>
-
   {#if showEditor}
     <div class="modal-back" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }} role="dialog">
       <div class="modal">
-        <h4>{editingUid ? 'Edit event' : 'New event'}</h4>
+        <h4>{editing ? 'Edit event' : 'New event'}</h4>
+        {#if editing?.recurring}<p class="cal-target">This is a repeating event: changes apply to every repetition.</p>{/if}
         {#if calendars.length}
           <label>
             <span>Target calendar</span>
@@ -359,11 +390,11 @@
         </label>
         <div class="row">
           <label><span>Start</span><input type="date" bind:value={fStart} /></label>
-          {#if !fAllDay}<label><span>Time</span><input type="time" bind:value={fTime} /></label>{/if}
+          {#if !fAllDay}<label><span>Time</span><input type="time" bind:value={fTime} aria-label="Start time" /></label>{/if}
         </div>
         <div class="row">
           <label><span>End</span><input type="date" bind:value={fEnd} /></label>
-          {#if !fAllDay}<label><span>Time</span><input type="time" bind:value={fEndTime} placeholder={fTime || '10:00'} /></label>{/if}
+          {#if !fAllDay}<label><span>Time</span><input type="time" bind:value={fEndTime} aria-label="End time" placeholder={fTime || '10:00'} /></label>{/if}
         </div>
         <label><span>Location</span><input type="text" bind:value={fLocation} /></label>
         <label>
@@ -372,10 +403,10 @@
         </label>
         <label><span>Description</span><textarea bind:value={fDescription} rows="3"></textarea></label>
         <div class="actions">
-          {#if editingUid}<button class="danger" onclick={() => { showEditor = false; deleteEvent(editingUid!) }}>Delete</button>{/if}
+          {#if editing}<button class="danger" onclick={() => { if (editing) deleteEvent(editing) }}>Delete</button>{/if}
           <span class="spacer"></span>
           <button class="ghost" onclick={() => showEditor = false}>Cancel</button>
-          <button class="primary" onclick={saveEvent} disabled={busy}>{editingUid ? 'Save changes' : 'Create'}</button>
+          <button class="primary" onclick={saveEvent} disabled={busy}>{editing ? 'Save changes' : 'Create'}</button>
         </div>
       </div>
     </div>
@@ -412,7 +443,7 @@
   .cal-top { display: flex; align-items: center; padding: 10px 18px; border-bottom: 1px solid var(--color-border); }
   .cal-nav { display: flex; align-items: center; gap: 6px; }
   .cal-nav button { background: var(--color-bg-secondary); border: 1px solid var(--color-border); color: var(--color-text); width: 28px; height: 28px; border-radius: 6px; cursor: pointer; font-size: 14px; }
-  .cal-nav buttonhover { background: var(--color-hover); }
+  .cal-nav button:hover { background: var(--color-hover); }
   .cal-nav button:nth-child(2) { width: auto; padding: 0 12px; font-size: 12px; font-weight: 500; }
   .cal-nav h3 { font-size: 15px; font-weight: 600; margin-left: 10px; }
   .cal-err { background: var(--danger-bg); color: var(--color-danger); padding: 10px 18px; font-size: 13px; display: flex; gap: 12px; align-items: center; justify-content: space-between; }
@@ -432,6 +463,15 @@
   .chip:hover { background: var(--color-accent); color: #fff; }
   .chip.sel { outline: 2px solid var(--color-accent); }
   .more { font-size: 10px; color: var(--color-text-secondary); }
+  .chip-time { font-variant-numeric: tabular-nums; opacity: .75; margin-right: 3px; }
+  .cal-mode { margin-left: auto; display: flex; gap: 0; }
+  .cal-mode button { background: var(--color-bg-secondary); border: 1px solid var(--color-border); color: var(--color-text); padding: 4px 12px; font-size: 12px; cursor: pointer; }
+  .cal-mode button:first-child { border-radius: 6px 0 0 6px; }
+  .cal-mode button:last-child { border-radius: 0 6px 6px 0; border-left: none; }
+  .cal-mode button.active { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
+  .grid.week { grid-auto-rows: minmax(260px, 1fr); }
+  .not-configured { margin: 40px auto; max-width: 420px; text-align: center; color: var(--color-text-secondary); font-size: 14px; line-height: 1.5; }
+  .not-configured h3 { color: var(--color-text); font-size: 16px; margin-bottom: 8px; }
 
   .modal-back { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 150; display: flex; align-items: center; justify-content: center; padding: 20px; }
   .modal { background: var(--color-bg); border-radius: 14px; padding: 18px 20px 14px; width: min(560px, 92vw); max-height: 90vh; overflow-y: auto; box-shadow: 0 18px 60px rgba(0,0,0,0.35); border: 1px solid var(--color-border); }
