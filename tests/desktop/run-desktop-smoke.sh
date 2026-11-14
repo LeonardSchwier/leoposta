@@ -68,7 +68,7 @@ trap cleanup EXIT
 
 free_port() { python3 -I -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1",0)); print(s.getsockname()[1])'; }
 
-# start_backend with-origins|without-origins  -> sets PORT, TOKEN, BACKEND_PID
+# start_backend with-origins|without-origins|foreign-origin  -> sets PORT, TOKEN, BACKEND_PID
 start_backend() {
   PORT="$(free_port)"
   TOKEN="$(head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n')"
@@ -77,7 +77,13 @@ start_backend() {
              LD_LIBRARY_PATH="$BACKEND/libs${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
              LEOPOSTA_DATA_DIR="$DATA_DIR" LEOPOSTA_TOKEN="$TOKEN"
              LEOPOSTA_GOA=off) # never the host's real GNOME Online Accounts
-  [[ "$1" == without-origins ]] || env+=(ALLOWED_ORIGINS="http://127.0.0.1:$PORT")
+  case "$1" in
+    with-origins) env+=(ALLOWED_ORIGINS="http://127.0.0.1:$PORT") ;;
+    # An origin list without the window's own origin: the white-screen
+    # misconfiguration (the module script is answered 403).
+    foreign-origin) env+=(ALLOWED_ORIGINS="http://127.0.0.1:1") ;;
+    without-origins) ;;
+  esac
   # Only what lib.rs sets: drop anything a dev shell may export that would
   # change what the bundle does (ALLOWED_ORIGINS in particular).
   (cd "$BACKEND/server" && exec env -u ALLOWED_ORIGINS -u LEOPOSTA_DIST_DIR "${env[@]}" "$BACKEND/node" "$BACKEND/server/index.js") \
@@ -100,7 +106,10 @@ tests/stack/stack.sh up slash
 mkdir -p "$OUT"
 
 # --- 3. self-test: the original white-screen bug must be caught ------------
-start_backend without-origins
+# Since the CORS fix (qa/security df6a08c) a backend without ALLOWED_ORIGINS
+# trusts its own origin, so that alone no longer breaks the window; an origin
+# list that leaves the window's origin out still does, and must be caught.
+start_backend foreign-origin
 set +e
 "${SMOKE[@]}" "http://127.0.0.1:$PORT/" --token "$TOKEN" --timeout 20 >"$OUT/selftest.log" 2>&1
 st=$?
@@ -111,8 +120,15 @@ if [[ $st -ne 1 ]] || ! grep -q 'resource: <script' "$OUT/selftest.log"; then
   echo "SELF-TEST FAILED: the smoke did not catch the 403'd module script (exit $st)" >&2
   exit 1
 fi
-log "self-test ok: without ALLOWED_ORIGINS the smoke fails as it must:"
+log "self-test ok: with a foreign ALLOWED_ORIGINS the smoke fails as it must:"
 grep -E '^\s+(resource|failure|api):' "$OUT/selftest.log" | head -5 | sed 's/^/    /'
+
+# Without ALLOWED_ORIGINS the backend's own origin is trusted: the app loads.
+start_backend without-origins
+"${SMOKE[@]}" "http://127.0.0.1:$PORT/" --token "$TOKEN" --timeout 20 >"$OUT/no-origins.log" 2>&1 \
+  || { cat "$OUT/no-origins.log" >&2; echo "without ALLOWED_ORIGINS the app did not load (own origin must be trusted by default)" >&2; exit 1; }
+stop_backend
+log "without ALLOWED_ORIGINS the app loads (own origin trusted by default)"
 
 # --- 4. the real run --------------------------------------------------------
 start_backend with-origins
