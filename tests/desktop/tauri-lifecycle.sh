@@ -35,7 +35,8 @@ launch() {
   PORT="$(grep -o 'backend up on 127.0.0.1:[0-9]*' "$T/$1" | cut -d: -f2)"
   echo "launched: shell=$APP node=$NODE port=$PORT"
   grep -q "data dir = \"$T/data/org.schwier.leoposta\"" "$T/$1" || fail "app data dir is not the temp XDG_DATA_HOME"
-  ss -tlnp | grep -q "127.0.0.1:$PORT .*pid=$NODE," || fail "node $NODE is not listening on 127.0.0.1:$PORT"
+  local listen; listen="$(ss -Htlnp "sport = :$PORT")"
+  [[ "$listen" == *"pid=$NODE,"* ]] || fail "node $NODE is not listening on 127.0.0.1:$PORT: $listen"
   local js
   js="$(curl -fsS "http://127.0.0.1:$PORT/" | grep -o '/assets/index-[^"]*\.js' | head -1)"
   [[ "$(curl -s -o /dev/null -w '%{http_code}' -H "Origin: http://127.0.0.1:$PORT" "http://127.0.0.1:$PORT$js")" == 200 ]] \
