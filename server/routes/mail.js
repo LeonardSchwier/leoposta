@@ -4,6 +4,7 @@ import { getPoolFor } from '../lib/imap.js'
 import { normalizeFlags, parseFromAddr, toISO, messageDate } from '../lib/address.js'
 import { messageRange } from '../lib/mailRange.js'
 import { processPgp } from '../lib/pgp.js'
+import { addSnippets } from '../lib/snippet.js'
 import { applyRules } from '../lib/rules.js'
 import { MailActionError, moveChecked, parseUid, removeMessage } from '../lib/removal.js'
 import { changeFlags, parseFlagList } from '../lib/flags.js'
@@ -52,6 +53,7 @@ router.get('/messages', async (req, res) => {
         const start = range.start
 
         const messages = []
+        const previews = []
         const result = client.fetch(
           `${start}:${end}`,
           {
@@ -89,7 +91,9 @@ router.get('/messages', async (req, res) => {
             attachmentCount: attachments.length,
             attachments, folder, headers: {}
           })
+          previews.push({ entry: messages[messages.length - 1], uid: msg.uid, bodyStructure: msg.bodyStructure })
         }
+        await addSnippets(client, previews)
 
         messages.sort((a, b) => new Date(b.date) - new Date(a.date))
         res.json({ messages: applyRules(messages, state.rules), unreadCount })
@@ -104,9 +108,14 @@ router.get('/messages', async (req, res) => {
 })
 
 // GET /api/message/:id
+// Only the fetch (and marking the message read) runs under the mailbox lock and
+// inside pool.run; parsing a large message there would block the account's other
+// IMAP work. A message that is gone is a 404 returned as a value: an error thrown
+// inside pool.run makes the pool log the shared IMAP client out.
 router.get('/message/:id', async (req, res) => {
   try {
-    const { id } = req.params
+    const uid = parseUid(req.params.id)
+    if (uid === null) return res.status(400).json({ error: 'invalid message id' })
     const folder = folderParam(req.query.folder)
     if (folder === null) return res.status(400).json({ error: INVALID_FOLDER })
 
@@ -116,81 +125,69 @@ router.get('/message/:id', async (req, res) => {
     }
     const pool = getPoolFor(acct)
 
-    await pool.run(async (client) => {
+    const fetched = await pool.run(async (client) => {
       const lock = await client.getMailboxLock(folder)
       try {
-        const msg = await (async () => {
-          const uidResult = client.fetch('1:*', { uid: true }, { op: 'FETCH' })
-          const uidMap = new Map()
-          let seq = 0
-          for await (const m of uidResult) {
-            if (m.uid) uidMap.set(m.uid.toString(), ++seq)
-          }
-          const seqNum = uidMap.get(id)
-          if (!seqNum) throw new Error('Message UID not found in mailbox')
-
-          return client.fetchOne(seqNum.toString(), {
-            uid: true, internalDate: true, from: true, to: true, cc: true,
-            bcc: true, subject: true, flags: true, envelope: true,
-            bodyStructure: true, source: true
-          })
-        })()
-
-        const from = parseFromAddr(msg.from?.[0] || msg.envelope?.from?.[0])
-        const to = (msg.to || msg.envelope?.to || []).map(t => t.address)
-        const cc = (msg.cc || msg.envelope?.cc || []).map(c => c.address)
-        const bcc = (msg.bcc || []).map(b => b.address)
-
-        let body = ''
-        let bodyHtml = ''
-        const attachments = []
-
-        if (msg.source) {
-          try {
-            const parsed = await parseMessageSource(msg.source)
-            if (parsed.html) bodyHtml = parsed.html
-            if (parsed.text) body = parsed.text
-            attachments.push(...listAttachments(parsed.attachments))
-          } catch (parseErr) {
-            const raw = msg.source.toString('utf-8')
-            if (raw.includes('<html') || raw.includes('<div') || raw.includes('<p')) {
-              bodyHtml = raw
-            } else {
-              body = raw
-            }
-          }
-        }
-
+        const msg = await client.fetchOne(String(uid), {
+          uid: true, internalDate: true, from: true, to: true, cc: true,
+          bcc: true, subject: true, flags: true, envelope: true,
+          bodyStructure: true, source: true
+        }, { uid: true })
+        if (!msg) return { status: 404, error: 'message_not_found' }
         const flags = normalizeFlags(msg.flags)
-        const isRead = flags.includes('\\Seen') || flags.includes('Seen')
-        if (!isRead && msg.uid) {
+        if (!flags.includes('\\Seen') && !flags.includes('Seen')) {
+          // Best effort: the message is shown either way (a read-only mailbox refuses).
           try {
-            await client.messageFlagsAdd(msg.uid, ['\\Seen'], { uid: true })
-          } catch (e) { /* the message is shown either way; marking it read is best effort */ }
+            if (await client.messageFlagsAdd(uid, ['\\Seen'], { uid: true })) flags.push('\\Seen')
+          } catch (e) { /* see above */ }
         }
-
-        const pgp = await processPgp(body || msg.source?.toString('utf-8') || '')
-        const finalBody = pgp?.decrypted ? pgp.text : body
-        const finalHtml = pgp?.decrypted ? (pgp.html || '') : bodyHtml
-        const finalAttachments = pgp?.decrypted && pgp.attachments?.length
-          ? mergePgpAttachments(attachments, pgp.attachments)
-          : attachments
-        res.json({
-          id: msg.uid?.toString() || id,
-          from: from.name || from.address || '',
-          fromAddress: from.address || '',
-          to, cc, bcc,
-          subject: msg.subject || msg.envelope?.subject || '(No Subject)',
-          body: finalBody, bodyHtml: finalHtml,
-          pgp: pgp || null,
-          date: messageDate(msg),
-          flags: normalizeFlags(msg.flags),
-          attachments: finalAttachments,
-          folder, headers: {}
-        })
+        return { msg, flags }
       } finally {
         lock.release()
       }
+    })
+    if (fetched.error) return res.status(fetched.status).json({ error: fetched.error })
+    const { msg, flags } = fetched
+
+    const from = parseFromAddr(msg.from?.[0] || msg.envelope?.from?.[0])
+    const to = (msg.to || msg.envelope?.to || []).map(t => t.address)
+    const cc = (msg.cc || msg.envelope?.cc || []).map(c => c.address)
+    const bcc = (msg.bcc || []).map(b => b.address)
+
+    let body = ''
+    let bodyHtml = ''
+    const attachments = []
+
+    if (msg.source) {
+      try {
+        const parsed = await parseMessageSource(msg.source)
+        if (parsed.html) bodyHtml = parsed.html
+        if (parsed.text) body = parsed.text
+        attachments.push(...listAttachments(parsed.attachments))
+      } catch (parseErr) {
+        // Unparseable MIME: show the raw source as text (never as HTML).
+        body = msg.source.toString('utf-8')
+      }
+    }
+
+    const pgp = await processPgp(body || msg.source?.toString('utf-8') || '')
+    const finalBody = pgp?.decrypted ? pgp.text : body
+    const finalHtml = pgp?.decrypted ? (pgp.html || '') : bodyHtml
+    const finalAttachments = pgp?.decrypted && pgp.attachments?.length
+      ? mergePgpAttachments(attachments, pgp.attachments)
+      : attachments
+    res.json({
+      id: msg.uid?.toString() || String(uid),
+      from: from.name || from.address || '',
+      fromAddress: from.address || '',
+      to, cc, bcc,
+      subject: msg.subject || msg.envelope?.subject || '(No Subject)',
+      body: finalBody, bodyHtml: finalHtml,
+      pgp: pgp || null,
+      date: messageDate(msg),
+      flags,
+      attachments: finalAttachments,
+      folder, headers: {}
     })
   } catch (err) {
     console.error('Error fetching message:', err)
