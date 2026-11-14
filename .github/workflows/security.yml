@@ -1,0 +1,80 @@
+name: Security
+
+# Scanners that gate every change (see skills/security-review.md). Kept apart
+# from ci.yml so the functional and the security gates evolve independently.
+# Every action and image is pinned by full commit SHA / digest.
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+jobs:
+  npm-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: npm audit (runtime dependencies)
+        run: npm audit --omit=dev --audit-level=high
+
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: gitleaks (full history)
+        # Verified false positives are listed with a reason in .gitleaksignore.
+        run: >
+          docker run --rm -v "$PWD:/repo:ro"
+          docker.io/zricethezav/gitleaks@sha256:c00b6bd0aeb3071cbcb79009cb16a60dd9e0a7c60e2be9ab65d25e6bc8abbb7f
+          git /repo --redact --no-banner --exit-code 1
+          --gitleaks-ignore-path /repo/.gitleaksignore
+
+  semgrep:
+    runs-on: ubuntu-latest
+    container:
+      image: docker.io/semgrep/semgrep@sha256:67518c174185a2043fdbed16c70631b79209499b3671178e7194379b48295a0d # 1.185.0
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: semgrep (maintained JS/TS/Node/secrets rulesets)
+        run: >
+          semgrep scan --error --metrics=off
+          --config p/javascript --config p/typescript --config p/nodejs --config p/secrets
+
+  codeql:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: javascript-typescript
+          build-mode: none
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: /language:javascript-typescript
+
+  cargo-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked --version 0.23.0
+      - name: cargo audit (src-tauri)
+        working-directory: src-tauri
+        # Vulnerabilities fail the job; unmaintained/unsound notices (e.g. for
+        # the GTK3 stack Tauri uses on Linux) are printed as warnings.
+        run: cargo audit
