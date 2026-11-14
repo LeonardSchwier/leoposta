@@ -230,6 +230,7 @@ test('idle: new mail, expunges and flag changes (ImapFlow exists/expunge/flags e
     fake.client.emit('flags', { path: 'INBOX', seq: 1, flags: new Set(['\\Seen']) })
     assert.equal(await waitFor(() => (chunks.join('').match(/event: mailbox-update/g) || []).length === 3), true, chunks.join(''))
     assert.match(chunks.join(''), /"type":"new-messages"/)
+    assert.match(chunks.join(''), /event: ready\n/, 'the browser is told when IDLE is watching')
     req.destroy()
   })
 })
