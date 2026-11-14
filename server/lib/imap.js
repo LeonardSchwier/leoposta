@@ -47,7 +47,7 @@ function makePool(acct) {
     connectP: null,
     queue: Promise.resolve(),
     async ensure() {
-      if (this.client && this.client.user) return this.client
+      if (this.client && this.client.usable) return this.client
       if (!this.connectP) {
         this.connectP = (async () => {
           const client = createImapClient(acct)
@@ -74,7 +74,7 @@ function makePool(acct) {
             String(e && e.message || '') === 'Command failed'
             || String(e && e.message || '').includes('socket was closed unexpectedly')
             || String(e && e.message || '').includes('No response to command')
-            || !c.user
+            || !c.usable
           )
           const wasOurs = this.client === c
           safeLogout(c)

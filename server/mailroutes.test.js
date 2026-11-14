@@ -72,6 +72,7 @@ function makeFakeClient({ messages = [], addResult = true, removeResult = true, 
   const calls = []
   const client = {
     user: 'tester',
+    usable: true, // what the pool checks (ImapFlow has no .user)
     calls,
     mailbox: { exists: messages.length, unseen: messages.filter((m) => !m.flags.has('\\Seen')).length },
     async getMailboxLock(p) {
