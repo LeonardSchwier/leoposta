@@ -78,7 +78,11 @@ test.describe('folder list', () => {
     await mailbox.with((c) => c.mailboxDelete(mbox('Ghost')))
     const ghost = (await mailbox.folders()).find((f) => f.path === mbox('Ghost'))
     expect(ghost?.flags.some((x) => /noselect|nonexistent/i.test(x))).toBeTruthy()
+    // The start-up INBOX load runs once the account list arrived; the
+    // (cached) folder tree can be clickable before that, so wait for it.
+    const startup = app.waitForResponse((r) => r.url().includes('/api/messages?'))
     await app.reload()
+    await startup
     const requests: string[] = []
     app.on('request', (r) => { if (r.url().includes('/api/messages?')) requests.push(r.url()) })
     await folderButton(app, 'Ghost').click()
