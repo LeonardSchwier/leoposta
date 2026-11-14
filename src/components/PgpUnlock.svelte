@@ -5,7 +5,8 @@
   import { getState } from '../store'
   import { pgpUnlock, pgpLock, reloadMessage } from '../lib/pgp'
 
-  let { msg }: { msg: MailMessage } = $props()
+  /** `onGone`: the message was deleted on the server meanwhile (App: drop the row + toast). */
+  let { msg, onGone }: { msg: MailMessage, onGone?: (id: string) => void } = $props()
 
   let passphrase = $state('')
   let busy = $state(false)
@@ -22,7 +23,7 @@
     try {
       await pgpUnlock(passphrase)
       passphrase = ''
-      await reloadMessage(msg.id, msg.folder || getState().activeFolder)
+      await reloadMessage(msg.id, msg.folder || getState().activeFolder, onGone)
     } catch (err) {
       error = err instanceof Error ? err.message : String(err)
     } finally {

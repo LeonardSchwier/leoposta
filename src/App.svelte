@@ -724,6 +724,7 @@
             onMoveRequest={requestMove}
             onEditDraft={isDraftsFolder($store.activeFolder) ? (id) => openDraft(id, $store.activeFolder) : undefined}
             onReply={handleReplyKeyboard}
+            onGone={messageGone}
           />
         {/if}
       </div>
