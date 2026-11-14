@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { createContactsCache, type Contact } from '../lib/contacts'
   import { ContactsAPI } from '../api/index'
+  import { segments, splitRecipients, recipientAddress } from '../lib/recipients'
 
   let {
     value = $bindable(''),
@@ -51,34 +52,44 @@
     }, 120)
   })
 
+  // The recipient being typed: the text after the last top-level "," or ";"
+  // (a display name may contain spaces, so whitespace does not split).
   function activeToken(v: string): string {
-    const parts = v.split(/[,\s;]+/)
+    const { parts } = segments(v)
     return (parts[parts.length - 1] ?? '').trim()
   }
 
+  // What to match contacts against: the address part once "<" was typed.
+  function searchText(token: string): string {
+    const lt = token.lastIndexOf('<')
+    return (lt === -1 ? token : token.slice(lt + 1)).replace(/>$/, '').trim()
+  }
+
   function refreshFromToken(v: string): void {
-    const token = activeToken(v)
+    const token = searchText(activeToken(v))
     if (!token) {
       suggestions = []
       suggestionIndex = -1
       return
     }
-    const taken = new Set(v.split(/[,\s;]+/).map((p) => p.trim().toLowerCase()).filter(Boolean))
+    const taken = new Set(splitRecipients(v).map((p) => recipientAddress(p).toLowerCase()))
     suggestions = cache
       .matches(token, maxSuggestions)
       .filter((c) => !taken.has(c.email.toLowerCase()))
     suggestionIndex = -1
   }
 
+  // Replace the recipient being typed with `text`, keeping the earlier ones
+  // exactly as typed (display names included) and dropping a duplicate address.
   function commit(text: string): void {
     const email = text.trim()
-    const key = email.toLowerCase()
+    const key = recipientAddress(email).toLowerCase()
     if (!key) return
-    const raw = value.split(/[,\s;]+/)
-    const keep = raw
-      .slice(0, Math.max(raw.length - 1, 0))
+    const { parts } = segments(value)
+    const keep = parts
+      .slice(0, Math.max(parts.length - 1, 0))
       .map((p) => p.trim())
-      .filter((p) => p.length > 0 && p.toLowerCase() !== key)
+      .filter((p) => p.length > 0 && recipientAddress(p).toLowerCase() !== key)
     value = keep.length ? keep.join(', ') + ', ' + email : email
     if (input) input.value = value
     suggestions = []
@@ -113,6 +124,8 @@
       return
     }
     if (e.key === ',') {
+      // A "," inside quotes or <...> belongs to the name being typed.
+      if (segments(value).open) return
       if (open) {
         commit(suggestions[Math.max(suggestionIndex, 0)].email)
       } else {

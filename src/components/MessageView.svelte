@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { store, getState, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, selectMessage } from '../store'
+  import { store, getState, selectMessage } from '../store'
+  import { startReply } from '../lib/reply'
   import { sanitizeHtml, hasRemoteImages } from '../lib/sanitizeHtml'
   import { MailAPI } from '../api'
   import { downloadAttachment } from '../lib/attachmentDownload'
@@ -37,21 +38,19 @@
     const msg = getCurrentMessage()
     if (!msg) return
     if (propReply) { propReply(); return }
-    setComposeTo([msg.from])
-    setComposeSubject(`Re: ${msg.subject}`)
-    setComposeReplyTo(msg.id)
-    setComposeOriginalMessage(msg)
-    setComposing(true)
+    void startReply(msg, 'reply')
+  }
+
+  function handleReplyAll() {
+    const msg = getCurrentMessage()
+    if (!msg) return
+    void startReply(msg, 'replyAll')
   }
 
   function handleForward() {
     const msg = getCurrentMessage()
     if (!msg) return
-    setComposeTo([])
-    setComposeSubject(`Fwd: ${msg.subject}`)
-    setComposeForward(true)
-    setComposeOriginalMessage(msg)
-    setComposing(true)
+    void startReply(msg, 'forward')
   }
 
   const inJunk = $derived(isSpecialFolder($store.folders, $store.activeFolder, '\\Junk', 'Junk'))
@@ -120,6 +119,7 @@
           <button class="action-btn" onclick={() => onEditDraft?.(msg.id)} title="Edit draft" aria-label="Edit draft">✎ Edit draft</button>
         {/if}
         <button class="action-btn" onclick={handleReply} title="Reply" aria-label="Reply">↩ Reply</button>
+        <button class="action-btn" onclick={handleReplyAll} title="Reply all" aria-label="Reply all">↩↩ Reply all</button>
         <button class="action-btn" onclick={handleForward} title="Forward" aria-label="Forward">↪ Forward</button>
         {#if messageHasFlag(msg, '\\Seen')}
           <button class="action-btn icon" onclick={() => act('unread')} title="Mark as unread (u)" aria-label="Mark as unread">●</button>

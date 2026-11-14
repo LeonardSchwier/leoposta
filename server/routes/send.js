@@ -7,6 +7,43 @@ import { scrubOutboundHtml } from '../lib/sanitize.js'
 
 const router = Router()
 
+/** Attachments as Compose sends them (OutboundAttachment: base64 `content`)
+ * in nodemailer's shape. Without `encoding: 'base64'` nodemailer would take
+ * the base64 text itself as the file content. */
+export function outboundAttachments(list) {
+  return list.map(a => ({
+    filename: a.filename,
+    content: a.content,
+    encoding: 'base64',
+    contentType: a.contentType || 'application/octet-stream'
+  }))
+}
+
+const list = (v) => (Array.isArray(v) ? v.join(', ') : v) || undefined
+
+/** The nodemailer message for a /api/send body. The compose editor is plain
+ * text: an HTML part is only added when the client sends `bodyHtml` (turning
+ * the text itself into HTML collapsed its line breaks and dropped anything
+ * that looked like a tag, e.g. "<anna@example.com>"). */
+export function buildMessageData(acct, { to, cc, bcc, subject, body, bodyHtml, attachments, inReplyTo, references } = {}) {
+  const messageData = {
+    from: { name: acct.name || acct.email, address: acct.email },
+    to: list(to),
+    cc: list(cc),
+    bcc: list(bcc),
+    subject: subject || '(No Subject)',
+    text: body || '',
+    accountId: acct.email
+  }
+  if (bodyHtml) messageData.html = scrubOutboundHtml(bodyHtml)
+  if (inReplyTo) messageData.inReplyTo = inReplyTo
+  if (references) messageData.references = references
+  if (Array.isArray(attachments) && attachments.length > 0) {
+    messageData.attachments = outboundAttachments(attachments)
+  }
+  return messageData
+}
+
 // POST /api/send
 router.post('/send', express.json({ limit: '35mb' }), async (req, res) => {
   // express.json() leaves req.body undefined unless Content-Type is exactly a
@@ -15,7 +52,7 @@ router.post('/send', express.json({ limit: '35mb' }), async (req, res) => {
     return res.status(400).json({ success: false, error: 'Expected a JSON body (Content-Type: application/json)' })
   }
   try {
-    const { to, cc, bcc, subject, body, bodyHtml, scheduled, attachments } = req.body
+    const { to, scheduled } = req.body
     const acct = resolveAccount(req)
 
     if (!acct) {
@@ -26,27 +63,12 @@ router.post('/send', express.json({ limit: '35mb' }), async (req, res) => {
       return res.status(400).json({ error: 'At least one recipient is required' })
     }
 
-    const messageData = {
-      from: `"${acct.name}" <${acct.email}>`,
-      to: to.join(', '),
-      cc: cc?.join(', '),
-      bcc: bcc?.join(', '),
-      subject: subject || '(No Subject)',
-      text: body || '',
-      html: scrubOutboundHtml(bodyHtml || body || ''),
-      accountId: acct.email
-    }
-
-    if (attachments && attachments.length > 0) {
-      messageData.attachments = attachments.map(a => ({
-        filename: a.filename,
-        content: a.content,
-        contentType: a.contentType || 'application/octet-stream'
-      }))
-    }
+    const messageData = buildMessageData(acct, req.body)
 
     if (scheduled) {
-      const when = new Date(scheduled).toISOString()
+      const at = new Date(scheduled)
+      if (Number.isNaN(at.getTime())) return res.status(400).json({ error: 'scheduled is not a valid date' })
+      const when = at.toISOString()
       const msg = {
         id: Date.now().toString(),
         ...messageData,
@@ -59,11 +81,12 @@ router.post('/send', express.json({ limit: '35mb' }), async (req, res) => {
       res.json({ success: true, scheduled: true })
     } else {
       const transporter = createSmtpTransporter(acct)
-      const info = await transporter.sendMail(messageData)
+      const date = new Date()
+      const info = await transporter.sendMail({ ...messageData, date })
       const messageId = info.messageId
       console.log(`[send] IMMEDIATE send to ${messageData.to} (id=${messageId})`)
       // Async fire-and-forget; never blocks the response or fails the send.
-      saveToSentFolder(acct, messageData, { messageId }).catch(err => {
+      saveToSentFolder(acct, messageData, { messageId, date }).catch(err => {
         console.error('[send] saveToSentFolder failed (immediate):', err && err.message)
       })
       res.json({ success: true, messageId })
@@ -179,22 +202,21 @@ export async function sendScheduledMessage(msg) {
     bcc: msg.bcc,
     subject: msg.subject,
     text: msg.text,
-    html: scrubOutboundHtml(msg.html)
+    inReplyTo: msg.inReplyTo,
+    references: msg.references,
+    html: scrubOutboundHtml(msg.html) || undefined
   }
 
   if (msg.attachments && msg.attachments.length > 0) {
-    messageData.attachments = msg.attachments.map(a => ({
-      filename: a.filename,
-      content: a.content,
-      contentType: a.contentType || 'application/octet-stream'
-    }))
+    messageData.attachments = outboundAttachments(msg.attachments)
   }
 
   const transporter = createSmtpTransporter(acct)
-  const info = await transporter.sendMail(messageData)
+  const date = new Date()
+  const info = await transporter.sendMail({ ...messageData, date })
   const messageId = info.messageId
   // Async fire-and-forget; never blocks the scheduler or fails the send.
-  saveToSentFolder(acct, messageData, { messageId }).catch(err => {
+  saveToSentFolder(acct, messageData, { messageId, date }).catch(err => {
     console.error('[send] saveToSentFolder failed (scheduled):', err && err.message)
   })
   return messageId

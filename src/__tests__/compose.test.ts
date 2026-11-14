@@ -124,7 +124,7 @@ describe('Compose — shared RecipientAutocomplete in To field', () => {
     unmount(c)
   })
 
-  it('send with no recipients alerts and does not call /api/send', async () => {
+  it('send with no recipients shows an inline error and does not call /api/send', async () => {
     const origFetch = globalThis.fetch
     let sendCalled = false
     globalThis.fetch = ((input: any) => {
@@ -144,8 +144,145 @@ describe('Compose — shared RecipientAutocomplete in To field', () => {
     await sleep(200)
     globalThis.fetch = origFetch
 
-    expect(alertSpy, 'alert should fire when no recipients').toHaveBeenCalled()
+    expect(alertSpy, 'no blocking alert').not.toHaveBeenCalled()
+    expect(target.querySelector('[role=alert]')?.textContent).toMatch(/at least one recipient/)
     expect(sendCalled, '/api/send should not be called').toBe(false)
+    unmount(c)
+  })
+})
+
+describe('Compose — sending and seeding', () => {
+  function stubSend(onSend: (body: any) => Promise<any>, extra: (url: string) => any = () => undefined) {
+    const origFetch = globalThis.fetch
+    globalThis.fetch = ((input: any, init?: any) => {
+      const url = String(input)
+      if (url.includes('/api/send')) return onSend(JSON.parse(init?.body || '{}'))
+      const r = extra(url)
+      if (r !== undefined) return Promise.resolve({ ok: true, status: 200, json: async () => r })
+      return origFetch(input)
+    }) as any
+    return () => { globalThis.fetch = origFetch }
+  }
+  const sendButton = () => Array.from(target.querySelectorAll('button')).find((b) => b.textContent?.trim() === 'Send')!
+
+  it('a double click sends the message once', async () => {
+    setComposeTo(['alice@example.com'])
+    let calls = 0
+    let release: (v: any) => void = () => {}
+    const restore = stubSend(() => { calls++; return new Promise((r) => { release = r }) })
+    const c = mount(Compose as any, { target, props: { onClose: vi.fn() } } as any)
+    await sleep(250)
+    const btn = sendButton()
+    btn.click()
+    btn.click()
+    await sleep(50)
+    expect(calls).toBe(1)
+    release({ ok: true, status: 200, json: async () => ({ success: true }) })
+    await sleep(50)
+    restore()
+    unmount(c)
+  })
+
+  it('a reply sends In-Reply-To/References of the fetched original and quotes it', async () => {
+    const { setComposeOriginalMessage, setComposeReplyTo, setComposeSubject } = await import('../store')
+    setComposeTo(['erika@x.test'])
+    setComposeSubject('Re: Plan')
+    setComposeReplyTo('7')
+    setComposeOriginalMessage({ id: '7', from: 'Erika', fromAddress: 'erika@x.test', to: ['me@x.test'], subject: 'Plan', body: '', date: '2026-01-02T03:04:05Z', flags: [], folder: 'INBOX', headers: {} })
+    let sent: any = null
+    const restore = stubSend(async (b) => { sent = b; return { ok: true, status: 200, json: async () => ({ success: true }) } }, (url) =>
+      url.includes('/api/message/7') ? { id: '7', body: 'Original text', messageId: '<m7@x.test>', references: ['<m6@x.test>'], attachments: [] } : undefined)
+    const c = mount(Compose as any, { target, props: { onClose: vi.fn() } } as any)
+    await sleep(300)
+    const ta = target.querySelector('textarea#compose-body') as HTMLTextAreaElement
+    expect(ta.dataset.seeded).toBe('true')
+    expect(ta.value).toContain('> Original text')
+    sendButton().click()
+    await sleep(100)
+    restore()
+    expect(sent.inReplyTo).toBe('<m7@x.test>')
+    expect(sent.references).toBe('<m6@x.test> <m7@x.test>')
+    unmount(c)
+  })
+
+  it('an SMTP failure is shown in the window, which stays open and can retry', async () => {
+    setComposeTo(['alice@example.com'])
+    const onClose = vi.fn()
+    let calls = 0
+    const restore = stubSend(async () => {
+      calls++
+      return calls === 1
+        ? { ok: false, status: 500, json: async () => ({ error: 'connect ECONNREFUSED 127.0.0.1:1' }) }
+        : { ok: false, status: 502, statusText: 'Bad Gateway', json: async () => { throw new SyntaxError('not json') } }
+    })
+    const c = mount(Compose as any, { target, props: { onClose } } as any)
+    await sleep(250)
+    sendButton().click()
+    await sleep(100)
+    expect(target.querySelector('[role=alert]')?.textContent).toMatch(/Could not send: connect ECONNREFUSED/)
+    expect(onClose).not.toHaveBeenCalled()
+    sendButton().click()
+    await sleep(100)
+    expect(target.querySelector('[role=alert]')?.textContent).toMatch(/502 Bad Gateway/)
+    expect(calls).toBe(2)
+    restore()
+    unmount(c)
+  })
+
+  it('Escape that closes the recipient suggestions does not close the window', async () => {
+    const onClose = vi.fn()
+    const c = mount(Compose as any, { target, props: { onClose } } as any)
+    await sleep(250)
+    const input = target.querySelector('#compose-to') as HTMLInputElement
+    input.value = 'j'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await sleep(250)
+    expect(target.querySelector('.suggestions')).not.toBeNull()
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await sleep(30)
+    expect(target.querySelector('.suggestions')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    // The next Escape reaches the window. "j" was typed, so it asks whether
+    // to keep the text as a draft (qa/actions) instead of closing silently.
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    await sleep(30)
+    expect(target.querySelector('.confirm-close')).not.toBeNull()
+    const discard = Array.from(target.querySelectorAll('.confirm-close button')).find((b) => b.textContent === 'Discard') as HTMLButtonElement
+    discard.click()
+    expect(onClose).toHaveBeenCalledTimes(1)
+    unmount(c)
+  })
+
+  it('an invalid address is refused before sending', async () => {
+    setComposeTo(['alice@example.com', 'bob'])
+    let calls = 0
+    const restore = stubSend(async () => { calls++; return { ok: true, status: 200, json: async () => ({ success: true }) } })
+    const c = mount(Compose as any, { target, props: { onClose: vi.fn() } } as any)
+    await sleep(250)
+    sendButton().click()
+    await sleep(100)
+    expect(target.querySelector('[role=alert]')?.textContent).toMatch(/Not a valid email address: bob/)
+    expect(calls).toBe(0)
+    restore()
+    unmount(c)
+  })
+
+  it('text typed before the signature loads is kept', async () => {
+    let answer: (v: any) => void = () => {}
+    const origFetch = globalThis.fetch
+    globalThis.fetch = ((input: any) => {
+      if (String(input).includes('/api/account')) return new Promise((r) => { answer = r })
+      return origFetch(input)
+    }) as any
+    const c = mount(Compose as any, { target, props: { onClose: vi.fn() } } as any)
+    await sleep(50)
+    const ta = target.querySelector('textarea#compose-body') as HTMLTextAreaElement
+    ta.value = 'Typed early'
+    ta.dispatchEvent(new Event('input', { bubbles: true }))
+    answer({ ok: true, status: 200, json: async () => ({ connected: true, signature: { enabled: true, text: '-- Leo', position: 'standard' } }) })
+    await sleep(100)
+    globalThis.fetch = origFetch
+    expect(ta.value).toBe('Typed early\n\n-- Leo')
     unmount(c)
   })
 })

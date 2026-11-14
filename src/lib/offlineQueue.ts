@@ -30,18 +30,27 @@ export interface QueuedMessage {
   body: string
   bodyHtml?: string
   scheduled?: string | null
+  inReplyTo?: string
+  references?: string
   attachments?: Array<{ filename: string; content: string; contentType: string }>
   createdAt: string
 }
 
+/** Fired on window whenever the outbox gains or loses messages. */
+export const QUEUE_CHANGED = 'leoposta:queue-changed'
+function notifyChanged() {
+  if (typeof window !== 'undefined') window.dispatchEvent(new Event(QUEUE_CHANGED))
+}
+
 export async function addQueuedMessage(msg: Omit<QueuedMessage, 'id'>): Promise<void> {
   const db = await openDB()
-  return new Promise((resolve, reject) => {
+  await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(OUTBOX, 'readwrite')
     tx.objectStore(OUTBOX).add(msg)
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
   })
+  notifyChanged()
 }
 
 export async function getQueuedMessages(): Promise<QueuedMessage[]> {
@@ -74,7 +83,16 @@ export async function clearQueue(): Promise<void> {
   })
 }
 
-export async function flushQueue(): Promise<{ sent: number; failed: number }> {
+// One flush at a time: two overlapping flushes (an "online" event while one
+// runs) would both read the same outbox and send every message twice.
+let flushing: Promise<{ sent: number; failed: number }> | null = null
+
+export function flushQueue(): Promise<{ sent: number; failed: number }> {
+  if (!flushing) flushing = doFlush().finally(() => { flushing = null; notifyChanged() })
+  return flushing
+}
+
+async function doFlush(): Promise<{ sent: number; failed: number }> {
   const messages = await getQueuedMessages()
   let sent = 0
   let failed = 0
@@ -89,6 +107,8 @@ export async function flushQueue(): Promise<{ sent: number; failed: number }> {
         body: msg.body,
         bodyHtml: msg.bodyHtml,
         scheduled: msg.scheduled,
+        inReplyTo: msg.inReplyTo,
+        references: msg.references,
         attachments: msg.attachments ?? undefined
       }
       const res = await apiFetch('/api/send', {

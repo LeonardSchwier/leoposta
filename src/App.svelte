@@ -10,14 +10,15 @@
   import Settings from './components/Settings.svelte'
   import Calendar from './components/Calendar.svelte'
   import Contacts from './components/Contacts.svelte'
-  import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setComposeDraft, setComposeReplyTo, setComposeOriginalMessage, setComposeForward, bootstrapRefreshMode } from './store'
+  import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setComposeDraft, bootstrapRefreshMode } from './store'
+  import { startReply } from './lib/reply'
   import { startRefresh, stopRefresh } from './refresh'
   import { loadAccountsIntoStore } from './lib/accountsBootstrap'
   import { ApiError, MailAPI } from './api'
   import MovePicker from './components/MovePicker.svelte'
   import { runMessageAction, hasFlag, type MessageAction } from './lib/messageActions'
   import { encodeBase64, type OutboundAttachment } from './lib/attachments'
-  import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
+  import { flushQueue, queueCount, QUEUE_CHANGED, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
   import { beginSplitDrag } from './lib/splitHandle'
   import { specialFolderPath } from './lib/specialFolders'
 
@@ -142,6 +143,9 @@
   }
 
   async function handleOnline() {
+    // Ask the outbox itself: the cached count may predate a message queued
+    // while offline.
+    queuedCount = await queueCount().catch(() => queuedCount)
     if (queuedCount > 0) {
       const { sent, failed } = await flushQueue()
       refreshQueueCount()
@@ -379,12 +383,7 @@
     const s = getState()
     const msg = s.messages.find(m => m.id === s.selectedMessageId)
     if (!msg) return
-    setComposeTo([msg.fromAddress || msg.from])
-    setComposeSubject(`Re: ${msg.subject}`)
-    setComposeReplyTo(msg.id)
-    setComposeOriginalMessage(msg)
-    setComposeForward(false)
-    setComposing(true)
+    void startReply(msg, 'reply')
   }
 
   function isTyping(e: KeyboardEvent): boolean {
@@ -541,6 +540,7 @@
     refreshQueueCount()
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', () => refreshQueueCount())
+    window.addEventListener(QUEUE_CHANGED, refreshQueueCount)
     window.addEventListener('keydown', handleKeydown)
     return () => stopRefresh()
   })
