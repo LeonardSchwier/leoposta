@@ -3,6 +3,7 @@
   import { sanitizeHtml, hasRemoteImages } from '../lib/sanitizeHtml'
   import { MailAPI } from '../api'
   import { downloadAttachment } from '../lib/attachmentDownload'
+  import { linkify } from '../lib/linkify'
 
   let {
     onDelete: propDelete,
@@ -18,6 +19,16 @@
 
   // Per-message opt-in; not persisted.
   let imagesLoadedFor = $state<string | null>(null)
+
+  // Sanitizing a large mail is costly: do it once per body, not on every store
+  // update (the template re-runs whenever anything in the store changes).
+  const current = $derived($store.messages.find(m => m.id === $store.selectedMessageId))
+  const currentHtml = $derived(current?.bodyHtml || '')
+  const allowRemote = $derived(!!current && imagesLoadedFor === current.id)
+  const safeHtml = $derived(currentHtml ? sanitizeHtml(currentHtml, { allowRemoteImages: allowRemote }) : '')
+  const remoteBlocked = $derived(!!currentHtml && !allowRemote && hasRemoteImages(currentHtml))
+  const plainSegments = $derived(current && !currentHtml && current.body ? linkify(current.body) : [])
+  const files = $derived((current?.attachments || []).filter(a => !a.inline))
 
   function formatFullDate(dateStr: string) {
     return new Date(dateStr).toLocaleString()
@@ -98,7 +109,7 @@
   }
 
   function formatSize(bytes: number) {
-    if (!bytes) return ''
+    if (typeof bytes !== 'number' || !isFinite(bytes)) return ''
     if (bytes < 1024) return bytes + ' B'
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
@@ -128,7 +139,7 @@
         <div class="subject-area">
           <h2 class="message-subject">{msg.subject || '(no subject)'}</h2>
           <div class="message-meta">
-            <span class="sender">From: {msg.from}</span>
+            <span class="sender">From: {msg.from || msg.fromAddress || '(no sender)'}{#if msg.fromAddress && msg.from && msg.from !== msg.fromAddress} &lt;{msg.fromAddress}&gt;{/if}</span>
             <span class="recipient">To: {msg.to?.join(', ')}</span>
             <span class="date">{formatFullDate(msg.date || '')}</span>
           </div>
@@ -169,26 +180,30 @@
           </div>
         {/if}
 
-        {#if msg.bodyHtml}
-          {#if hasRemoteImages(msg.bodyHtml) && imagesLoadedFor !== msg.id}
+        {#if msg.loadError}
+          <p class="load-error" role="alert">{msg.loadError}</p>
+        {:else if msg.bodyHtml}
+          {#if remoteBlocked}
             <div class="remote-images-banner">
               Remote images blocked
               <button type="button" onclick={() => (imagesLoadedFor = msg.id)}>Load images</button>
             </div>
           {/if}
-          {@html sanitizeHtml(msg.bodyHtml, { allowRemoteImages: imagesLoadedFor === msg.id })}
+          <div class="html-body">{@html safeHtml}</div>
         {:else if msg.body}
-          <div class="plain-body">{msg.body}</div>
+          <div class="plain-body">{#each plainSegments as seg, i (i)}{#if seg.href}<a href={seg.href} target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}</div>
+        {:else if !msg.bodyLoaded}
+          <p class="loading-body" aria-busy="true">Loading…</p>
         {:else}
-          <p class="empty-body">This message has no visible content. It may be PGP-encrypted or empty.</p>
+          <p class="empty-body">This message has no visible content.</p>
         {/if}
       </div>
 
-      {#if msg.attachments && msg.attachments.length > 0}
+      {#if files.length > 0}
         <div class="attachments">
-          <h3>📎 {msg.attachments.length} Attachment{msg.attachments.length !== 1 ? 's' : ''}</h3>
+          <h3>📎 {files.length} Attachment{files.length !== 1 ? 's' : ''}</h3>
           <div class="attachment-list">
-            {#each msg.attachments as att, i (i)}
+            {#each files as att, i (i)}
               <button
                 class="attachment-item"
                 disabled={!att.id || downloadingId !== null}
@@ -234,10 +249,16 @@
   .action-btn.starred { background: var(--color-selected); border-color: var(--color-star); }
   .action-btn.danger:hover { background: var(--danger-bg); border-color: var(--color-danger); color: var(--color-danger); }
   .message-content { flex: 1; overflow-y: auto; padding: 24px; font-size: 14px; line-height: 1.7; color: var(--color-text); }
-  .message-content img { max-width: 100%; height: auto; }
-  .message-content a { color: var(--color-accent); text-decoration: underline; }
-  .message-content pre { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; font-size: 13px; }
+  /* The mail's HTML is a guest: contain:paint makes this box the containing
+     block of position:fixed content and clips everything to it, so a mail
+     cannot overlay the app (fake dialogs, covering the toolbar). */
+  .html-body { position: relative; contain: layout paint; isolation: isolate; overflow-wrap: anywhere; }
+  .message-content :global(img) { max-width: 100%; height: auto; }
+  .message-content :global(a) { color: var(--color-accent); text-decoration: underline; }
+  .message-content :global(pre) { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; font-size: 13px; }
   .plain-body { white-space: pre-wrap; word-wrap: break-word; }
+  .load-error { color: var(--color-danger); padding: 24px; text-align: center; }
+  .loading-body { color: var(--color-text-secondary); padding: 40px; text-align: center; }
   .empty-body { color: var(--color-text-secondary); font-style: italic; padding: 40px; text-align: center; }
 
   /* ---- PGP banner ---- */
