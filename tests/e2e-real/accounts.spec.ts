@@ -90,6 +90,9 @@ test.describe('accounts', () => {
 
   test('edit name, signature (enabled/text/position) and servers persists; delete returns to first run', async ({ app, request, baseURL, user }) => {
     await app.locator('.settings-btn').click()
+    // The "Group messages by thread" checkbox did nothing (no conversation view) and is gone.
+    await expect(app.locator('.settings-modal')).toBeVisible()
+    await expect(app.locator('.settings-modal').getByText('Group messages by thread')).toHaveCount(0)
     await app.getByRole('button', { name: `Edit ${user}` }).click()
     await expect(app.locator('#acct-email')).toHaveValue(user)
     await expect(app.locator('#acct-email')).toBeDisabled()
