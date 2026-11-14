@@ -18,3 +18,8 @@ test('joinDavPath: linear on a path of many slashes (no ReDoS)', () => {
   joinDavPath('/dav', 'a' + '/'.repeat(200_000) + 'b')
   assert.ok(Date.now() - t < 500, 'took too long')
 })
+
+test('joinDavPath: non-string input (tampered array) is treated as empty', () => {
+  assert.equal(joinDavPath('/dav', ['/', 'x']), '/dav')
+  assert.equal(joinDavPath(['/a/'], 'x'), '/x')
+})

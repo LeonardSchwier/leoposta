@@ -187,7 +187,10 @@ test.describe('unread counts and live updates', () => {
     await app.reload()
     await expectList(app, ['Before restart'])
     const { execFileSync } = await import('node:child_process')
-    execFileSync('podman', ['restart', '-t', '1', `leoposta-e2e-dovecot-${process.env.E2E_STACK_ID || 0}`], { stdio: 'ignore' })
+    // Same engine choice as tests/stack/stack.sh (CI has docker, not podman).
+    const has = (cmd: string) => { try { execFileSync(cmd, ['--version'], { stdio: 'ignore' }); return true } catch { return false } }
+    const engine = process.env.CONTAINER_ENGINE || (has('docker') ? 'docker' : 'podman')
+    execFileSync(engine, ['restart', '-t', '1', `leoposta-e2e-dovecot-${process.env.E2E_STACK_ID || 0}`], { stdio: 'ignore' })
     // Wait until IMAP accepts logins again.
     await expect.poll(() => mailbox.with(async () => true).catch(() => false), { timeout: 30_000 }).toBe(true)
     await mailbox.seed('INBOX', [{ subject: 'After restart' }])
