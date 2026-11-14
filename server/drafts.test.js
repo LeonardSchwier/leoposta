@@ -58,6 +58,8 @@ function makeFakeClient({ mailboxes = DEFAULT_MAILBOXES, appendError, appendResu
   return {
     user: 'tester',
     usable: true,
+    authenticated: 'tester',
+    async noop() {},
     calls,
     capabilities: new Map(),
     async list() {

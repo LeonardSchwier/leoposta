@@ -30,3 +30,16 @@ test('a refusal by the server is not retried with new logins', async () => {
   }))
   assert.equal(attempts, 1)
 })
+
+test('a reused session with a selected mailbox is synced (NOOP) before each request', async () => {
+  const pool = getPoolFor({ email: 'noop@example.test', imapHost: '127.0.0.1', imapPort: 1, imapTls: false, imapPass: 'x' })
+  const c = fakeClient()
+  pool.client = c
+  const calls = []
+  c.mailbox = { path: 'INBOX', exists: 0 }
+  // Stand-in for the untagged EXISTS that NOOP brings in.
+  c.noop = async () => { calls.push('noop'); c.mailbox.exists++ }
+  const exists = await pool.run(async (client) => { calls.push('fn'); return client.mailbox.exists }, 1)
+  assert.deepEqual(calls, ['noop', 'fn'])
+  assert.equal(exists, 1, 'the request sees mail that arrived since the last command')
+})
