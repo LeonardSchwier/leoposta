@@ -10,13 +10,14 @@
   import Settings from './components/Settings.svelte'
   import Calendar from './components/Calendar.svelte'
   import Contacts from './components/Contacts.svelte'
-  import { type Folder, store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward, bootstrapRefreshMode } from './store'
+  import { type Folder, store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, adjustUnseen, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward, bootstrapRefreshMode } from './store'
   import { startRefresh, stopRefresh } from './refresh'
   import { MailAPI } from './api'
   import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
   import { beginSplitDrag } from './lib/splitHandle'
   import { specialFolderPath } from './lib/specialFolders'
   import { isSameOrBelow, movedPath } from './lib/folderTree'
+  import { createLatest, mergeRefreshed } from './lib/listSync'
 
   let activeView = $state('inbox')
   let appMode = $state<'mail' | 'calendar' | 'contacts'>('mail')
@@ -164,12 +165,20 @@
 
   let offlineServing = $state(false)
 
-  async function loadMessages(folder: string) {
-    setIsLoading(true)
+  // Folder loads, searches and refreshes all write the message list; only the
+  // newest may apply (see lib/listSync), so a slow answer for a folder the user
+  // already left never replaces the folder on screen.
+  const listLoads = createLatest()
+
+  /** `background`: a refresh of the folder on screen (no spinner, keep loaded bodies). */
+  async function loadMessages(folder: string, { background = false } = {}) {
+    const current = listLoads.begin()
+    if (!background) setIsLoading(true)
     try {
       const data = await MailAPI.messages(folder)
+      if (!current()) return
       if (data.messages) {
-        setMessages(data.messages)
+        setMessages(background ? mergeRefreshed(getState().messages, data.messages) : data.messages)
         setUnreadCount(data.messages.filter((m: any) =>
           !m.flags?.includes('\\Seen') && !m.flags?.includes('Seen')
         ).length)
@@ -178,8 +187,10 @@
       offlineServing = false
       setError(null)
     } catch (e: any) {
+      if (!current()) return
       // Offline / server down: fall back to the local cache for this folder.
       const cached = await cachedMessagesForFolder(folder).catch(() => [] as any[])
+      if (!current()) return
       if (cached.length) {
         setMessages(cached)
         setUnreadCount(0)
@@ -190,22 +201,47 @@
         offlineServing = false
       }
     } finally {
-      setIsLoading(false)
+      if (current()) setIsLoading(false)
     }
   }
 
-  async function handleSearch(query: string) {
+  let searchTimer: ReturnType<typeof setTimeout> | undefined
+
+  function handleSearch(query: string) {
+    clearTimeout(searchTimer)
     if (!query.trim()) {
-      searchQuery = ''
+      // Clearing the search goes back to the folder's own list.
+      if (searchQuery) {
+        searchQuery = ''
+        loadMessages(getState().activeFolder)
+      }
       return
     }
     searchQuery = query
+    // One request once the user pauses typing, not one per keystroke.
+    searchTimer = setTimeout(() => runSearch(query), 250)
+  }
+
+  async function runSearch(query: string) {
+    const current = listLoads.begin()
     try {
       const data = await MailAPI.search(query, getState().activeFolder)
-      if (data.messages) setMessages(data.messages)
+      if (!current() || searchQuery !== query) return
+      if (data.messages) {
+        setMessages(data.messages)
+        if (getState().selectedMessageId && !data.messages.some((m: any) => m.id === getState().selectedMessageId)) selectMessage(null)
+      }
+      setError(null)
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      if (current()) setError(e instanceof Error ? e.message : String(e))
     }
+  }
+
+  /** New mail / periodic tick: refresh what is on screen and the unread counts. */
+  function refreshNow() {
+    loadFolders()
+    if (searchQuery) runSearch(searchQuery)
+    else loadMessages(getState().activeFolder, { background: true })
   }
 
   function handleNewFolder() {
@@ -256,6 +292,7 @@
 
   function handleFolderSelect(folder: string) {
     activeView = folder
+    clearTimeout(searchTimer)
     searchQuery = ''
     if (folder === 'calendar') { appMode = 'calendar'; return }
     if (folder === 'contacts') { appMode = 'contacts'; return }
@@ -282,10 +319,23 @@
     if (getState().activeFolder === folder) loadMessages(folder)
   }
 
+  function isUnreadMsg(m: { flags?: string[] }) {
+    return !m.flags?.includes('\\Seen') && !m.flags?.includes('Seen')
+  }
+
   function handleSelectMessage(id: string) {
     selectMessage(id)
     const folder = getState().activeFolder
+    // Opening a message marks it read on the server (GET /message/:id), so
+    // show it read right away, however it was opened (click, j/k, palette).
+    const opened = getState().messages.find(m => m.id === id)
+    const wasUnread = !!opened && isUnreadMsg(opened)
+    if (opened && wasUnread) {
+      updateMessage(id, { flags: [...(opened.flags || []), '\\Seen'] })
+      adjustUnseen(folder, -1)
+    }
     MailAPI.message(id, folder).then(data => {
+      if (wasUnread) loadFolders()
       if (data) {
         putMessageCache({ key: `${folder}:${id}`, folder, id, message: data, full: true }).catch(() => {})
         updateMessage(id, {
@@ -520,9 +570,7 @@
       stopRefresh()
       return
     }
-    startRefresh(mode, () => {
-      loadMessages(getState().activeFolder).catch(() => {})
-    })
+    startRefresh(mode, refreshNow)
   })
 </script>
 
