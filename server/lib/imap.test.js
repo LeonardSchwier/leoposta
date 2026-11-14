@@ -60,3 +60,17 @@ test('after a failed connect the next request connects again', async () => {
   assert.equal(isUsable(c), true)
   assert.equal(f.made.length, 2)
 })
+
+test('a reused session with a selected mailbox is synced (NOOP) before each request', async () => {
+  const f = factory()
+  const pool = makePool(acct, f.make)
+  await pool.run(async () => {})
+  const c = f.made[0]
+  const calls = []
+  c.mailbox = { path: 'INBOX', exists: 0 }
+  // Stand-in for the untagged EXISTS that NOOP brings in.
+  c.noop = async () => { calls.push('noop'); c.mailbox.exists++ }
+  const exists = await pool.run(async (client) => { calls.push('fn'); return client.mailbox.exists }, 1)
+  assert.deepEqual(calls, ['noop', 'fn'])
+  assert.equal(exists, 1, 'the request sees mail that arrived since the last command')
+})
