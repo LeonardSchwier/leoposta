@@ -59,7 +59,10 @@ export function replyRecipients(msg: Original, mode: ReplyMode, own: string[]): 
 /** Plain text of an HTML body, for quoting a mail that has no text part. */
 export function htmlToText(html: string): string {
   const doc = new DOMParser().parseFromString(
-    html.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|h[1-6]|li|tr|blockquote)>/gi, '$&\n'),
+    html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<(p|div|h[1-6]|li|tr|blockquote)[\s>]/gi, '\n$&')
+      .replace(/<\/(p|div|h[1-6]|li|tr|blockquote)>/gi, '$&\n'),
     'text/html'
   )
   doc.querySelectorAll('script, style, head').forEach((n) => n.remove())
