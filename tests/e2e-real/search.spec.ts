@@ -137,6 +137,32 @@ test.describe('command palette', () => {
     await expect(app.locator('.palette')).toHaveCount(0)
   })
 
+  test("'?' shows the keyboard help (the palette keeps Ctrl+K); in a text field '?' is just typed", async ({ app }) => {
+    const toast = app.getByTestId('toast')
+    await app.locator('body').press('?')
+    await expect(toast).toContainText('? this help')
+    await expect(toast).toContainText('Ctrl+K palette')
+    await expect(app.locator('.palette')).toHaveCount(0)
+
+    // Ctrl+K still opens the palette; '?' typed there stays in the input.
+    await app.locator('body').press('Control+k')
+    const input = app.locator('.palette .palette-input')
+    await expect(input).toBeFocused()
+    await input.press('?')
+    await expect(input).toHaveValue('?')
+    await input.press('Escape')
+    await expect(app.locator('.palette')).toHaveCount(0)
+
+    // The search box takes '?' as text and opens neither.
+    await expect(toast).toHaveCount(0, { timeout: 10_000 })
+    const search = app.locator('[data-search-input]')
+    await search.click()
+    await search.press('?')
+    await expect(search).toHaveValue('?')
+    await expect(app.locator('.palette')).toHaveCount(0)
+    await expect(toast).toHaveCount(0)
+  })
+
   test('a message entry in the palette opens that message', async ({ mailbox, app }) => {
     await mailbox.seed('INBOX', [
       { subject: 'First palette mail', text: 'body one', date: at(1) },

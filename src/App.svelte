@@ -14,6 +14,7 @@
   import { startReply } from './lib/reply'
   import { startRefresh, stopRefresh } from './refresh'
   import { loadAccounts, rememberActiveAccount } from './lib/accountsBootstrap'
+  import { globalShortcut, KEYBOARD_HELP } from './lib/shortcuts'
   import { loadMessageBody, keepLoadedBodies } from './lib/openMessage'
   import { ApiError, MailAPI } from './api'
   import MovePicker from './components/MovePicker.svelte'
@@ -77,26 +78,6 @@
 
   function togglePalette() {
     showPalette = !showPalette
-  }
-
-  // Open the palette in "search" mode (prefilled with 'go to').
-  function openPaletteSearch() {
-    if (showPalette) { showPalette = false; return }
-    showPalette = true
-    // Pre-fill the search after the palette input mounts.
-    requestAnimationFrame(() => {
-      setTimeout(() => {
-        const input = document.querySelector<HTMLInputElement>('.palette .palette-input')
-        if (input) {
-          input.value = 'go to '
-          input.dispatchEvent(new Event('input', { bubbles: true }))
-          input.focus()
-          // move caret to end
-          const len = input.value.length
-          input.setSelectionRange(len, len)
-        }
-      }, 0)
-    })
   }
 
   function viewLabel(view: string): string {
@@ -497,16 +478,17 @@
 
   function handleKeydown(e: KeyboardEvent) {
     const key = e.key.toLowerCase()
-    // Command palette: Ctrl/Cmd+K. Works even while typing.
-    if ((e.ctrlKey || e.metaKey) && key === 'k') {
+    // Ctrl/Cmd+K: the command palette (even while typing). '?': the keyboard
+    // help (not while typing: there '?' is a character).
+    const global = globalShortcut(e, isTyping(e))
+    if (global === 'palette') {
       e.preventDefault()
       togglePalette()
       return
     }
-    // '?' opens the palette in "go to" mode so users can discover it.
-    if (e.key === '?' && !e.ctrlKey && !e.metaKey && !(e.target as HTMLElement | null)?.closest?.('.palette')) {
+    if (global === 'help') {
       e.preventDefault()
-      openPaletteSearch()
+      showToast(KEYBOARD_HELP, 6000)
       return
     }
     const isN = key === 'n'
@@ -583,10 +565,6 @@
         }, 0)
         break
       }
-      case '?':
-        e.preventDefault()
-        showToast('? palette · n new · Ctrl+Enter send · r reply · a archive · d delete · s star · u read/unread · v move · / search · Esc close', 6000)
-        break
       case 'Escape':
         e.preventDefault()
         if (s.selectedMessageId) selectMessage(null)
