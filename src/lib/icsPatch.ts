@@ -30,7 +30,7 @@ export interface EventEdit {
   zone?: string
 }
 
-import { buildVTimezone, isKnownZone, utcToWall, wallToIcs } from './tz'
+import { buildVTimezone, isKnownZone, utcToWall, wallToIcs, wallToUtc } from './tz'
 
 const DAY = 86_400_000
 
@@ -157,6 +157,30 @@ export function masterStartInfo(ics: string, uid: string): { kind: 'date' | 'utc
   const t = p && parseTime(p.value, p.params)
   if (!p || !t) return null
   return { kind: t.kind, tzid: t.kind === 'local' ? tzidOf(p.params) : null }
+}
+
+/**
+ * Local date ("YYYY-MM-DD", browser zone) of the master's DTSTART: the day a
+ * monthly/yearly series is anchored to, which differs from the day of the
+ * occurrence the editor was opened on.
+ */
+export function masterStartLocalDate(ics: string, uid: string): string | null {
+  const lines = unfold(ics)
+  const m = findMaster(lines, uid)
+  if (!m) return null
+  const p = topProps(lines.slice(m.begin + 1, m.end)).find(x => x.name === 'DTSTART')
+  const t = p && parseTime(p.value, p.params)
+  if (!p || !t) return null
+  const d = new Date(t.ms)
+  let local: Date
+  if (t.kind === 'date' || (t.kind === 'local' && !isKnownZone(tzidOf(p.params)))) {
+    local = new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+  } else if (t.kind === 'utc') {
+    local = d
+  } else {
+    local = new Date(wallToUtc({ y: d.getUTCFullYear(), mo: d.getUTCMonth() + 1, d: d.getUTCDate(), h: d.getUTCHours(), mi: d.getUTCMinutes(), s: d.getUTCSeconds() }, tzidOf(p.params)!))
+  }
+  return `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`
 }
 
 const WD = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA']
