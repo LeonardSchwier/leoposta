@@ -261,8 +261,10 @@
     outline: none;
   }
   
+  /* A 1px border tint alone is too faint to find the keyboard focus. */
   .search-input:focus {
     border-color: var(--color-accent);
+    box-shadow: 0 0 0 1px var(--color-accent);
   }
   
   .loading {
@@ -374,7 +376,9 @@
     font-size: 16px;
     cursor: pointer;
     padding: 0;
-    opacity: 0.25;
+    /* Dimmed but still a visible control: 0.6 keeps the outline glyph at
+       >= 3:1 (WCAG 1.4.11) on the row, hover and selected backgrounds. */
+    opacity: 0.6;
     transition: opacity 0.1s;
     color: var(--color-text);
   }
