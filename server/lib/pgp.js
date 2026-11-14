@@ -9,6 +9,9 @@ import { DATA_DIR } from './state.js'
 const PGP_PRIVATE_FILE = path.join(DATA_DIR, 'pgp_private.asc')
 const PGP_PUBLIC_FILE = path.join(DATA_DIR, 'pgp_publics.asc')
 const KEY_TTL_MS = 15 * 60 * 1000
+// A sender can compress a huge plaintext into a tiny encrypted message
+// (622 KB -> 450 MB, ~2 GB RSS per open). No real mail is this large.
+export const MAX_DECRYPTED_BYTES = 32 * 1024 * 1024
 let unlocked = null
 
 if (fs.existsSync(path.join(DATA_DIR, 'pgp_passphrase.txt'))) {
@@ -105,7 +108,11 @@ export async function processPgp(plainBody) {
       if (!decryptedKey) return { encrypted: true, decrypted: false, armored, error: 'pgp_locked' }
     }
     const msg = await openpgp.readMessage({ armoredMessage: armored })
-    const { data } = await openpgp.decrypt({ message: msg, decryptionKeys: [decryptedKey] })
+    const { data } = await openpgp.decrypt({
+      message: msg,
+      decryptionKeys: [decryptedKey],
+      config: { maxDecompressedMessageSize: MAX_DECRYPTED_BYTES }
+    })
     const mime = await data.toString()
     let text = '', html = ''
     const attachments = []
