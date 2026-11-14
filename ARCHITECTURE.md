@@ -62,7 +62,7 @@ flowchart LR
 ## Persistence and secrets
 
 All backend state is JSON plus PGP key files in one data directory
-(`LEOPOSTA_DATA_DIR`, default `server/`). Files are git-ignored and written with mode
+(`LEOPOSTA_DATA_DIR`; default `~/.local/share/leoposta`, or `server/` when an older checkout already keeps its state there). Files are git-ignored and written with mode
 0600. Passwords can come from environment variables instead. The full table is in the
 [README](README.md#credentials).
 

@@ -5,7 +5,7 @@
 | Account | One IMAP/SMTP mailbox configuration. Several can exist; the `x-account` header picks one per request. |
 | API token | Shared secret in the `x-leoposta-token` header that every `/api` call except `GET /api/health` must carry. See [ADR 0003](adr/0003-api-token.md). |
 | Backend | The Node.js/Express server in `server/`. Speaks IMAP/SMTP, serves the built app. |
-| Data directory | Where the backend keeps JSON state and PGP keys (`LEOPOSTA_DATA_DIR`, default `server/`; `/data` in the container). |
+| Data directory | Where the backend keeps JSON state and PGP keys (`LEOPOSTA_DATA_DIR`; default `~/.local/share/leoposta`, or `server/` for an older checkout that already keeps its state there; `/data` in the container). |
 | `dist/` | Output of `npm run build`: the static PWA served by the backend. |
 | Fixture mailbox | The fictional mailbox served by `scripts/dummy/imap.cjs` for tests and screenshots. |
 | Leoforma | The shared design-token package `@leonardschwier/leoforma`; tokens appear as `--ds-*` CSS variables. |

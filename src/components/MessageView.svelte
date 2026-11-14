@@ -3,6 +3,7 @@
   import { sanitizeHtml, hasRemoteImages } from '../lib/sanitizeHtml'
   import { MailAPI } from '../api'
   import { downloadAttachment } from '../lib/attachmentDownload'
+  import PgpUnlock from './PgpUnlock.svelte'
 
   let {
     onDelete: propDelete,
@@ -167,11 +168,8 @@
                 </span>
               {/if}
             </div>
+            <PgpUnlock {msg} />
             {#if !msg.pgp.decrypted}
-              <p class="pgp-help">
-                {msg.pgp.error || 'OpenPGP private key not configured.'}
-                Add your private key in <b>Settings → PGP</b> and reopen this message.
-              </p>
               {#if msg.pgp.armored}
                 <details class="pgp-armor">
                   <summary>Raw armored message</summary>
@@ -192,8 +190,8 @@
           {@html sanitizeHtml(msg.bodyHtml, { allowRemoteImages: imagesLoadedFor === msg.id })}
         {:else if msg.body}
           <div class="plain-body">{msg.body}</div>
-        {:else}
-          <p class="empty-body">This message has no visible content. It may be PGP-encrypted or empty.</p>
+        {:else if !(msg.pgp?.encrypted && !msg.pgp?.decrypted)}
+          <p class="empty-body">This message has no visible content.</p>
         {/if}
       </div>
 
@@ -273,7 +271,6 @@
   .pgp-title { font-weight: 600; }
   .pgp-title b { color: var(--color-star); }
   .pgp-banner.pgp-banner-decrypted .pgp-title b { color: var(--color-success); }
-  .pgp-help { margin: 8px 0 0 26px; color: var(--color-text-secondary); font-size: 12px; }
   .pgp-chip {
     font-size: 11px;
     padding: 2px 8px;

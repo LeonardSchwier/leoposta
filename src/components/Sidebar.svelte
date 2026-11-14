@@ -1,6 +1,7 @@
 <script lang="ts">
   import { store } from '../store'
   import ContextMenu from './ContextMenu.svelte'
+  import AccountSwitcher from './AccountSwitcher.svelte'
   import { specialFolderPath } from '../lib/specialFolders'
   import {
     buildFolderTree,
@@ -158,6 +159,7 @@
 <aside class="sidebar">
   <div class="sidebar-header">
     <h1 class="logo">Leoposta</h1>
+    <AccountSwitcher />
     <button class="compose-btn" onclick={onCompose}>
       <span class="compose-icon">✎</span>
       <span>Compose</span>

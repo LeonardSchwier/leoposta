@@ -98,16 +98,19 @@ export const MailAPI = {
 function toCal(e: any) { return { uri: e.href ?? e.uri, name: e.displayname ?? e.name ?? '' } }
 
 export const CalendarAPI = {
+  /** `configured: false` when the account has no CalDAV URL (not an error). */
   calendars: () => api('/calendar/calendars').then((r: any) => ({
+    configured: r.configured !== false,
     calendars: (r.calendars || []).map(toCal)
   })),
   events: (calendar: string, start: string, end: string) =>
     api(`/calendar/events?calendar=${encodeURIComponent(calendar)}&start=${start}&end=${end}`),
-  saveEvent: (calendar: string, ics: string, uid?: string) =>
-    api('/calendar/event', { method: 'PUT', body: JSON.stringify({ calendar, ics, uid }) }),
-  deleteEvent: (calendar: string, uid: string) =>
-    api(`/calendar/event?calendar=${encodeURIComponent(calendar)}&uid=${encodeURIComponent(uid)}`, { method: 'DELETE' }),
-  importICS: (calendar: string, ics: string) =>
+  /** `href`: the event's resource as listed by the server (edit in place). */
+  saveEvent: (calendar: string, ics: string, uid?: string, href?: string) =>
+    api('/calendar/event', { method: 'PUT', body: JSON.stringify({ calendar, ics, uid, href }) }),
+  deleteEvent: (calendar: string, uid: string, href?: string) =>
+    api(`/calendar/event?calendar=${encodeURIComponent(calendar)}&uid=${encodeURIComponent(uid)}${href ? `&href=${encodeURIComponent(href)}` : ''}`, { method: 'DELETE' }),
+  importICS: (calendar: string, ics: string): Promise<{ imported: number, total: number, failed?: { uid: string, error: string }[] }> =>
     api('/calendar/import', { method: 'POST', body: JSON.stringify({ calendar, ics }) }),
 }
 
@@ -118,20 +121,22 @@ export const GoaAPI = {
     const res = await apiFetch(`${API_BASE}/api/goa/accounts`)
     return res.json()
   },
-  import: (goaId: string, opts: { importMail?: boolean, importDav?: boolean } = {}) =>
+  import: (goaId: string, opts: { importMail?: boolean, importDav?: boolean, targetEmail?: string } = {}): Promise<{ success: boolean, id: string, email?: string }> =>
     api('/goa/import', { method: 'POST', body: JSON.stringify({ goaId, ...opts }) }),
 }
 
 export const ContactsAPI = {
+  /** `configured: false` when the account has no CardDAV URL (not an error). */
   addressBooks: () => api('/contacts/calendars').then((r: any) => ({
+    configured: r.configured !== false,
     addressBooks: (r.addressBooks || r.calendars || []).map(toCal)
   })),
   contacts: (book: string, q?: string) =>
     api(`/contacts?book=${encodeURIComponent(book)}${q ? `&q=${encodeURIComponent(q)}` : ''}`),
-  saveContact: (book: string, vcf: string) =>
-    api('/contact', { method: 'PUT', body: JSON.stringify({ book, vcf }) }),
-  deleteContact: (book: string, uid: string) =>
-    api(`/contact?book=${encodeURIComponent(book)}&uid=${encodeURIComponent(uid)}`, { method: 'DELETE' }),
-  importVCF: (book: string, vcf: string) =>
+  saveContact: (book: string, vcf: string, href?: string) =>
+    api('/contact', { method: 'PUT', body: JSON.stringify({ book, vcf, href }) }),
+  deleteContact: (book: string, uid: string, href?: string) =>
+    api(`/contact?book=${encodeURIComponent(book)}&uid=${encodeURIComponent(uid)}${href ? `&href=${encodeURIComponent(href)}` : ''}`, { method: 'DELETE' }),
+  importVCF: (book: string, vcf: string): Promise<{ imported: number, total: number, failed?: { uid: string, error: string }[] }> =>
     api('/contacts/import', { method: 'POST', body: JSON.stringify({ book, vcf }) }),
 }

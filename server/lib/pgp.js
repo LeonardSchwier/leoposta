@@ -47,30 +47,59 @@ export async function pgpState() {
   }
 }
 
+/** openpgp's "Incorrect key passphrase" etc. → one message a user understands. */
+export class BadPassphraseError extends Error {
+  constructor() { super('Wrong passphrase for this private key'); this.code = 'bad_passphrase' }
+}
+
+async function decryptWithPassphrase(privateKey, passphrase) {
+  try {
+    return await openpgp.decryptKey({ privateKey, passphrase })
+  } catch {
+    throw new BadPassphraseError()
+  }
+}
+
+/**
+ * Store the private and/or public key. Everything is validated first — a
+ * key that does not parse, or a protected key with a wrong passphrase,
+ * leaves the stored files untouched. The passphrase only unlocks the key in
+ * memory; it is never written anywhere.
+ */
 export async function savePgp({ privateAsc, publicAsc, passphrase }) {
+  let key = null
+  let unlockedKey = null
   if (privateAsc) {
-    const key = await openpgp.readPrivateKey({ armoredKey: privateAsc })
-    fs.writeFileSync(PGP_PRIVATE_FILE, privateAsc.trim() + '\n', { mode: 0o600 })
-    // Auto-unlock when the caller supplied a usable passphrase so UI save works
-    // without a separate /api/pgp/unlock step. Wrong passphrase → rethrow.
-    if (typeof passphrase === 'string' && passphrase.length && !key.isDecrypted()) {
-      const unlockedKey = await openpgp.decryptKey({ privateKey: key, passphrase })
-      unlocked = { key: unlockedKey, expiresAt: Date.now() + KEY_TTL_MS }
+    try {
+      key = await openpgp.readPrivateKey({ armoredKey: privateAsc })
+    } catch (e) {
+      throw new Error(`Not a valid OpenPGP private key (${e.message})`)
+    }
+    if (!key.isDecrypted() && typeof passphrase === 'string' && passphrase.length) {
+      unlockedKey = await decryptWithPassphrase(key, passphrase)
     } else if (key.isDecrypted()) {
-      unlocked = { key, expiresAt: Date.now() + KEY_TTL_MS }
-    } else {
-      unlocked = null
+      unlockedKey = key
     }
   }
+  let pub = null
   if (publicAsc) {
-    await openpgp.readKey({ armoredKey: publicAsc })
+    try {
+      pub = await openpgp.readKey({ armoredKey: publicAsc })
+    } catch (e) {
+      throw new Error(`Not a valid OpenPGP public key (${e.message})`)
+    }
+  }
+  if (key) {
+    fs.writeFileSync(PGP_PRIVATE_FILE, privateAsc.trim() + '\n', { mode: 0o600 })
+    unlocked = unlockedKey ? { key: unlockedKey, expiresAt: Date.now() + KEY_TTL_MS } : null
+  }
+  if (pub) {
     const trimmed = publicAsc.trim()
     const existing = fs.existsSync(PGP_PUBLIC_FILE) ? fs.readFileSync(PGP_PUBLIC_FILE, 'utf-8') : ''
     if (!existing.includes(trimmed)) {
-      fs.writeFileSync(PGP_PUBLIC_FILE, (existing ? existing.replace(/\s+$/, '') + '\n\n' : '') + trimmed + '\n')
+      fs.writeFileSync(PGP_PUBLIC_FILE, (existing ? existing.replace(/\s+$/, '') + '\n\n' : '') + trimmed + '\n', { mode: 0o600 })
     }
   }
-  // `passphrase` is accepted for backward compat but never stored.
   return pgpState()
 }
 
@@ -86,19 +115,98 @@ export async function unlockFromPassphrase(passphrase) {
   if (typeof passphrase !== 'string' || !passphrase) throw new Error('bad_passphrase')
   if (!fs.existsSync(PGP_PRIVATE_FILE)) throw new Error('no_private_key')
   const privateKey = await openpgp.readPrivateKey({ armoredKey: fs.readFileSync(PGP_PRIVATE_FILE, 'utf-8') })
-  const key = privateKey.isDecrypted() ? privateKey : await openpgp.decryptKey({ privateKey, passphrase })
+  const key = privateKey.isDecrypted() ? privateKey : await decryptWithPassphrase(privateKey, passphrase)
   unlocked = { key, expiresAt: Date.now() + KEY_TTL_MS }
 }
 
-// Returns null if body has no PGP armor; otherwise a status object.
-export async function processPgp(plainBody) {
-  if (!plainBody || !PGP_ARMOR_RE.test(plainBody)) return null
-  const armored = plainBody.match(PGP_ARMOR_RE)[0]
-  if (/BEGIN PGP (?:PUBLIC|PRIVATE) KEY/.test(armored)) {
-    return { encrypted: false, isKey: true, armored }
+const ARMORED_MESSAGE_RE = /-----BEGIN PGP MESSAGE-----[\s\S]*?-----END PGP MESSAGE-----/
+const CLEARSIGNED_RE = /-----BEGIN PGP SIGNED MESSAGE-----[\s\S]*?-----END PGP SIGNATURE-----/
+
+/**
+ * Where the encrypted payload of a parsed message is (mailparser result):
+ *   PGP/MIME (RFC 3156 multipart/encrypted): the application/octet-stream
+ *     part next to the application/pgp-encrypted "Version: 1" part; both are
+ *     internal and not shown as attachments (`hide` = their indexes).
+ *   inline: an armored block inside the text/plain body.
+ * Returns { armored, mime, hide } or null.
+ */
+export function findPgpPayload(parsed) {
+  const ct = parsed && parsed.headers && parsed.headers.get && parsed.headers.get('content-type')
+  const atts = (parsed && parsed.attachments) || []
+  const isPgpMime = ct && ct.value === 'multipart/encrypted' && /application\/pgp-encrypted/i.test(String(ct.params && ct.params.protocol))
+  const ctlIdx = atts.findIndex(a => /application\/pgp-encrypted/i.test(a.contentType || ''))
+  if (isPgpMime || ctlIdx !== -1) {
+    const dataIdx = atts.findIndex(a => a.content && ARMORED_MESSAGE_RE.test(a.content.toString('utf-8')))
+    if (dataIdx !== -1) {
+      const armored = atts[dataIdx].content.toString('utf-8').match(ARMORED_MESSAGE_RE)[0]
+      return { armored, mime: true, hide: [ctlIdx, dataIdx].filter(i => i >= 0) }
+    }
   }
+  const text = (parsed && parsed.text) || ''
+  const m = text.match(ARMORED_MESSAGE_RE)
+  if (m) return { armored: m[0], mime: false, hide: [], text }
+  return null
+}
+
+function readPublicKeys() {
+  if (!fs.existsSync(PGP_PUBLIC_FILE)) return Promise.resolve([])
+  return openpgp.readKeys({ armoredKeys: fs.readFileSync(PGP_PUBLIC_FILE, 'utf-8') }).catch(() => [])
+}
+
+// RFC 3156 decrypted payload is a MIME entity; an inline message is just text.
+function looksLikeMime(s) {
+  return /^(?:[\w-]+:[^\r\n]*\r?\n(?:[ \t][^\r\n]*\r?\n)*)*content-type:/i.test(s.trimStart())
+}
+
+/** One signature's outcome: true (good), false (bad), null (unknown key). */
+async function signatureStatus(signatures) {
+  let verified = null
+  let signer = null
+  for (const s of signatures || []) {
+    signer = signer || (s.keyID && s.keyID.toHex && s.keyID.toHex()) || null
+    try {
+      await s.verified
+      return { verified: true, signer: (s.keyID && s.keyID.toHex && s.keyID.toHex()) || signer }
+    } catch (e) {
+      if (!/could not find signing key/i.test(String(e && e.message))) verified = false
+    }
+  }
+  return { verified, signer }
+}
+
+/**
+ * Decrypt a message. `input` is either a string that contains an armored
+ * PGP MESSAGE (an inline body, or a raw source) or a payload from
+ * findPgpPayload. Returns null when there is nothing to decrypt; otherwise
+ *   { encrypted: true, decrypted: true, text, html, attachments, parts, signed, verified, signer }
+ *   { encrypted: true, decrypted: false, armored, error }   error: 'pgp_locked'
+ *     (protected key, not unlocked) | 'pgp_no_key' | a decryption error.
+ * `parts` holds the decrypted attachment bytes (index-aligned with
+ * `attachments`); routes must never serialize it.
+ */
+export async function processPgp(input) {
+  let payload = input
+  if (typeof input === 'string') {
+    if (!input || !PGP_ARMOR_RE.test(input)) return null
+    const armoredAny = input.match(PGP_ARMOR_RE)[0]
+    if (/BEGIN PGP (?:PUBLIC|PRIVATE) KEY/.test(armoredAny)) return { encrypted: false, isKey: true, armored: armoredAny }
+    const m = input.match(ARMORED_MESSAGE_RE)
+    if (!m) {
+      const cs = input.match(CLEARSIGNED_RE)
+      if (!cs) return null
+      try {
+        const msg = await openpgp.readCleartextMessage({ cleartextMessage: cs[0] })
+        const own = fs.existsSync(PGP_PRIVATE_FILE) ? [(await openpgp.readPrivateKey({ armoredKey: fs.readFileSync(PGP_PRIVATE_FILE, 'utf-8') })).toPublic()] : []
+        const res = await openpgp.verify({ message: msg, verificationKeys: [...own, ...await readPublicKeys()] })
+        return { encrypted: false, signed: true, ...await signatureStatus(res.signatures) }
+      } catch { return { encrypted: false, signed: true, verified: false, signer: null } }
+    }
+    payload = { armored: m[0], mime: undefined, hide: [], text: input }
+  }
+  if (!payload || !payload.armored) return null
+  const armored = payload.armored
   if (!fs.existsSync(PGP_PRIVATE_FILE)) {
-    return { encrypted: true, decrypted: false, armored, error: 'No PGP private key configured' }
+    return { encrypted: true, decrypted: false, armored, error: 'pgp_no_key' }
   }
   try {
     const privateKey = await openpgp.readPrivateKey({ armoredKey: fs.readFileSync(PGP_PRIVATE_FILE, 'utf-8') })
@@ -108,41 +216,36 @@ export async function processPgp(plainBody) {
       if (!decryptedKey) return { encrypted: true, decrypted: false, armored, error: 'pgp_locked' }
     }
     const msg = await openpgp.readMessage({ armoredMessage: armored })
-    const { data } = await openpgp.decrypt({
-      message: msg,
-      decryptionKeys: [decryptedKey],
-      config: { maxDecompressedMessageSize: MAX_DECRYPTED_BYTES }
-    })
-    const mime = await data.toString()
+    const verificationKeys = [privateKey.toPublic(), ...await readPublicKeys()]
+    const { data, signatures } = await openpgp.decrypt({ message: msg, decryptionKeys: [decryptedKey], verificationKeys, expectSigned: false, config: { maxDecompressedMessageSize: MAX_DECRYPTED_BYTES } })
+    const plain = typeof data === 'string' ? data : new TextDecoder().decode(data)
     let text = '', html = ''
     const attachments = []
-    try {
-      const parsed = await simpleParser(mime)
-      text = (parsed.text || '').replace(/[\u200C\u200D\u200B-\u200F\uFEFF]/g, '')
-      html = parsed.html || ''
-      for (const att of parsed.attachments || []) {
-        attachments.push({
-          id: att.filename || 'attachment',
-          filename: att.filename,
-          contentType: att.contentType || att.mimeType || '',
-          size: att.content?.length || 0,
-          contentId: att.contentId || undefined
-        })
-      }
-    } catch {}
-    if (!text && !html) { text = mime.trim() }
-    let signed = false, verified = null, signer = null
-    try {
-      const sigs = msg.getSigningKeyIDs()
-      if (sigs && sigs.length) {
-        signed = true
-        signer = (sigs[0].toHex && sigs[0].toHex()) || null
-      }
-      const pub = await privateKey.getPublicKey()
-      const v = await msg.verify({ publicKeys: [pub] })
-      if (v.length) verified = v.every(s => s.verified)
-    } catch {}
-    return { encrypted: true, decrypted: true, text, html, attachments, signed, verified, signer }
+    const parts = []
+    const mime = payload.mime === undefined ? looksLikeMime(plain) : payload.mime
+    if (mime) {
+      try {
+        const parsed = await simpleParser(Buffer.from(plain, 'utf-8'))
+        text = (parsed.text || '').replace(/[\u200C\u200D\u200B-\u200F\uFEFF]/g, '')
+        html = parsed.html || ''
+        for (const att of parsed.attachments || []) {
+          parts.push(att.content)
+          attachments.push({
+            filename: att.filename || `attachment-${attachments.length + 1}`,
+            contentType: att.contentType || att.mimeType || '',
+            size: att.content?.length || 0,
+            contentId: att.contentId || undefined
+          })
+        }
+      } catch {}
+      if (!text && !html && !attachments.length) text = plain.trim()
+    } else {
+      // Inline: put the plaintext where the armored block was.
+      const around = payload.text || armored
+      text = around.replace(armored, plain.replace(/\s+$/, ''))
+    }
+    const { verified, signer } = await signatureStatus(signatures)
+    return { encrypted: true, decrypted: true, text, html, attachments, parts, signed: !!(signatures && signatures.length), verified, signer }
   } catch (err) {
     return { encrypted: true, decrypted: false, armored, error: err.message }
   }

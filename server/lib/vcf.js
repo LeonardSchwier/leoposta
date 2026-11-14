@@ -1,3 +1,5 @@
+import { unfoldLines, parseProperty, unescapeText, escapeText } from './ics.js'
+
 // Pure RFC 6350 vCard 3.0/4.0 parsing + validation helpers for
 // /api/contacts/import and PUT /api/contact. No network, no I/O.
 
@@ -53,9 +55,20 @@ export function parseVcf(blob) {
       errors.push(`card #${cards.length + errors.length + 1}: too large (${Buffer.byteLength(raw, 'utf8')} > ${MAX_CARD_BYTES} bytes)`)
       continue
     }
-    const um = raw.match(/^\s*UID:([^\r\n]+)/im)
-    const uid = um ? um[1].trim() : `leoposta_${Date.now()}_${cards.length}`
-    cards.push({ uid, raw: raw + '\r\nEND:VCARD\r\n' })
+    const um = raw.replace(/\r?\n[ \t]/g, '').match(/^\s*(?:[\w-]+\.)?UID(?:;[^:\r\n]*)?:([^\r\n]+)/im)
+    const uid = um ? um[1].trim().replace(/^urn:uuid:/i, '') : `leoposta_${Date.now()}_${cards.length}`
+    // `raw` already ends with END:VCARD. Normalise to CRLF and give a card
+    // without a UID the one we use for its file name (servers require one).
+    let card = raw.replace(/\r?\n/g, '\r\n')
+    if (!um) card = card.replace(/^(BEGIN:[ \t]*VCARD\r\n)/i, `$1UID:${uid}\r\n`)
+    // FN is required (RFC 6350 §6.2.1, RFC 2426 §3.1.1) and servers such as
+    // Radicale reject a card without it; older exports often only have N.
+    if (!/(?:^|\r\n)(?:[\w-]+\.)?FN[;:]/i.test(card)) {
+      const c = parseCard(card)
+      const fn = c.name || c.email || c.org || c.phone || uid
+      card = card.replace(/(\r\n)(END:[ \t]*VCARD)\s*$/i, `$1FN:${escapeText(fn)}$1$2`)
+    }
+    cards.push({ uid, raw: card + '\r\n' })
   }
 
   if (cards.length > MAX_CARDS_PER_IMPORT) {
@@ -67,4 +80,41 @@ export function parseVcf(blob) {
     return { cards: cards.slice(0, MAX_CARDS_PER_IMPORT), errors }
   }
   return { cards, errors }
+}
+
+// ── Reading a card for the contact list ─────────────────────────────────────
+
+/**
+ * The fields the Contacts view and recipient autocomplete show, from one
+ * vCard 3.0/4.0: folded lines, group prefixes (item1.EMAIL), parameters,
+ * escapes and vCard 4 URI values (TEL:tel:+49…) handled.
+ */
+export function parseCard(vcf) {
+  const c = { uid: '', name: '', emails: [], phones: [], org: '', notes: '', website: '', address: '', adr: null }
+  let n = ''
+  for (const line of unfoldLines(vcf)) {
+    const p = parseProperty(line)
+    if (!p) continue
+    const v = p.value
+    switch (p.name) {
+      case 'UID': c.uid = v.trim().replace(/^urn:uuid:/i, ''); break
+      case 'FN': c.name = unescapeText(v).trim(); break
+      case 'N': n = v.split(';').map(unescapeText).map(x => x.trim()); break
+      case 'EMAIL': if (v.trim()) c.emails.push(v.trim().replace(/^mailto:/i, '')); break
+      case 'TEL': if (v.trim()) c.phones.push(v.trim().replace(/^tel:/i, '')); break
+      case 'ORG': c.org = unescapeText(v.split(/(?<!\\);/)[0]).trim(); break
+      case 'NOTE': c.notes = unescapeText(v).trim(); break
+      case 'URL': if (!c.website) c.website = v.trim(); break
+      case 'ADR':
+        if (!c.adr) {
+          // pobox;extended;street;locality;region;postalCode;country (RFC 6350 §6.3.1)
+          const f = v.split(/(?<!\\);/).map(unescapeText).map(x => x.trim())
+          c.address = f.filter(Boolean).join(', ')
+          c.adr = { street: [f[2], f[1]].filter(Boolean).join(' '), locality: f[3] || '', region: f[4] || '', postalCode: f[5] || '', country: f[6] || '' }
+        }
+        break
+    }
+  }
+  if (!c.name && Array.isArray(n)) c.name = [n[3], n[1], n[2], n[0], n[4]].filter(Boolean).join(' ')
+  return { ...c, email: c.emails[0] || '', phone: c.phones[0] || '' }
 }
