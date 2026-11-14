@@ -1,5 +1,6 @@
+use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpStream};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -252,8 +253,57 @@ fn build_main_window(
     b.build()
 }
 
+/// Where a panic report goes: `crash.log` in the app data dir that Tauri's
+/// `app_data_dir()` resolves to on Linux (`$XDG_DATA_HOME` or
+/// `~/.local/share`, plus the bundle identifier). Computed from the
+/// environment because the hook is installed before Tauri starts.
+fn crash_log_path(xdg_data_home: Option<&str>, home: Option<&str>) -> Option<PathBuf> {
+    let base = match xdg_data_home.filter(|d| Path::new(d).is_absolute()) {
+        Some(d) => PathBuf::from(d),
+        None => PathBuf::from(home.filter(|h| !h.is_empty())?).join(".local/share"),
+    };
+    Some(base.join("org.schwier.leoposta").join("crash.log"))
+}
+
+/// Release builds use `panic = "abort"`, so a panic kills the process with
+/// SIGABRT and its message goes only to stderr, which is lost when the app
+/// was started from the desktop. This hook also appends the message, the
+/// source location and a backtrace to `path`, then runs the default hook.
+fn install_panic_log(path: PathBuf) {
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let thread = std::thread::current();
+        let report = format!(
+            "--- panic at unix time {secs} (leoposta {}), thread '{}'\n{info}\n{}\n",
+            env!("CARGO_PKG_VERSION"),
+            thread.name().unwrap_or("<unnamed>"),
+            std::backtrace::Backtrace::force_capture()
+        );
+        let written = path
+            .parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|_| std::fs::OpenOptions::new().create(true).append(true).open(&path))
+            .and_then(|mut f| f.write_all(report.as_bytes()));
+        match written {
+            Ok(()) => eprintln!("[leoposta] panic report appended to {:?}", path),
+            Err(e) => eprintln!("[leoposta] could not write panic report to {:?}: {e}", path),
+        }
+        default_hook(info);
+    }));
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    if let Some(path) = crash_log_path(
+        std::env::var("XDG_DATA_HOME").ok().as_deref(),
+        std::env::var("HOME").ok().as_deref(),
+    ) {
+        install_panic_log(path);
+    }
     let app = tauri::Builder::default()
         .manage(Mutex::new(Option::<Backend>::None))
         .setup(move |app| {
@@ -364,5 +414,47 @@ mod tests {
         drop(l);
         // Nothing listening: not ours either.
         assert!(!listener_owned_by(std::process::id(), port));
+    }
+
+    #[test]
+    fn the_crash_log_sits_in_the_app_data_dir() {
+        assert_eq!(
+            crash_log_path(Some("/x/data"), Some("/home/u")),
+            Some(PathBuf::from("/x/data/org.schwier.leoposta/crash.log"))
+        );
+        // The XDG spec says a relative or empty XDG_DATA_HOME is ignored.
+        for xdg in [None, Some(""), Some("rel/data")] {
+            assert_eq!(
+                crash_log_path(xdg, Some("/home/u")),
+                Some(PathBuf::from("/home/u/.local/share/org.schwier.leoposta/crash.log"))
+            );
+        }
+        assert_eq!(crash_log_path(None, None), None);
+        assert_eq!(crash_log_path(None, Some("")), None);
+    }
+
+    #[test]
+    fn a_panic_is_appended_to_the_crash_log() {
+        let dir = std::env::temp_dir().join(format!("leoposta-panic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let log = dir.join("nested/crash.log");
+        install_panic_log(log.clone());
+        for n in 1..=2 {
+            let r = std::thread::Builder::new()
+                .name(format!("doomed-{n}"))
+                .spawn(move || panic!("test panic number {n}"))
+                .unwrap()
+                .join();
+            assert!(r.is_err());
+        }
+        let _ = std::panic::take_hook(); // back to the default hook
+        let text = std::fs::read_to_string(&log).expect("crash.log written");
+        let _ = std::fs::remove_dir_all(&dir);
+        for n in 1..=2 {
+            assert!(text.contains(&format!("thread 'doomed-{n}'")), "{text}");
+            assert!(text.contains(&format!("test panic number {n}")), "{text}");
+        }
+        assert!(text.contains("src/lib.rs"), "location missing: {text}");
+        assert_eq!(text.matches("--- panic at unix time").count(), 2, "{text}");
     }
 }
