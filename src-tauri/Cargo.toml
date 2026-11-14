@@ -22,7 +22,9 @@ serde_json = "1"
 libc = "0.2"
 
 [profile.release]
-strip = true
+# Keep the symbol table (only debug info is stripped): coredumpctl and
+# the panic log then show function names instead of `n/a (leoposta + 0x…)`.
+strip = "debuginfo"
 opt-level = 2
 codegen-units = 16
 lto = false
