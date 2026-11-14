@@ -217,7 +217,10 @@ export function extractAddressData(xml) {
 // Convert a date string like '2025-01-01' or '20250101T000000Z' to CalDAV
 // time-range format 'yyyyMMddTHHmmssZ' (UTC).
 export function toDavTime(s, endOfDay = false) {
-  if (!s) return ''
+  // The result is spliced into the CalDAV REPORT XML, so only the digit
+  // formats below may come out; anything else (or a repeated query param,
+  // which arrives as an array) means "no bound".
+  if (typeof s !== 'string' || !s) return ''
   // Already in DAV format
   if (/^\d{8}T\d{6}Z$/.test(s)) return s
   // Full ISO 'YYYY-MM-DDTHH:mm:ssZ' (check before date-only)
@@ -226,7 +229,7 @@ export function toDavTime(s, endOfDay = false) {
   // ISO date 'YYYY-MM-DD'
   const m = s.match(/^(\d{4})-(\d{2})-(\d{2})/)
   if (m) return `${m[1]}${m[2]}${m[3]}T${endOfDay ? '235959' : '000000'}Z`
-  return s
+  return ''
 }
 
 // Halving-retry wrapper for addressbook/calendar multiget REPORTs. `fetchBatch`
