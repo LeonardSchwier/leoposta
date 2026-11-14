@@ -9,7 +9,12 @@
 
   // onDraftSaved(folder): the draft is stored on the server in `folder` (the
   // real IMAP path of the Drafts mailbox), so the app can refresh that view.
-  let { onClose, onDraftSaved }: { onClose: () => void, onDraftSaved?: (folder: string) => void, onSent?: () => void } = $props()
+  // onSent: the mail was handed to the server (and a reopened draft removed).
+  let { onClose, onDraftSaved, onSent }: { onClose: () => void, onDraftSaved?: (folder: string) => void, onSent?: () => void } = $props()
+
+  // A draft reopened from the Drafts mailbox (App.openDraft): its fields are
+  // already in the store; saving replaces that server copy, sending removes it.
+  const draft = getState().composeDraft
 
   // Local flat-string state driven by RecipientAutocomplete (same pattern as Calendar).
   // Seed once from the store; the store is written back on send.
@@ -35,7 +40,27 @@
     if (body) { bodyInput = body; setComposeBody(body) }
     return true
   }
+
+  // ---- Unsaved changes ----
+  // What the window held when it opened (after the signature was seeded):
+  // closing with anything else asks whether to keep it as a draft.
+  function snapshot(): string {
+    return JSON.stringify([toValue, ccValue, bccValue, subjectInput, bodyInput, attachments.map(a => a.filename + ':' + a.content.length)])
+  }
+  let pristine = ''
+  let confirmClose = $state(false)
+  function requestClose() {
+    if (savingDraft) return
+    if (snapshot() === pristine) { onClose(); return }
+    confirmClose = true
+  }
   async function seedBody() {
+    const before = snapshot()
+    await seedSignature()
+    // Only the signature changed the window: still nothing to lose.
+    if (pristine === before) pristine = snapshot()
+  }
+  async function seedSignature() {
     const s = getState()
     const account = s.accounts.find(a => a.id === s.activeAccountId)
     if (account && (account as any).signature) {
@@ -51,14 +76,15 @@
     } catch { /* offline / no backend: seed with nothing */ }
   }
 
-  let showCc = $state(false)
-  let showBcc = $state(false)
+  // A reopened draft shows the Cc / Bcc it has.
+  let showCc = $state(getState().composeCc.length > 0)
+  let showBcc = $state(getState().composeBcc.length > 0)
   let showSchedule = $state(false)
   let scheduleDate = $state('')
   let scheduleTime = $state('')
   let scheduleError = $state<string | null>(null)
   let attachFile: HTMLInputElement | null = null
-  let attachments = $state<OutboundAttachment[]>([])
+  let attachments = $state<OutboundAttachment[]>(draft ? [...draft.attachments] : [])
   let attachmentError = $state<string | null>(null)
 
   function formatSize(bytes: number): string {
@@ -74,7 +100,8 @@
   function handleKeyDown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
       e.preventDefault()
-      onClose()
+      if (confirmClose) confirmClose = false
+      else requestClose()
       return
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -143,8 +170,15 @@
       body: JSON.stringify(message)
     })
     .then(res => res.json())
-    .then(data => {
+    .then(async data => {
       if (data.success) {
+        // The reopened draft has been sent: remove it from Drafts.
+        if (draft) {
+          try { await MailAPI.discardDraft(draft.uid) } catch (err: any) {
+            alert('The message was sent, but its draft could not be removed from Drafts: ' + (err?.message ?? String(err)))
+          }
+        }
+        onSent?.()
         clearCompose()
         setComposing(false)
         onClose()
@@ -193,16 +227,18 @@
   async function handleSaveDraft() {
     if (savingDraft) return
     savingDraft = true
-    const draft: Record<string, unknown> = {
+    const payload: Record<string, unknown> = {
       to: parseRecipients(toValue),
       cc: parseRecipients(ccValue),
       bcc: parseRecipients(bccValue),
       subject: subjectInput,
       body: bodyInput
     }
-    if (attachments.length) draft.attachments = attachments
+    if (attachments.length) payload.attachments = attachments
+    // Saving a reopened draft replaces it on the server instead of adding a copy.
+    if (draft) payload.replaceUid = draft.uid
     try {
-      const data = await MailAPI.saveDraft(draft)
+      const data = await MailAPI.saveDraft(payload)
       onDraftSaved?.(data.folder)
       clearCompose()
       setComposing(false)
@@ -277,11 +313,13 @@
   }
 
   function onCloseBack(e: MouseEvent) {
-    if (e.target === e.currentTarget) onClose()
+    if (e.target === e.currentTarget) requestClose()
   }
 
   onMount(() => {
-    void seedBody()
+    pristine = snapshot()
+    // A reopened draft already carries its body (and signature): do not seed again.
+    if (!draft) void seedBody()
     window.addEventListener('keydown', handleKeyDown)
     requestAnimationFrame(() => {
       (document.querySelector<HTMLElement>('.modal.compose input.ra-input')
@@ -296,9 +334,9 @@
 <div class="modal compose">
   <div class="compose-header">
     <h2 class="compose-title">
-      {#if $store.composeReplyTo}Reply{:else if $store.composeForward}Forward{:else}New Message{/if}
+      {#if draft}Edit Draft{:else if $store.composeReplyTo}Reply{:else if $store.composeForward}Forward{:else}New Message{/if}
     </h2>
-    <button class="close-btn" onclick={onClose} aria-label="Close compose (Esc)">✕</button>
+    <button class="close-btn" onclick={requestClose} aria-label="Close compose (Esc)">✕</button>
   </div>
 
   <div class="compose-body">
@@ -385,6 +423,17 @@
     </div>
   {/if}
 
+  {#if confirmClose}
+    <div class="confirm-close" role="alertdialog" aria-modal="true" aria-labelledby="confirm-close-title">
+      <p id="confirm-close-title">Save this message as a draft before closing?</p>
+      <div class="confirm-actions">
+        <button type="button" class="btn-secondary" onclick={() => { confirmClose = false }}>Keep Editing</button>
+        <button type="button" class="btn-secondary danger" onclick={() => { confirmClose = false; onClose() }}>Discard</button>
+        <button type="button" class="btn-primary" onclick={() => { confirmClose = false; void handleSaveDraft() }}>Save Draft</button>
+      </div>
+    </div>
+  {/if}
+
   <div class="compose-footer">
     <div class="footer-left">
       <button type="button" class="icon-btn" title="Attach file" aria-label="Attach file" onclick={() => attachFile?.click()}>
@@ -435,6 +484,15 @@
 </div>
 
 <style>
+  .confirm-close {
+    padding: 12px 20px;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface);
+    flex-shrink: 0;
+  }
+  .confirm-close p { margin: 0 0 8px; font-size: 13px; color: var(--color-text); }
+  .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .confirm-actions .danger { color: var(--color-danger); }
   .modal-back {
     position: fixed;
     inset: 0;

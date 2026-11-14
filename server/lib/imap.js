@@ -55,34 +55,51 @@ export function createImapClient(acct) {
   return client
 }
 
-function makePool(acct) {
+/** True for a connected, authenticated ImapFlow client that can take commands. */
+export function isUsable(c) {
+  return Boolean(c && c.usable && c.authenticated !== false)
+}
+
+/** Exported for tests; `connectClient` is the factory for new connections. */
+export function makePool(acct, connectClient = createImapClient) {
   return {
     client: null,
     connectP: null,
     queue: Promise.resolve(),
     async ensure() {
-      if (this.client && this.client.usable) return this.client
+      // ImapFlow marks a logged-in, open connection with `usable` (it has no
+      // `user` property: checking that opened a new connection per request and
+      // leaked the old one until the server's per-user limit refused logins).
+      if (isUsable(this.client)) return this.client
+      if (this.client) { safeLogout(this.client); this.client = null }
       if (!this.connectP) {
         this.connectP = (async () => {
-          const client = createImapClient(acct)
+          const client = connectClient(acct)
           try { await client.connect() } catch (e) { safeLogout(client); throw e }
           return client
         })()
       }
-      const c = await this.connectP
-      this.client = c
-      this.connectP = null
-      return c
+      try {
+        const c = await this.connectP
+        this.client = c
+        return c
+      } finally {
+        // Also after a failed connect, or the pool would keep handing out the
+        // same rejection and never reconnect once the server is back.
+        this.connectP = null
+      }
     },
     async _exec(fn, retry) {
       let lastErr
       for (let i = 0; i < retry; i++) {
+        const reused = isUsable(this.client)
         const c = await this.ensure()
         try {
-          // A reused connection only hears about mail other clients added
-          // (EXISTS/EXPUNGE) when it sends a command; without this a
-          // still-selected INBOX reports its old message count.
-          if (c.mailbox && typeof c.noop === 'function') await c.noop()
+          // A reused session does not see what changed in its selected mailbox
+          // since its last command (new mail, expunges by other clients):
+          // getMailboxLock() on that same mailbox skips SELECT. NOOP fetches
+          // the pending EXISTS/EXPUNGE and also proves the session is alive.
+          if (reused && c.mailbox) await c.noop()
           return await fn(c)
         } catch (e) {
           lastErr = e
@@ -92,7 +109,7 @@ function makePool(acct) {
             String(e && e.message || '') === 'Command failed'
             || String(e && e.message || '').includes('socket was closed unexpectedly')
             || String(e && e.message || '').includes('No response to command')
-            || !c.usable
+            || !isUsable(c)
           )
           const wasOurs = this.client === c
           safeLogout(c)

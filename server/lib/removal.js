@@ -17,16 +17,65 @@ export const DEFAULT_TRASH_NAME = 'Trash'
 // exist): ImapFlow adds \Noselect to \NonExistent entries as well.
 const selectable = (m) => !(m.flags && m.flags.has && m.flags.has('\\Noselect'))
 
-/** The mailbox deleted mail goes to: the one the server flags \Trash (ImapFlow
- * also derives that from localized names such as "Deleted Items"), else a
- * mailbox called Trash. Null when there is none. The path is the full one that
+/** The mailbox for a special use (RFC 6154: \\Trash, \\Archive, \\Junk, ...):
+ * the one the server flags with it (ImapFlow also derives the flag from
+ * well-known and localized names such as "Deleted Items" or "Spam"), else a
+ * mailbox called `defaultName` in any case, with or without a namespace prefix
+ * ("INBOX.Archive"). Null when there is none. The path is the full one that
  * list() reports, namespace prefix included. */
-export async function findTrashPath(client) {
+export async function findSpecialUsePath(client, specialUse, defaultName) {
   const mailboxes = (await client.list()).filter(selectable)
-  const flagged = mailboxes.find((m) => m.specialUse === '\\Trash')
+  const flagged = mailboxes.find((m) => m.specialUse === specialUse)
   if (flagged) return flagged.path
-  const named = mailboxes.find((m) => String(m.path).toLowerCase() === DEFAULT_TRASH_NAME.toLowerCase())
+  const want = String(defaultName).toLowerCase()
+  const named = mailboxes.find((m) => String(m.path).toLowerCase() === want)
+    || mailboxes.find((m) => m.delimiter && String(m.path).toLowerCase() === `inbox${m.delimiter}${want}`)
   return named ? named.path : null
+}
+
+/** The special-use mailbox, created as `defaultName` when the server has none
+ * (the path the server reports for the new mailbox is used: it may add a
+ * namespace prefix). */
+export async function ensureSpecialUsePath(client, specialUse, defaultName) {
+  const found = await findSpecialUsePath(client, specialUse, defaultName)
+  return found !== null ? found : createMailbox(client, defaultName)
+}
+
+async function createMailbox(client, defaultName) {
+  try {
+    const created = await client.mailboxCreate(defaultName)
+    return (created && created.path) || defaultName
+  } catch (err) {
+    throw new MailActionError(
+      `There is no ${defaultName} mailbox and it could not be created: ${(err && err.message) || err}`
+    )
+  }
+}
+
+/** The mailbox deleted mail goes to (see findSpecialUsePath). */
+export function findTrashPath(client) {
+  return findSpecialUsePath(client, '\\Trash', DEFAULT_TRASH_NAME)
+}
+
+/** Special uses a message can be moved to by name, and the mailbox created
+ * when the server has none. */
+export const MOVE_TARGETS = {
+  '\\Archive': 'Archive',
+  '\\Junk': 'Junk',
+  '\\Trash': DEFAULT_TRASH_NAME,
+  '\\Inbox': 'INBOX'
+}
+
+/** A message that is not (or no longer) in the selected mailbox, e.g. deleted
+ * by another client. Answered with a 404, keeping the IMAP connection. */
+export class MessageNotFoundError extends MailActionError {}
+
+/** Throw MessageNotFoundError unless `uid` exists in the selected mailbox. A
+ * STORE, MOVE or EXPUNGE on a missing UID is not an error in IMAP: it silently
+ * does nothing, and the app would report a move that never happened. */
+export async function requireMessage(client, uid) {
+  const found = await client.fetchOne(String(uid), { uid: true }, { uid: true })
+  if (!found) throw new MessageNotFoundError('message_not_found')
 }
 
 /** Move one message (by UID) out of the selected mailbox. Throws a
@@ -67,17 +116,7 @@ export async function removeMessage(client, mailbox, uid) {
     return { trashed: false, folder: mailbox }
   }
 
-  let target = trash
-  if (target === null) {
-    try {
-      const created = await client.mailboxCreate(DEFAULT_TRASH_NAME)
-      target = (created && created.path) || DEFAULT_TRASH_NAME
-    } catch (err) {
-      throw new MailActionError(
-        `There is no Trash mailbox and it could not be created: ${(err && err.message) || err}`
-      )
-    }
-  }
+  const target = trash !== null ? trash : await createMailbox(client, DEFAULT_TRASH_NAME)
   await moveChecked(client, uid, target)
   return { trashed: true, folder: target }
 }

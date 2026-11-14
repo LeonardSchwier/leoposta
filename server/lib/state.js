@@ -30,6 +30,8 @@ export const ACCOUNTS_FILE = path.join(DATA_DIR, 'accounts.json')
 export const LEGACY_ACCOUNT_FILE = path.join(DATA_DIR, 'account.json')
 export const SCHEDULED_FILE = path.join(DATA_DIR, 'scheduled.json')
 export const RULES_FILE = path.join(DATA_DIR, 'rules.json')
+// Per account: the highest INBOX UID the rules have already seen (lib/rules.js).
+export const RULE_CURSORS_FILE = path.join(DATA_DIR, 'rule-cursors.json')
 export const DEV_TOKEN_FILE = path.join(SERVER_DIR, '.dev-token')
 
 // Read the shared local dev token (server/.dev-token) if present. Created once
@@ -77,6 +79,7 @@ export const state = {
   accounts: [],
   scheduledMessages: [],
   rules: [],
+  ruleCursors: {},
   davCache: createCache(500)
 }
 
@@ -101,6 +104,9 @@ if (fs.existsSync(SCHEDULED_FILE)) {
 }
 if (fs.existsSync(RULES_FILE)) {
   state.rules = JSON.parse(fs.readFileSync(RULES_FILE, 'utf-8'))
+}
+if (fs.existsSync(RULE_CURSORS_FILE)) {
+  try { state.ruleCursors = JSON.parse(fs.readFileSync(RULE_CURSORS_FILE, 'utf-8')) || {} } catch { state.ruleCursors = {} }
 }
 
 // ── Accessors ────────────────────────────────────────────────────────────────
@@ -163,6 +169,10 @@ export function saveAccounts() {
 
 export function saveRules() {
   fs.writeFileSync(RULES_FILE, JSON.stringify(state.rules, null, 2), { mode: 0o600 })
+}
+
+export function saveRuleCursors() {
+  fs.writeFileSync(RULE_CURSORS_FILE, JSON.stringify(state.ruleCursors, null, 2), { mode: 0o600 })
 }
 
 export function saveScheduled() {

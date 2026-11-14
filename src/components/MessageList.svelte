@@ -2,8 +2,21 @@
   import { store, getState, selectMessage, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, updateMessage, setComposeCc } from '../store'
   import ContextMenu from './ContextMenu.svelte'
   import { computeVirtualRange } from '../lib/virtualList'
+  import { hasFlag, isSpecialFolder, type MessageAction } from '../lib/messageActions'
 
-  let { onCompose, onSelectMessage, onDelete, onArchive, onStar, onSearch, searchQuery = '', isLoading = false, error = null } = $props()
+  // onAction(id, action) / onMoveRequest(id): every row action names its own
+  // message, so starring or right-clicking a row that is not the open one acts
+  // on that row (lib/messageActions.ts).
+  let { onCompose, onSelectMessage, onAction, onMoveRequest, onSearch, searchQuery = '', isLoading = false, error = null }: {
+    onCompose?: () => void
+    onSelectMessage?: (id: string) => void
+    onAction?: (id: string, action: MessageAction) => void
+    onMoveRequest?: (id: string) => void
+    onSearch?: (q: string) => void
+    searchQuery?: string
+    isLoading?: boolean
+    error?: string | null
+  } = $props()
 
   // Virtualisation: pure math lives in lib/virtualList.ts (unit-tested).
   // The math assumes a constant row height — enforced in the .message-row
@@ -67,14 +80,33 @@
   }
 
   function menuItems(message: any): MenuItem[] {
-    return [
+    const id = message.id
+    const folders = $store.folders
+    const folder = $store.activeFolder
+    const inJunk = isSpecialFolder(folders, folder, '\\Junk', 'Junk')
+    const inArchive = isSpecialFolder(folders, folder, '\\Archive', 'Archive')
+    const inTrash = isSpecialFolder(folders, folder, '\\Trash', 'Trash')
+    const items: MenuItem[] = [
       { label: 'Reply', icon: '↩', action: () => handleReply(message) },
       { label: 'Reply All', icon: '↩↩', action: () => handleReplyAll(message) },
       { label: 'Forward', icon: '⪡', action: () => handleForward(message) },
-      { label: 'Archive', icon: '📦', action: () => onArchive?.() },
       { divider: true, label: '', action: undefined },
-      { label: 'Delete', icon: '✕', danger: true, action: () => onDelete?.() },
+      isRead(message)
+        ? { label: 'Mark as Unread', icon: '●', action: () => onAction?.(id, 'unread') }
+        : { label: 'Mark as Read', icon: '○', action: () => onAction?.(id, 'read') },
+      isFlagged(message)
+        ? { label: 'Unstar', icon: '☆', action: () => onAction?.(id, 'unstar') }
+        : { label: 'Star', icon: '★', action: () => onAction?.(id, 'star') },
+      { divider: true, label: '', action: undefined },
+      { label: 'Move to…', icon: '📁', action: () => onMoveRequest?.(id) },
     ]
+    if (!inArchive) items.push({ label: 'Archive', icon: '📦', action: () => onAction?.(id, 'archive') })
+    items.push(inJunk
+      ? { label: 'Not Junk', icon: '📥', action: () => onAction?.(id, 'notJunk') }
+      : { label: 'Mark as Junk', icon: '🚫', action: () => onAction?.(id, 'junk') })
+    items.push({ divider: true, label: '', action: undefined })
+    items.push({ label: inTrash ? 'Delete Permanently' : 'Delete', icon: '✕', danger: true, action: () => onAction?.(id, 'delete') })
+    return items
   }
   
   function formatDate(dateStr: string) {
@@ -89,11 +121,13 @@
     return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
   }
   
-  function isRead(message: any) {
-    return message.flags?.includes('\\Seen') || message.flags?.includes('Seen')
-  }
-  function isFlagged(message: any) {
-    return message.flags?.includes('\\Flagged') || message.flags?.includes('Flagged')
+  function isRead(message: any) { return hasFlag(message, '\\Seen') }
+  function isFlagged(message: any) { return hasFlag(message, '\\Flagged') }
+  // IMAP keywords (labels set by rules or other clients); not system flags or
+  // the bookkeeping keywords clients set ($Forwarded, $MDNSent, Junk, ...).
+  const HIDDEN_KEYWORDS = new Set(['$forwarded', '$mdnsent', '$junk', '$notjunk', 'junk', 'nonjunk', 'notjunk', '$phishing', '$submitpending', '$submitted'])
+  function labelsOf(message: any): string[] {
+    return (message.flags || []).filter((f: string) => !f.startsWith('\\') && !HIDDEN_KEYWORDS.has(f.toLowerCase()))
   }
   function getPreview(message: any): string {
     if (message.body) return message.body.substring(0, 100)
@@ -180,7 +214,7 @@
               title={isFlagged(message) ? 'Unstar' : 'Star'}
               aria-label={isFlagged(message) ? 'Unstar' : 'Star'}
               aria-pressed={isFlagged(message) ? 'true' : 'false'}
-              onclick={(e) => { e.stopPropagation(); onStar?.() }}
+              onclick={(e) => { e.stopPropagation(); onAction?.(message.id, isFlagged(message) ? 'unstar' : 'star') }}
             >
               {#if isFlagged(message)}★{:else}☆{/if}
             </button>
@@ -190,7 +224,10 @@
               <span class="sender-name">{message.from}</span>
               <span class="message-date">{formatDate(message.date)}</span>
             </div>
-            <div class="message-subject">{message.subject || '(no subject)'}</div>
+            <div class="message-subject">
+              {#each labelsOf(message) as label (label)}<span class="label-chip">{label}</span>{/each}
+              {message.subject || '(no subject)'}
+            </div>
             <div class="message-preview">{getPreview(message)}</div>
           </div>
         </div>
@@ -355,6 +392,17 @@
      box-sizing: border-box;
   }
   
+  .label-chip {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--color-hover);
+    color: var(--color-text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 16px;
+  }
   .message-row:hover {
     background: var(--color-hover);
   }
