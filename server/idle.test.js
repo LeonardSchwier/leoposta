@@ -212,3 +212,24 @@ test('idle: the IMAP connection closing during IDLE ends the stream so the brows
     assert.equal(await waitFor(() => fake.calls.logout === 1), true)
   })
 })
+
+test('idle: new mail, expunges and flag changes (ImapFlow exists/expunge/flags events) reach the browser', async () => {
+  const fake = makeFakeClient()
+  await withIdleServer(fake, async (port) => {
+    const chunks = []
+    const req = http.get({ host: '127.0.0.1', port, path: '/api/idle' }, (res) => {
+      res.on('data', (c) => chunks.push(String(c)))
+      res.on('error', () => {})
+    })
+    req.on('error', () => {})
+    fake.connectD.resolve()
+    fake.lockD.resolve(fake.lock)
+    assert.equal(await waitFor(() => fake.calls.idle === 1), true)
+    fake.client.emit('exists', { path: 'INBOX', count: 2, prevCount: 1 })
+    fake.client.emit('expunge', { path: 'INBOX', seq: 1 })
+    fake.client.emit('flags', { path: 'INBOX', seq: 1, flags: new Set(['\\Seen']) })
+    assert.equal(await waitFor(() => (chunks.join('').match(/event: mailbox-update/g) || []).length === 3), true, chunks.join(''))
+    assert.match(chunks.join(''), /"type":"new-messages"/)
+    req.destroy()
+  })
+})
