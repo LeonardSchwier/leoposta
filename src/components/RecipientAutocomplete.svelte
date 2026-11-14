@@ -34,7 +34,7 @@
       try {
         // Every address book, not just the first one.
         const b = await fetcher.fetchBooks()
-        await Promise.allSettled(b.map((book) => cache.loadContacts(book.uri)))
+        await Promise.allSettled(b.map((book: { uri: string }) => cache.loadContacts(book.uri)))
       } catch {
         /* ignore */
       }
