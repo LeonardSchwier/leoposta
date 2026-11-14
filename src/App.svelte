@@ -13,7 +13,7 @@
   import { type Folder, store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, adjustUnseen, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setComposeDraft, bootstrapRefreshMode } from './store'
   import { startReply } from './lib/reply'
   import { startRefresh, stopRefresh } from './refresh'
-  import { loadAccountsIntoStore } from './lib/accountsBootstrap'
+  import { loadAccounts } from './lib/accountsBootstrap'
   import { ApiError, MailAPI } from './api'
   import MovePicker from './components/MovePicker.svelte'
   import { runMessageAction, hasFlag, type MessageAction } from './lib/messageActions'
@@ -145,6 +145,12 @@
   }
 
   async function handleOnline() {
+    // Started offline: learn the accounts now (the refresh controller and
+    // x-account need them; adopting one reloads the folder like a switch).
+    if (!accountsReachable) {
+      const { reachable } = await loadAccounts()
+      accountsReachable = reachable
+    }
     // Ask the outbox itself: the cached count may predate a message queued
     // while offline.
     queuedCount = await queueCount().catch(() => queuedCount)
@@ -603,6 +609,8 @@
   // false until the account list arrived: avoids flashing the first-run
   // screen while it loads.
   let accountsLoaded = $state(false)
+  // false while the start-up account list could not be fetched (offline).
+  let accountsReachable = $state(true)
   $effect(() => {
     const current = $store.activeAccountId
     // The start-up account load adopts an account; that is not a switch (the
@@ -629,11 +637,14 @@
 
   onMount(() => {
     bootstrapRefreshMode()
-    loadAccountsIntoStore().then((accounts) => {
+    loadAccounts().then(({ accounts, reachable }) => {
       // Seed the switch tracker first so the effect above does not load twice.
       prevAccountId = getState().activeAccountId
+      accountsReachable = reachable
       accountsLoaded = true
-      if (accounts.length) {
+      // Unreachable (offline PWA): load anyway, the list falls back to the
+      // offline cache; the accounts are asked again once back online.
+      if (accounts.length || !reachable) {
         loadFolders()
         loadMessages('INBOX')
       }
@@ -690,7 +701,7 @@
       ></div>
   
   <main class="main">
-    {#if accountsLoaded && $store.accounts.length === 0 && !$store.isComposing}
+    {#if accountsLoaded && accountsReachable && $store.accounts.length === 0 && !$store.isComposing}
       <div class="first-run" data-testid="first-run">
         <h2>Welcome to Leoposta</h2>
         <p>No mail account is set up yet. Add your IMAP/SMTP account to read and send mail; calendar and contacts use the optional CalDAV/CardDAV address of the same account.</p>
