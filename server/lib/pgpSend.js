@@ -91,7 +91,9 @@ export async function buildEntity({ text, html, attachments }) {
   const built = (await new MailComposer(mail).compile().build()).toString('utf-8')
   const sep = built.indexOf('\r\n\r\n')
   const headers = built.slice(0, sep).split(/\r\n(?![ \t])/).filter(h => /^content-/i.test(h)).join('\r\n')
-  return headers + '\r\n\r\n' + built.slice(sep + 4)
+  // Canonical CRLF line ends (RFC 3156 section 5): the text parts keep the
+  // editor's bare LFs otherwise, which relays rewrite.
+  return (headers + '\r\n\r\n' + built.slice(sep + 4)).replace(/\r?\n/g, '\r\n')
 }
 
 const OUTER_HEADERS = ['from', 'sender', 'to', 'cc', 'bcc', 'reply-to', 'in-reply-to', 'references', 'subject', 'message-id', 'date']
