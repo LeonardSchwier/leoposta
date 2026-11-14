@@ -42,7 +42,9 @@ function copyField<M, K extends keyof M>(to: M, from: M, k: K) {
  * mail arrives).
  */
 export function mergeRefreshed<M extends ListMessage>(previous: readonly M[], fresh: readonly M[]): M[] {
-  const loaded = new Map(previous.filter((m) => m.body || m.bodyHtml).map((m) => [m.id, m]))
+  // Opened = has a body, or a PGP result: a locked PGP message has an empty
+  // body but its banner (and unlock form) must survive a refresh too.
+  const loaded = new Map(previous.filter((m) => m.body || m.bodyHtml || m.pgp).map((m) => [m.id, m]))
   return fresh.map((m) => {
     const old = loaded.get(m.id)
     if (!old) return m

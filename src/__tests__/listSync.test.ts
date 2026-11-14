@@ -32,6 +32,13 @@ describe('mergeRefreshed', () => {
     expect(out[1].flags).toEqual(['\\Seen']) // server flags win
     expect(out[0].body).toBe('')
   })
+
+  it('keeps the PGP result of an opened message whose body is empty (locked key)', () => {
+    const pgp = { encrypted: true, decrypted: false, error: 'pgp_locked' }
+    const prev = [{ id: '1', subject: 'Secret', body: '', bodyHtml: '', pgp, flags: ['\\Seen'] }]
+    const fresh: { id: string, subject: string, body: string, bodyHtml: string, flags: string[], pgp?: unknown }[] = [{ id: '1', subject: 'Secret', body: '', bodyHtml: '', flags: ['\\Seen'] }]
+    expect(mergeRefreshed(prev, fresh)[0].pgp).toEqual(pgp)
+  })
 })
 
 describe('paging', () => {
