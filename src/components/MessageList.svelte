@@ -8,12 +8,15 @@
   // onAction(id, action) / onMoveRequest(id): every row action names its own
   // message, so starring or right-clicking a row that is not the open one acts
   // on that row (lib/messageActions.ts).
-  let { onCompose, onSelectMessage, onAction, onMoveRequest, onSearch, searchQuery = '', isLoading = false, error = null }: {
+  let { onCompose, onSelectMessage, onAction, onMoveRequest, onSearch, onLoadMore, hasMore = false, loadingMore = false, searchQuery = '', isLoading = false, error = null }: {
     onCompose?: () => void
     onSelectMessage?: (id: string) => void
     onAction?: (id: string, action: MessageAction) => void
     onMoveRequest?: (id: string) => void
     onSearch?: (q: string) => void
+    onLoadMore?: () => void
+    hasMore?: boolean
+    loadingMore?: boolean
     searchQuery?: string
     isLoading?: boolean
     error?: string | null
@@ -113,11 +116,8 @@
   
   function handleSelect(message: any) {
     selectMessage(message.id)
+    // App marks it read (locally and in the folder's unread count).
     if (onSelectMessage) onSelectMessage(message.id)
-    const flags = message.flags || []
-    if (!flags.includes('\\Seen') && !flags.includes('Seen')) {
-      updateMessage(message.id, { flags: [...flags, '\\Seen'] })
-    }
   }
 </script>
 
@@ -193,6 +193,11 @@
         </div>
       {/each}
       <div class="virtual-spacer" style={`height:${virtual.paddingBottom}px`}></div>
+      {#if hasMore}
+        <button type="button" class="load-more" disabled={loadingMore} onclick={() => onLoadMore?.()}>
+          {loadingMore ? 'Loading…' : 'Load more'}
+        </button>
+      {/if}
     </div>
   {/if}
 
@@ -332,6 +337,19 @@
     overflow-y: auto;
     position: relative;
   }
+
+  .load-more {
+    display: block;
+    width: calc(100% - 24px);
+    margin: 8px 12px 12px;
+    padding: 8px;
+    border: 1px solid var(--color-border, #ddd);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  .load-more:disabled { opacity: 0.6; cursor: default; }
 
   .virtual-spacer {
     width: 100%;

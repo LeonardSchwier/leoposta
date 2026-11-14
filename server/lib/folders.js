@@ -21,6 +21,8 @@ export function folderParam(value, fallback = 'INBOX') {
 
 export const INVALID_FOLDER = 'folder must be a non-empty mailbox path'
 
+const num = (v) => (typeof v === 'number' ? v : undefined)
+
 /**
  * Map an ImapFlow list() entry to the shape the UI consumes.
  * parentPath and delimiter come straight from ImapFlow (computed from the
@@ -36,9 +38,46 @@ export function toFolderEntry(mb) {
     delimiter: mb.delimiter || null,
     noselect: flags.has('\\Noselect') || flags.has('\\NonExistent'),
     specialUse: mb.specialUse || undefined,
-    // From list({ statusQuery }); absent for \\Noselect mailboxes and when the
-    // server refused STATUS for that mailbox (status.error).
-    exists: typeof mb.status?.messages === 'number' ? mb.status.messages : undefined,
-    unseen: typeof mb.status?.unseen === 'number' ? mb.status.unseen : undefined
+    // From list({ statusQuery }) (LIST-STATUS or STATUS); absent for
+    // \\Noselect mailboxes and when the server refused STATUS for that
+    // mailbox (status.error).
+    exists: num(mb.status?.messages) ?? num(mb.exists),
+    unseen: num(mb.status?.unseen) ?? num(mb.unseen)
   }
+}
+
+/**
+ * Path of a child mailbox `name` under `parent` ("" or null = top level),
+ * joined with the server's hierarchy delimiter ("/" or "." or anything else).
+ */
+export function childPath(parent, delimiter, name) {
+  return parent ? `${parent}${delimiter || '/'}${name}` : name
+}
+
+/**
+ * Every mailbox below `path` in an ImapFlow list(), deepest first, so they can
+ * be deleted in order (IMAP DELETE of a parent leaves its children behind, as
+ * a \Noselect placeholder or with a NO "has children").
+ *
+ * @param {{ path: string, delimiter?: string }[]} list
+ * @param {string} path
+ */
+export function descendantsDeepestFirst(list, path) {
+  const d = list.find((mb) => mb.path === path)?.delimiter || list.find((mb) => mb.delimiter)?.delimiter || '/'
+  const prefix = path + d
+  return list
+    .map((mb) => mb.path)
+    .filter((p) => p.startsWith(prefix))
+    .sort((a, b) => b.split(d).length - a.split(d).length || b.localeCompare(a))
+}
+
+/** The server's refusal text for a failed IMAP command ("Command failed" alone says nothing). */
+export function imapErrorText(err) {
+  const resp = err && err.responseText ? String(err.responseText).trim() : ''
+  return resp || (err && err.message) || String(err)
+}
+
+/** True when an IMAP command was answered NO/BAD (a refusal, not a dropped connection). */
+export function isImapRefusal(err) {
+  return Boolean(err && (err.responseStatus === 'NO' || err.responseStatus === 'BAD'))
 }

@@ -93,6 +93,17 @@ describe('startRefresh', () => {
     expect(onTick).toHaveBeenCalledTimes(1)
   })
 
+  it('refreshes when the stream is ready again after a reconnect, not on the first connect', () => {
+    const onTick = vi.fn()
+    startRefresh('instant', onTick, '/api/idle')
+    const es = FakeEs.instances[0]
+    es.emit('ready')
+    expect(onTick).not.toHaveBeenCalled()
+    // IMAP server restarted: the stream ended and EventSource reconnected.
+    es.emit('ready')
+    expect(onTick).toHaveBeenCalledTimes(1)
+  })
+
   it('skips onTick for mailbox-update while a text input has focus', () => {
     const onTick = vi.fn()
     startRefresh('instant', onTick)
