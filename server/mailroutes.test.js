@@ -68,7 +68,7 @@ function message(uid, { flags = [], source, bodyStructure, subject = `Subject ${
   }
 }
 
-function makeFakeClient({ messages = [], addResult = true, removeResult = true, mailboxes = [] } = {}) {
+function makeFakeClient({ messages = [], addResult = true, removeResult = true, mailboxes = [], refuse = {} } = {}) {
   const calls = []
   const client = {
     user: 'tester',
@@ -100,6 +100,20 @@ function makeFakeClient({ messages = [], addResult = true, removeResult = true, 
     async messageFlagsRemove(range, flags, opts) { calls.push(['messageFlagsRemove', range, flags, opts]); return removeResult },
     async list() { calls.push(['list']); return mailboxes },
     async mailboxCreate(p) { calls.push(['mailboxCreate', p]); return { path: p, created: true } },
+    async mailboxRename(p, to) { calls.push(['mailboxRename', p, to]); return { path: p, newPath: to } },
+    async mailboxDelete(p) {
+      calls.push(['mailboxDelete', p])
+      if (refuse.delete) {
+        // ImapFlow 1.7.8 on a NO: message "Command failed", status + server text attached.
+        const err = new Error('Command failed')
+        err.responseStatus = 'NO'
+        err.responseText = refuse.delete
+        throw err
+      }
+      const i = mailboxes.findIndex((m) => m.path === p)
+      if (i >= 0) mailboxes.splice(i, 1)
+      return { path: p }
+    },
     logout() { calls.push(['logout']); return Promise.resolve() }
   }
   return client
@@ -488,4 +502,55 @@ test('a new subfolder is created with the parent\'s delimiter, not a hard-coded 
   assert.equal(res.status, 200)
   assert.deepEqual(find(c, 'mailboxCreate'), ['mailboxCreate', 'INBOX.Projects.2026'])
   assert.equal((await res.json()).path, 'INBOX.Projects.2026')
+})
+
+test('deleting a folder deletes its subfolders first, deepest first ("/" and ".")', async () => {
+  for (const d of ['/', '.']) {
+    const j = (...p) => p.join(d)
+    const c = useClient({
+      mailboxes: [
+        mailbox('INBOX', d), mailbox(j('Tree'), d), mailbox(j('Tree', 'A'), d),
+        mailbox(j('Tree', 'A', 'Deep'), d), mailbox(j('Tree', 'B'), d), mailbox(j('Treehouse'), d)
+      ]
+    })
+    const res = await fetch(`${base}/api/folder?path=${encodeURIComponent('Tree')}`, { method: 'DELETE', headers: authed })
+    assert.equal(res.status, 200, d)
+    const deleted = c.calls.filter((x) => x[0] === 'mailboxDelete').map((x) => x[1])
+    assert.deepEqual(deleted, [j('Tree', 'A', 'Deep'), j('Tree', 'B'), j('Tree', 'A'), 'Tree'], d)
+  }
+})
+
+test('a folder the server refuses to delete answers 500 with the server text, without dropping the connection', async () => {
+  const c = useClient({ mailboxes: [mailbox('INBOX', '/'), mailbox('Keep', '/')], refuse: { delete: 'Permission denied' } })
+  const res = await fetch(`${base}/api/folder?path=Keep`, { method: 'DELETE', headers: authed })
+  assert.equal(res.status, 500)
+  assert.match((await res.json()).error, /Permission denied/)
+  assert.equal(c.calls.filter((x) => x[0] === 'mailboxDelete').length, 1, 'a refusal is not retried')
+  assert.ok(!names(c).includes('logout'))
+})
+
+test('INBOX and a blank path cannot be deleted', async () => {
+  const c = useClient({ mailboxes: [mailbox('INBOX', '/')] })
+  for (const q of ['path=INBOX', 'path=', 'path=%20', '']) {
+    const res = await fetch(`${base}/api/folder?${q}`, { method: 'DELETE', headers: authed })
+    assert.equal(res.status, 400, q)
+  }
+  assert.deepEqual(names(c), [])
+})
+
+test('renaming by name keeps the folder under its parent with the server delimiter', async () => {
+  const c = useClient({ mailboxes: [mailbox('INBOX', '.'), mailbox('INBOX.Old', '.'), mailbox('INBOX.Old.Child', '.')] })
+  let res = await fetch(`${base}/api/folder/rename`, {
+    method: 'POST', headers: json, body: JSON.stringify({ from: 'INBOX.Old.Child', name: 'Kid' })
+  })
+  assert.equal(res.status, 200)
+  assert.deepEqual(find(c, 'mailboxRename'), ['mailboxRename', 'INBOX.Old.Child', 'INBOX.Old.Kid'])
+  assert.equal((await res.json()).path, 'INBOX.Old.Kid')
+
+  const c2 = useClient({ mailboxes: [mailbox('Old', '/'), mailbox('Old/Child', '/')] })
+  res = await fetch(`${base}/api/folder/rename`, {
+    method: 'POST', headers: json, body: JSON.stringify({ from: 'Old', name: 'New' })
+  })
+  assert.equal(res.status, 200)
+  assert.deepEqual(find(c2, 'mailboxRename'), ['mailboxRename', 'Old', 'New'])
 })
