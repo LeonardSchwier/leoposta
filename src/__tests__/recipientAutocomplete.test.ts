@@ -136,4 +136,34 @@ describe('RecipientAutocomplete', () => {
     expect(rows).toEqual(['m1@x.test', 'm2@x.test'])
     unmount(c)
   })
+
+  it('case 6: "," after a recipient with a display name keeps the name', async () => {
+    const target = makeTarget()
+    targets.push(target)
+    const c = mount(RecipientAutocomplete as any, {
+      target,
+      props: { value: 'Bob Builder <bob@x.test>, Anna Älter <anna@x.test>', placeholder: '' }
+    })
+    await sleep(250)
+    const input = target.querySelector('input.ra-input') as HTMLInputElement
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: ',', bubbles: true, cancelable: true }))
+    await sleep(30)
+    expect(input.value).toBe('Bob Builder <bob@x.test>, Anna Älter <anna@x.test>')
+    unmount(c)
+  })
+
+  it('case 7: "," inside a quoted display name is not a separator', async () => {
+    const target = makeTarget()
+    targets.push(target)
+    const c = mount(RecipientAutocomplete as any, {
+      target,
+      props: { value: 'a@x.test, "Doe', placeholder: '' }
+    })
+    await sleep(250)
+    const input = target.querySelector('input.ra-input') as HTMLInputElement
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: ',', bubbles: true, cancelable: true }))
+    await sleep(30)
+    expect(input.value).toBe('a@x.test, "Doe')
+    unmount(c)
+  })
 })

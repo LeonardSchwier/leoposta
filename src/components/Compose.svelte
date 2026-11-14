@@ -1,11 +1,14 @@
 <script lang="ts">
   import { apiFetch, MailAPI } from '../api'
-  import { store, getState, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setIsLoading, setComposeScheduled, clearCompose, setComposing } from '../store'
+  import { store, getState, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setComposeScheduled, clearCompose, setComposing } from '../store'
   import { onMount } from 'svelte'
   import { addQueuedMessage } from '../lib/offlineQueue'
   import { buildMessageBody, normalizeAccount, type Signature } from '../lib/signature'
   import { fileToAttachment, type OutboundAttachment, AttachmentTooLargeError } from '../lib/attachments'
   import RecipientAutocomplete from './RecipientAutocomplete.svelte'
+  import { splitRecipients, recipientAddress } from '../lib/recipients'
+  import { quoteOriginal, threadHeaders, type ReplyMode } from '../lib/reply'
+  import type { MailMessage } from '../store'
 
   // onDraftSaved(folder): the draft is stored on the server in `folder` (the
   // real IMAP path of the Drafts mailbox), so the app can refresh that view.
@@ -25,20 +28,57 @@
   let subjectInput = $state(getState().composeSubject || '')
   let bodyInput    = $state(getState().composeBody || '')
 
-  // ---- Signature seeding ----
-  function quotedOriginal(): string | null {
-    const m = getState().composeOriginalMessage
-    if (!m) return null
-    return m.body || m.bodyHtml || null
+  // ---- Reply / forward: the full original ----
+  // The list row (or the store copy) may lack the body, Message-ID and
+  // attachment ids, so fetch the message itself; fall back to what we have.
+  const original = getState().composeOriginalMessage
+  const mode: ReplyMode | null = original ? (getState().composeForward ? 'forward' : 'reply') : null
+  let fullOriginal: MailMessage | null = original
+  async function loadOriginal(): Promise<MailMessage | null> {
+    if (!original) return null
+    try {
+      const full = await MailAPI.message(original.id, original.folder || getState().activeFolder)
+      if (full) fullOriginal = { ...original, ...full }
+    } catch { /* offline: quote what the list had */ }
+    return fullOriginal
   }
-  function applySignature(sig: Signature, original: string | null): boolean {
-    if (!sig || !sig.enabled || !sig.text.trim()) {
-      if (original) { const q = '\n--\n' + original; bodyInput = q; setComposeBody(q) }
-      return false
+
+  // ---- Signature seeding ----
+  function applySignature(sig: Signature, quoted: string | null): string {
+    if (!sig || !sig.enabled || !sig.text.trim()) return quoted ? '\n--\n' + quoted : ''
+    return buildMessageBody(sig, '', quoted)
+  }
+  async function loadSignature(): Promise<Signature | null> {
+    const s = getState()
+    const account = s.accounts.find(a => a.id === s.activeAccountId)
+    if (account && account.signature) return account.signature
+    try {
+      const res = await apiFetch('/api/account')
+      if (!res.ok) return null
+      const raw = await res.json()
+      if (!raw || raw.connected === false || !raw.signature) return null
+      return normalizeAccount(raw as Record<string, unknown>).signature
+    } catch { return null /* offline / no backend: seed with nothing */ }
+  }
+  // Signature and quote are filled in once loaded; text typed meanwhile is
+  // kept in front of them instead of being overwritten.
+  let seeded = $state(false)
+  const initialBody = bodyInput
+  async function seedBody() {
+    const [sig, orig] = await Promise.all([loadSignature(), loadOriginal()])
+    // Only the seeding (signature, quote, forwarded files) changed the
+    // window: there is still nothing to lose on close.
+    const untouched = snapshot() === pristine
+    const quoted = orig && mode ? quoteOriginal(orig, mode) : null
+    const extra = sig ? applySignature(sig, quoted) : (quoted ? '\n--\n' + quoted : '')
+    if (extra && initialBody === '') {
+      const typed = bodyInput
+      bodyInput = typed ? typed + (extra.startsWith('\n') ? '' : '\n\n') + extra : extra
+      setComposeBody(bodyInput)
     }
-    const body = buildMessageBody(sig, '', original)
-    if (body) { bodyInput = body; setComposeBody(body) }
-    return true
+    if (orig && mode === 'forward') await attachForwarded(orig)
+    if (untouched) pristine = snapshot()
+    seeded = true
   }
 
   // ---- Unsaved changes ----
@@ -54,31 +94,25 @@
     if (snapshot() === pristine) { onClose(); return }
     confirmClose = true
   }
-  async function seedBody() {
-    const before = snapshot()
-    await seedSignature()
-    // Only the signature changed the window: still nothing to lose.
-    if (pristine === before) pristine = snapshot()
-  }
-  async function seedSignature() {
-    const s = getState()
-    const account = s.accounts.find(a => a.id === s.activeAccountId)
-    if (account && (account as any).signature) {
-      applySignature((account as any).signature, quotedOriginal())
-      return
+
+  // A forward carries the original's attachments (removable like any other).
+  async function attachForwarded(orig: MailMessage) {
+    for (const att of orig.attachments ?? []) {
+      if (!att.id) continue
+      try {
+        const res = await MailAPI.attachment(orig.id, att.id, orig.folder || getState().activeFolder)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const blob = await res.blob()
+        const file = new File([blob], att.filename || 'attachment', { type: att.contentType || blob.type })
+        attachments.push(await fileToAttachment(file))
+      } catch (err) {
+        attachmentError = `Could not attach ${att.filename}: ${err instanceof Error ? err.message : String(err)}`
+      }
     }
-    try {
-      const res = await apiFetch('/api/account')
-      if (!res.ok) return
-      const raw = await res.json()
-      if (!raw || raw.connected === false || !raw.signature) return
-      applySignature(normalizeAccount(raw as Record<string, unknown>).signature, quotedOriginal())
-    } catch { /* offline / no backend: seed with nothing */ }
   }
 
-  // A reopened draft shows the Cc / Bcc it has.
-  let showCc = $state(getState().composeCc.length > 0)
-  let showBcc = $state(getState().composeBcc.length > 0)
+  let showCc = $state(ccValue !== '')
+  let showBcc = $state(bccValue !== '')
   let showSchedule = $state(false)
   let scheduleDate = $state('')
   let scheduleTime = $state('')
@@ -93,12 +127,15 @@
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`
   }
 
+  // "Anna Älter <a@x.y>, b@x.y": split on "," / ";" only, so display names survive.
   function parseRecipients(value: string): string[] {
-    return value.split(/[,;\s]+/).map(e => e.trim()).filter(e => e)
+    return splitRecipients(value)
   }
 
   function handleKeyDown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
+    // Escape already used (e.g. to close the recipient suggestions) must not
+    // also close the window and lose the message.
+    if (e.key === 'Escape' && !e.defaultPrevented) {
       e.preventDefault()
       if (confirmClose) confirmClose = false
       else requestClose()
@@ -137,7 +174,16 @@
     }
   }
 
-  function handleSend() {
+  // Set synchronously on the first click, so a double click (or Ctrl+Enter
+  // while the request is in flight) cannot send the message twice.
+  let sending = $state(false)
+
+  // Why the last send did not go out, shown in the window (which stays open
+  // with everything typed) instead of a blocking alert().
+  let sendError = $state<string | null>(null)
+
+  async function handleSend() {
+    if (sending) return
     const to   = parseRecipients(toValue)
     const cc   = parseRecipients(ccValue)
     const bcc  = parseRecipients(bccValue)
@@ -148,11 +194,17 @@
     if (bcc.length) setComposeBcc(bcc)
 
     if (to.length === 0) {
-      alert('Please add at least one recipient')
+      sendError = 'Please add at least one recipient'
+      return
+    }
+    const invalid = [...to, ...cc, ...bcc].filter(r => !/^[^\s@<>]+@[^\s@<>]+$/.test(recipientAddress(r)))
+    if (invalid.length) {
+      sendError = `Not a valid email address: ${invalid.join(', ')}`
       return
     }
 
-    setIsLoading(true)
+    sending = true
+    sendError = null
 
     const message: Record<string, unknown> = {
       to,
@@ -160,62 +212,62 @@
       bcc,
       subject: subjectInput,
       body: bodyInput,
-      scheduled: getState().composeScheduled
+      scheduled: getState().composeScheduled,
+      ...(fullOriginal && mode ? threadHeaders(fullOriginal, mode) : {})
     }
     if (attachments.length) message.attachments = attachments
 
-    apiFetch('/api/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(message)
-    })
-    .then(res => res.json())
-    .then(async data => {
-      if (data.success) {
+    const done = () => {
+      clearCompose()
+      setComposing(false)
+      onClose()
+    }
+    try {
+      let res: Response
+      try {
+        res = await apiFetch('/api/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(message)
+        })
+      } catch (err) {
+        if (navigator.onLine) throw err
+        // Offline: keep it in the outbox; App sends it when back online.
+        const queued: Parameters<typeof addQueuedMessage>[0] = {
+          to, cc, bcc,
+          subject: subjectInput,
+          body: bodyInput,
+          scheduled: getState().composeScheduled,
+          ...(fullOriginal && mode ? threadHeaders(fullOriginal, mode) : {}),
+          createdAt: new Date().toISOString()
+        }
+        if (attachments.length) queued.attachments = attachments
+        try {
+          await addQueuedMessage(queued)
+        } catch (qerr) {
+          sendError = 'You are offline and the message could not be queued: ' + (qerr instanceof Error ? qerr.message : String(qerr))
+          return
+        }
+        done()
+        return
+      }
+      // Not every failure has a JSON body (a proxy error page, a 413).
+      const data = await res.json().catch(() => ({ error: `${res.status} ${res.statusText}`.trim() }))
+      if (res.ok && data.success) {
         // The reopened draft has been sent: remove it from Drafts.
         if (draft) {
-          try { await MailAPI.discardDraft(draft.uid) } catch (err: any) {
-            alert('The message was sent, but its draft could not be removed from Drafts: ' + (err?.message ?? String(err)))
+          try { await MailAPI.discardDraft(draft.uid) } catch (err) {
+            alert('The message was sent, but its draft could not be removed from Drafts: ' + (err instanceof Error ? err.message : String(err)))
           }
         }
         onSent?.()
-        clearCompose()
-        setComposing(false)
-        onClose()
-      } else if (data.queued) {
-        clearCompose()
-        setComposing(false)
-        onClose()
-        alert(data.message)
-      } else {
-        alert('Failed to send: ' + data.error)
-      }
-    })
-    .catch(async (err: any) => {
-      if (!navigator.onLine) {
-        try {
-          const queued: Parameters<typeof addQueuedMessage>[0] = {
-            to, cc, bcc,
-            subject: subjectInput,
-            body: bodyInput,
-            scheduled: getState().composeScheduled,
-            createdAt: new Date().toISOString()
-          }
-          if (attachments.length) queued.attachments = attachments
-          await addQueuedMessage(queued)
-          clearCompose()
-          setComposing(false)
-          onClose()
-        } catch {
-          alert('Failed to queue message: ' + err.message)
-        }
-      } else {
-        alert('Error: ' + err.message)
-      }
-    })
-    .finally(() => {
-      setIsLoading(false)
-    })
+        done()
+      } else sendError = 'Could not send: ' + (data.error || `server answered ${res.status}`)
+    } catch (err) {
+      sendError = 'Could not send: ' + (err instanceof Error ? err.message : String(err))
+    } finally {
+      sending = false
+    }
   }
 
   let savingDraft = $state(false)
@@ -392,6 +444,7 @@
     <div class="compose-editor">
       <textarea
         id="compose-body"
+        data-seeded={seeded ? 'true' : undefined}
         bind:value={bodyInput}
         oninput={() => setComposeBody(bodyInput)}
         placeholder="Write your message..."
@@ -468,15 +521,18 @@
         </span>
       {/if}
     </div>
+    {#if sendError}
+      <p class="send-error" role="alert">{sendError}</p>
+    {/if}
     <div class="footer-right">
       <button type="button" class="btn-secondary" onclick={handleSaveDraft} disabled={savingDraft}>Save Draft</button>
       <button
         type="button"
         class="btn-primary"
         onclick={handleSend}
-        disabled={$store.isLoading}
+        disabled={sending}
       >
-        {#if $store.isLoading}Sending...{:else}Send{/if}
+        {#if sending}Sending...{:else}Send{/if}
       </button>
     </div>
   </div>
@@ -753,6 +809,7 @@
     border-top: 1px solid var(--color-border);
     background: var(--color-bg-secondary);
     flex-shrink: 0;
+    flex-wrap: wrap;
   }
 
   .footer-left {
@@ -874,6 +931,14 @@
 
   .schedule-badge button:hover {
     color: var(--color-danger);
+  }
+
+  .send-error {
+    margin: 0 8px;
+    color: var(--color-danger);
+    font-size: 13px;
+    flex: 1 1 100%;
+    order: -1;
   }
 
   .footer-right {

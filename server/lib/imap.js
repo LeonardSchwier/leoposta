@@ -1,5 +1,6 @@
 import { ImapFlow } from 'imapflow'
 import nodemailer from 'nodemailer'
+import MailComposer from 'nodemailer/lib/mail-composer/index.js'
 
 // ── Per-account IMAP pool ────────────────────────────────────────────────────
 // One ImapFlow instance per account email, each with its own serialization
@@ -168,45 +169,51 @@ export function createSmtpTransporter(acct) {
 
 // ── Save sent mail to IMAP Sent folder ───────────────────────────────────────
 // Best-effort: returns true if saved, false otherwise. Never throws.
-const SENT_FOLDER_CANDIDATES = ['Sent', 'Sent Items', 'sent', 'INBOX.Sent']
+
+const SENT_NAMES = ['sent', 'sent items', 'sent messages', 'gesendet', 'gesendete objekte']
+const selectable = (m) => !(m.flags && m.flags.has && (m.flags.has('\\Noselect') || m.flags.has('\\NonExistent')))
+
+/** The raw source of the copy kept in Sent: the same message (same Message-ID
+ * and Date as the one handed to SMTP), with Bcc kept so the sender can see who
+ * was blind-copied, as every mail client does. */
+export async function buildSentSource(messageData, { messageId, date } = {}) {
+  const { accountId: _ignored, ...mail } = messageData
+  void _ignored
+  if (messageId) mail.messageId = messageId
+  if (date) mail.date = date
+  const node = new MailComposer(mail).compile()
+  node.keepBcc = true
+  return node.build()
+}
+
+/** The Sent mailbox: the one flagged \Sent (ImapFlow also derives that from
+ * well-known names), else a mailbox whose leaf name is a usual Sent name (any
+ * namespace prefix, e.g. "INBOX.Sent"), else a new "Sent". Never INBOX. */
+export async function findOrCreateSentPath(client) {
+  const boxes = (await client.list()).filter(selectable)
+  const flagged = boxes.find((m) => m.specialUse === '\\Sent')
+  if (flagged) return flagged.path
+  const named = boxes.find((m) => SENT_NAMES.includes(String(m.name || m.path).toLowerCase()))
+  if (named) return named.path
+  const created = await client.mailboxCreate('Sent')
+  return (created && created.path) || 'Sent'
+}
 
 export async function saveToSentFolder(acct, messageData, { messageId, date } = {}) {
   if (!acct) return false
-  const pool = getPoolFor(acct)
-  const msg = new nodemailer.Message(messageData)
-  const raw = msg.getSourceStream()
-
-  // Collect all folder names once
-  let folders = []
+  let target = 'Sent'
   try {
-    folders = await pool.run(async (client) => {
-      const list = await client.list('')
-      return list.map(f => f.path)
-    })
-  } catch (_) {
-    return false
-  }
-
-  // Choose the most likely "sent" folder by exact name match, else first
-  // candidate, else fall back to "INBOX" so we don't drop the message.
-  const normalized = new Set(folders.map(p => p.toLowerCase()))
-  let target = SENT_FOLDER_CANDIDATES.find(name => normalized.has(name.toLowerCase()))
-  if (!target) {
-    const fuzzy = folders.find(p => /sent/i.test(p))
-    target = fuzzy || 'INBOX'
-  }
-
-  const meta = { flags: ['\\Seen'] }
-  if (messageId) meta.messageId = messageId
-  if (date) meta.date = date
-  try {
-    await pool.run(async (client) => {
-      await client.append(target, meta, raw)
-    })
+    const raw = await buildSentSource(messageData, { messageId, date })
+    const pool = getPoolFor(acct)
+    // One attempt for the APPEND: retrying one whose reply was lost would
+    // store the copy twice.
+    target = await pool.run((client) => findOrCreateSentPath(client))
+    const done = await pool.run((client) => client.append(target, raw, ['\\Seen'], date || new Date()), 1)
+    if (!done) throw new Error('the server refused the APPEND')
     console.log(`[imap] saved sent mail to ${acct.email} :: ${target} (id=${messageId || 'auto'})`)
     return true
   } catch (err) {
-    console.error(`[imap] failed to save sent mail to ${target}:`, err && err.message || err)
+    console.error(`[imap] failed to save sent mail to ${target}:`, (err && err.message) || err)
     return false
   }
 }
