@@ -199,3 +199,21 @@ test('resolveGoaImport: a failed password lookup is an explicit null, not swallo
   assert.equal(payload.imapPass, null)
   assert.equal(payload.smtpPass, null)
 })
+
+// --- LEOPOSTA_GOA=off (e2e / test servers) ---------------------------------
+test('LEOPOSTA_GOA=off: no busctl call at all, GOA reports unavailable and no accounts', async () => {
+  let calls = 0
+  _setExecFileForTest((cmd, args, opts, cb) => { calls++; cb(null, '{}', '') })
+  const prev = process.env.LEOPOSTA_GOA
+  process.env.LEOPOSTA_GOA = 'off'
+  try {
+    assert.equal(await isGoaAvailable(), false)
+    assert.deepEqual(await listGoaAccounts(), [])
+    assert.equal(await getGoaPassword(MAIL_PATH, 'account_mail1'), null)
+    assert.equal(calls, 0, 'the session D-Bus is never asked')
+  } finally {
+    if (prev === undefined) delete process.env.LEOPOSTA_GOA
+    else process.env.LEOPOSTA_GOA = prev
+    _setExecFileForTest(null)
+  }
+})

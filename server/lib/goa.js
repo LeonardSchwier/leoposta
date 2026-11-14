@@ -28,7 +28,17 @@ function run(cmd, args) {
   })
 }
 
+/**
+ * LEOPOSTA_GOA=off: never touch the session D-Bus (GOA reports "not
+ * available"). The e2e and test servers set it, so a test run on a desktop
+ * cannot read, show or import the host user's real GNOME Online Accounts.
+ */
+export function isGoaDisabled() {
+  return /^(off|0|false|no)$/i.test(String(process.env.LEOPOSTA_GOA || '').trim())
+}
+
 function busctl(args) {
+  if (isGoaDisabled()) return Promise.reject(Object.assign(new Error('GNOME Online Accounts disabled (LEOPOSTA_GOA=off)'), { code: 'GOA_DISABLED' }))
   return run('busctl', ['--user', '--json=short', ...args])
 }
 

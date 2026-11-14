@@ -22,7 +22,10 @@ function server(port: number, dist: string, data: string) {
       LEOPOSTA_TOKEN: E2E_TOKEN,
       LEOPOSTA_DATA_DIR: data,
       LEOPOSTA_DIST_DIR: dist,
-      ALLOWED_ORIGINS: `http://127.0.0.1:${port}`
+      ALLOWED_ORIGINS: `http://127.0.0.1:${port}`,
+      // Never read the host's real GNOME Online Accounts (session D-Bus):
+      // Settings would list the developer's own accounts (server/lib/goa.js).
+      LEOPOSTA_GOA: 'off'
     },
     url: `http://127.0.0.1:${port}/api/health`,
     reuseExistingServer: false,
