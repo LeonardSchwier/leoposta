@@ -90,3 +90,12 @@ test('updateAccount / removeAccount drop the account\'s cached DAV reads', async
   removeAccount('a@example.test')
   assert.equal(state.davCache.get(`books|${a.id}`), undefined)
 })
+
+test('resolveDataDir: env wins; legacy server/ state is kept; otherwise the per-user data dir, never the install dir', async () => {
+  const { resolveDataDir } = await import('./state.js')
+  const none = () => false
+  assert.equal(resolveDataDir({ env: { LEOPOSTA_DATA_DIR: '/tmp/x' }, serverDir: '/opt/app/server', home: '/home/u', exists: none }), '/tmp/x')
+  assert.equal(resolveDataDir({ env: {}, serverDir: '/opt/app/server', home: '/home/u', exists: none }), '/home/u/.local/share/leoposta')
+  assert.equal(resolveDataDir({ env: { XDG_DATA_HOME: '/xdg' }, serverDir: '/opt/app/server', home: '/home/u', exists: none }), '/xdg/leoposta')
+  assert.equal(resolveDataDir({ env: {}, serverDir: '/opt/app/server', home: '/home/u', exists: (p) => p === '/opt/app/server/pgp_private.asc' }), '/opt/app/server')
+})

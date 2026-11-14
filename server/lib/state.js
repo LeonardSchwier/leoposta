@@ -1,12 +1,31 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const __filename = fileURLToPath(import.meta.url)
 const SERVER_DIR = path.dirname(path.dirname(__filename))
 
-export const DATA_DIR = process.env.LEOPOSTA_DATA_DIR || SERVER_DIR
+const LEGACY_STATE_FILES = ['accounts.json', 'account.json', 'scheduled.json', 'rules.json', 'pgp_private.asc', 'pgp_publics.asc']
+
+/**
+ * Where accounts, rules, scheduled mail and PGP keys live.
+ * LEOPOSTA_DATA_DIR wins (desktop app, container). Otherwise the per-user
+ * data dir ($XDG_DATA_HOME/leoposta, ~/.local/share/leoposta) — never the
+ * install/checkout directory, which an update replaces and a `git add -A`
+ * could pick up. A checkout that already keeps its state in server/ (how
+ * older versions stored it) keeps using it, so nothing is lost.
+ */
+export function resolveDataDir({ env = process.env, serverDir = SERVER_DIR, home = os.homedir(), exists = fs.existsSync } = {}) {
+  if (env.LEOPOSTA_DATA_DIR) return path.resolve(env.LEOPOSTA_DATA_DIR)
+  if (LEGACY_STATE_FILES.some(f => exists(path.join(serverDir, f)))) return serverDir
+  const base = env.XDG_DATA_HOME && path.isAbsolute(env.XDG_DATA_HOME) ? env.XDG_DATA_HOME : path.join(home, '.local', 'share')
+  return path.join(base, 'leoposta')
+}
+
+export const DATA_DIR = resolveDataDir()
+fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 })
 export const ACCOUNTS_FILE = path.join(DATA_DIR, 'accounts.json')
 export const LEGACY_ACCOUNT_FILE = path.join(DATA_DIR, 'account.json')
 export const SCHEDULED_FILE = path.join(DATA_DIR, 'scheduled.json')
