@@ -365,9 +365,10 @@ function onConn (socket) {
         if (sub === 'FETCH' || sub === 'SEARCH' || sub === 'STORE') {
           cmd.parts = [
             cmd.parts[0],
-            first,
+            sub,
             ...cmd.parts.slice(3)
           ]
+          cmd.byUid = true
           // Re-dispatch
           return handle(cmd)
         }
@@ -399,11 +400,13 @@ function onConn (socket) {
     const range = cmd.parts[2] || '*'
     const attrsStr = cmd.parts.slice(3).join(' ').toUpperCase()
     const attrs = new Set(attrsStr.replace(/[()]/g, '').split(/\s+/).filter(Boolean))
-    const uidMode = attrs.has('UID') || cmd.parts.some(p => p === 'UID')
-    const rangeUids = parseRange(range, currentFolder)
+    // A UID FETCH always returns the UID (RFC 3501 6.4.8).
+    if (cmd.byUid) attrs.add('UID')
+    const rangeUids = parseRange(range, currentFolder, !!cmd.byUid)
     for (const mail of currentFolder.mails) {
       if (!rangeUids.includes(mail.uid)) continue
-      const id = uidMode ? mail.uid : rangeUids.indexOf(mail.uid) + 1
+      // The FETCH response number is always the sequence number.
+      const id = currentFolder.mails.indexOf(mail) + 1
       const seg = [`* ${id} FETCH (`]
       if (attrs.has('UID')) seg.push(`UID ${mail.uid}`)
       if (attrs.has('FLAGS'))
@@ -484,19 +487,22 @@ function onConn (socket) {
     const ctype = mail.html ? 'text/html' : 'text/plain'
     return `BODYSTRUCTURE ("TEXT" ${ctype.toUpperCase().split('/')[1]} ("CHARSET" "utf-8") NIL NIL "7BIT" ${(mail.text || mail.html || '').length} ${Math.ceil((mail.text || mail.html || '').length / 80)})`
   }
-  function parseRange (range, folder) {
-    if (range === '*' || range === '1:*') return folder.mails.map(m => m.uid)
-    const mm = /^(\d+):(\d+)\$/.exec(range)
-    if (mm) {
-      const a = Number(mm[1])
-      const b = Number(mm[2])
-      return folder.mails.slice(a - 1, b).map(m => m.uid)
+  // RFC 3501 sequence set ("1", "2:4", "3:*", "1,3:5"). In UID mode the
+  // numbers are UIDs, otherwise 1-based message sequence numbers.
+  function parseRange (range, folder, byUid = false) {
+    const mails = folder.mails
+    const keys = byUid ? mails.map(m => m.uid) : mails.map((_, i) => i + 1)
+    const max = keys.length ? Math.max(...keys) : 0
+    const num = (t) => (t === '*' ? max : Number(t))
+    const picked = new Set()
+    for (const part of String(range || '*').split(',')) {
+      const [a, b = a] = part.split(':')
+      const lo = Math.min(num(a), num(b))
+      const hi = Math.max(num(a), num(b))
+      if (Number.isNaN(lo) || Number.isNaN(hi)) continue
+      keys.forEach((k, i) => { if (k >= lo && k <= hi) picked.add(mails[i].uid) })
     }
-    const num = Number(range)
-    if (!isNaN(num)) {
-      return folder.mails[num - 1] ? [folder.mails[num - 1].uid] : []
-    }
-    return folder.mails.map(m => m.uid)
+    return mails.map(m => m.uid).filter(u => picked.has(u))
   }
 
   function pump () {
