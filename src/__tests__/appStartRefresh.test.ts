@@ -49,3 +49,29 @@ describe('app start', () => {
     target.remove()
   })
 })
+
+describe('app start offline', () => {
+  it('backend unreachable: no first-run screen, the list is still loaded (offline cache)', async () => {
+    const calls: string[] = []
+    vi.stubGlobal('EventSource', FakeEventSource)
+    vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+      calls.push(String(input))
+      throw new TypeError('Failed to fetch')
+    }))
+    if (!('ResizeObserver' in globalThis)) vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
+    const { default: App } = await import('../App.svelte')
+    const target = document.createElement('div')
+    document.body.appendChild(target)
+    const app = mount(App, { target })
+    for (let i = 0; i < 20 && !calls.some((u) => u.includes('/api/messages')); i++) {
+      await new Promise((r) => setTimeout(r, 10))
+      flushSync()
+    }
+    await new Promise((r) => setTimeout(r, 20))
+    flushSync()
+    expect(calls.some((u) => u.includes('/api/messages'))).toBe(true)
+    expect(target.querySelector('[data-testid="first-run"]')).toBeNull()
+    unmount(app)
+    target.remove()
+  })
+})

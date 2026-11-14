@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { loadAccountsIntoStore } from '../lib/accountsBootstrap'
+import { loadAccounts, loadAccountsIntoStore } from '../lib/accountsBootstrap'
 import { getState, setAccounts, type MailAccount } from '../store'
 
 describe('loadAccountsIntoStore', () => {
@@ -13,5 +13,9 @@ describe('loadAccountsIntoStore', () => {
   it('resolves to [] (first-run screen) when there are none or the backend is down', async () => {
     expect(await loadAccountsIntoStore({ list: async () => [] })).toEqual([])
     expect(await loadAccountsIntoStore({ list: async () => { throw new Error('offline') } })).toEqual([])
+  })
+  it('tells "no account" (reachable) from "backend unreachable" (offline: keep the offline cache, no first-run screen)', async () => {
+    expect(await loadAccounts({ list: async () => [] })).toEqual({ accounts: [], reachable: true })
+    expect(await loadAccounts({ list: async () => { throw new TypeError('Failed to fetch') } })).toEqual({ accounts: [], reachable: false })
   })
 })
