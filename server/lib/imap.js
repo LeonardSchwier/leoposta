@@ -47,7 +47,12 @@ function makePool(acct) {
     connectP: null,
     queue: Promise.resolve(),
     async ensure() {
-      if (this.client && this.client.user) return this.client
+      // `usable` is ImapFlow's own "connected and authenticated" flag. (This
+      // used to test `client.user`, which ImapFlow never sets: every request
+      // opened a fresh session and leaked the previous one.)
+      if (this.client && this.client.usable) return this.client
+      // A dead client we are about to replace: make sure its socket goes too.
+      if (this.client) { safeLogout(this.client); this.client = null }
       if (!this.connectP) {
         this.connectP = (async () => {
           const client = createImapClient(acct)
@@ -74,7 +79,7 @@ function makePool(acct) {
             String(e && e.message || '') === 'Command failed'
             || String(e && e.message || '').includes('socket was closed unexpectedly')
             || String(e && e.message || '').includes('No response to command')
-            || !c.user
+            || !c.usable
           )
           const wasOurs = this.client === c
           safeLogout(c)
