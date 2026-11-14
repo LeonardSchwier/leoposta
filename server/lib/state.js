@@ -180,44 +180,52 @@ export function addAccount(body) {
   return state.accounts[state.accounts.length - 1]
 }
 
+/**
+ * The account `cur` would become after applying `body` (no side effects).
+ * accountPayloadFrom always returns every field (defaulting/undefined-ing
+ * whatever body doesn't set), so running it on `body` alone would turn any
+ * partial update (e.g. GOA import sending only davUrl/davUser/davPass) into
+ * one that blanks every other field. It runs on `cur` overlaid with `body`
+ * instead: an omitted field keeps its value; a field present in body
+ * (including '' / false, to clear it) changes. A password only changes when
+ * body carries one (never inherited from the first-slot env override).
+ */
+export function mergeAccount(cur, body) {
+  const fresh = accountPayloadFrom({ ...cur, ...body })
+  const keep = (k) => (body[k] !== undefined && body[k] !== null ? body[k] : cur[k])
+  const merged = {
+    ...cur,
+    ...fresh,
+    id: cur.id,
+    imapPass: keep('imapPass'),
+    smtpPass: keep('smtpPass'),
+    davUrl: keep('davUrl'),
+    davUser: keep('davUser'),
+    davPass: keep('davPass')
+  }
+  delete merged.email
+  merged.email = cur.email
+  return merged
+}
+
 export function updateAccount(email, body) {
   const idx = state.accounts.findIndex(a => (a.email || '').toLowerCase() === String(email).toLowerCase())
   if (idx === -1) return null
   const cur = state.accounts[idx]
-  // accountPayloadFrom always returns every field (defaulting/undefined-ing
-  // whatever body doesn't set), so running it on `body` alone turns any
-  // partial update (e.g. GOA import sending only davUrl/davUser/davPass)
-  // into one that blanks every field body didn't mention — imapHost,
-  // imapUser, smtpHost, smtpUser, signature included. Compute it from
-  // `cur` overlaid with `body` instead, so an omitted field keeps its
-  // current value and only a field actually present in body (including
-  // explicitly sent as '' / false, to clear it) changes.
-  const fresh = accountPayloadFrom({ ...cur, ...body })
-  // Password only comes from body (never from the inherited in-memory
-  // first-slot env override, so we don't persist a stale env secret to a
-  // non-first account).
-  const merged = {
-    ...cur,
-    ...fresh,
-    email: cur.email,
-    id: cur.id,
-    imapPass: body.imapPass !== undefined ? body.imapPass : (cur.imapPass !== undefined ? cur.imapPass : undefined),
-    smtpPass: body.smtpPass !== undefined ? body.smtpPass : (cur.smtpPass !== undefined ? cur.smtpPass : undefined),
-    davUrl: body.davUrl !== undefined ? body.davUrl : (cur.davUrl !== undefined ? cur.davUrl : undefined),
-    davUser: body.davUser !== undefined ? body.davUser : (cur.davUser !== undefined ? cur.davUser : undefined),
-    davPass: body.davPass !== undefined ? body.davPass : (cur.davPass !== undefined ? cur.davPass : undefined)
-  }
-  delete merged.email
-  merged.email = cur.email
-  state.accounts[idx] = merged
+  state.accounts[idx] = mergeAccount(cur, body)
   saveAccounts()
   state.accounts[idx] = restoreEnvPasswordsForRuntime(state.accounts)[idx]
+  // New DAV URL or credentials: cached address books/events are someone
+  // else's now.
+  invalidateAccountDavCache(cur.id)
   return state.accounts[idx]
 }
 
 export function removeAccount(email) {
   const before = state.accounts.length
+  const gone = state.accounts.filter((a) => (a.email || '').toLowerCase() === String(email).toLowerCase())
   state.accounts = state.accounts.filter((a) => (a.email || '').toLowerCase() !== String(email).toLowerCase())
   if (state.accounts.length !== before) saveAccounts()
+  for (const a of gone) invalidateAccountDavCache(a.id)
   return state.accounts.length !== before
 }
