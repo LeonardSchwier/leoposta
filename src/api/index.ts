@@ -58,6 +58,9 @@ export const AccountAPI = {
     api(`/accounts/${encodeURIComponent(email)}`, { method: 'PUT', body: JSON.stringify(data) }),
   remove: (email: string) =>
     api(`/accounts/${encodeURIComponent(email)}`, { method: 'DELETE' }),
+  /** The account last chosen in the UI (lib/activeAccountMemory.ts). */
+  getActive: (): Promise<{ email: string | null }> => api('/active-account'),
+  setActive: (email: string) => api('/active-account', { method: 'PUT', body: JSON.stringify({ email }) }),
 }
 
 const enc = encodeURIComponent

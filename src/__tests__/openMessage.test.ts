@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { loadMessageBody, keepLoadedBodies, GONE_TEXT, type OpenMessageDeps } from '../lib/openMessage'
+import { loadMessageBody, keepLoadedBodies, type OpenMessageDeps } from '../lib/openMessage'
 import type { MailMessage } from '../store'
 
 function deferred<T>() {
@@ -12,8 +12,9 @@ function deferred<T>() {
 function setup(fetchMessage: OpenMessageDeps['fetchMessage']) {
   const ctx = { activeFolder: 'INBOX', activeAccountId: 'a1' as string | null }
   const update = vi.fn()
-  const deps: OpenMessageDeps = { fetchMessage, context: () => ctx, update, cachePut: vi.fn(async () => {}), cacheGet: vi.fn(async () => undefined) }
-  return { ctx, update, deps }
+  const onGone = vi.fn()
+  const deps: OpenMessageDeps = { fetchMessage, context: () => ctx, update, onGone, cachePut: vi.fn(async () => {}), cacheGet: vi.fn(async () => undefined) }
+  return { ctx, update, onGone, deps }
 }
 
 const msg = (id: string, folder: string, extra: Partial<MailMessage> = {}): MailMessage =>
@@ -44,12 +45,6 @@ describe('loadMessageBody', () => {
     d.resolve({ body: 'other account' })
     await p
     expect(update).not.toHaveBeenCalled()
-  })
-
-  it('says the message is gone on a 404', async () => {
-    const { update, deps } = setup(async () => { throw Object.assign(new Error('message_not_found'), { status: 404 }) })
-    await loadMessageBody('1', deps)
-    expect(update).toHaveBeenCalledWith('1', expect.objectContaining({ loadError: GONE_TEXT, bodyLoaded: true }))
   })
 
   it('falls back to the full cached copy when the server is unreachable', async () => {
@@ -83,8 +78,8 @@ describe('keepLoadedBodies', () => {
   })
 })
 
-describe('loadMessageBody with onGone', () => {
-  it('a 404 goes to onGone (the app drops the row) instead of the gone pane', async () => {
+describe('loadMessageBody: a message deleted on the server (404)', () => {
+  it('goes to onGone (the app drops the row + toast), never an in-pane notice', async () => {
     const update = vi.fn()
     const onGone = vi.fn()
     await loadMessageBody('7', {
@@ -94,6 +89,17 @@ describe('loadMessageBody with onGone', () => {
       onGone
     })
     expect(onGone).toHaveBeenCalledWith('7')
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('a late 404 after the user moved to another folder does nothing', async () => {
+    const d = deferred<any>()
+    const { ctx, update, onGone, deps } = setup(() => d.promise)
+    const p = loadMessageBody('1', deps)
+    ctx.activeFolder = 'Archive'
+    d.reject(Object.assign(new Error('message_not_found'), { status: 404 }))
+    await p
+    expect(onGone).not.toHaveBeenCalled()
     expect(update).not.toHaveBeenCalled()
   })
 })

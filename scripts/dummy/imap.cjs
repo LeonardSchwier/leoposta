@@ -363,6 +363,8 @@ function onConn (socket) {
       case 'UID': {
         const sub = (cmd.parts[2] || '').toUpperCase()
         if (sub === 'FETCH' || sub === 'SEARCH' || sub === 'STORE') {
+          // "tag UID FETCH ..." -> "tag FETCH ..." (was re-dispatched as
+          // "tag UID <range>", which answered "BAD UID <range> not supported").
           cmd.parts = [
             cmd.parts[0],
             sub,

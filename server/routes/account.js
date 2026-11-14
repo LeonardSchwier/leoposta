@@ -2,7 +2,8 @@ import { Router } from 'express'
 import rateLimit from 'express-rate-limit'
 import {
   state, getAccount, getActiveAccount,
-  addAccount, updateAccount, removeAccount, accountPayloadFrom, mergeAccount
+  addAccount, updateAccount, removeAccount, accountPayloadFrom, mergeAccount,
+  getRememberedAccount, setRememberedAccount
 } from '../lib/state.js'
 import { dropPool, verifyAccount } from '../lib/imap.js'
 import { clearDavBaseCache } from '../lib/dav.js'
@@ -33,6 +34,21 @@ function sanitize(acct) {
 
 router.get('/accounts', (req, res) => {
   res.json(state.accounts.map(sanitize))
+})
+
+// The account last chosen in the UI, so a reload (or the next desktop launch,
+// which has a fresh origin and so an empty localStorage) opens it again.
+// `email` is null when none was chosen or it has been removed since.
+router.get('/active-account', (req, res) => {
+  const acct = getAccount(getRememberedAccount())
+  res.json({ email: acct ? acct.email : null })
+})
+
+router.put('/active-account', (req, res) => {
+  const acct = getAccount(req.body && req.body.email)
+  if (!acct) return res.status(404).json({ error: 'account not found' })
+  setRememberedAccount(acct.email)
+  res.json({ email: acct.email })
 })
 
 // A DAV URL, when given, must be an http(s) URL ('' clears it).

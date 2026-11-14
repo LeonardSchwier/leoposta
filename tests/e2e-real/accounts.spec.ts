@@ -164,6 +164,41 @@ test.describe('accounts', () => {
     await expect(app.getByText('Only in the first mailbox').first()).toBeVisible()
     await expect(app.getByText('Only in the second mailbox')).toHaveCount(0)
   })
+
+  test('the chosen account is still active after a reload, also without localStorage (desktop: new origin per launch); a removed one falls back to the first', async ({ app, mailbox, request, baseURL }) => {
+    const second = await newMailbox('second')
+    await mailbox.seed('INBOX', [{ subject: 'Only in the first mailbox' }])
+    await second.seed('INBOX', [{ subject: 'Only in the second mailbox' }])
+    expect((await request.post(`${baseURL}/api/accounts`, { headers: H, data: accountBody(second.email) })).status()).toBe(200)
+    const ids = await (await request.get(`${baseURL}/api/accounts`, { headers: H })).json() as { id: string, email: string }[]
+    const secondId = ids.find((a) => a.email === second.email)!.id
+
+    await app.reload()
+    await expect(app.getByText('Only in the first mailbox').first()).toBeVisible()
+    const switcher = app.getByLabel('Account', { exact: true })
+    await switcher.selectOption(secondId)
+    await expect(app.getByText('Only in the second mailbox').first()).toBeVisible()
+    await expect.poll(async () => (await (await request.get(`${baseURL}/api/active-account`, { headers: H })).json()).email).toBe(second.email)
+
+    await app.reload()
+    await expect(switcher).toHaveValue(secondId)
+    await expect(app.getByText('Only in the second mailbox').first()).toBeVisible()
+    await expect(app.getByText('Only in the first mailbox')).toHaveCount(0)
+
+    // What the desktop app sees on its next launch: an empty localStorage.
+    await app.evaluate(() => localStorage.clear())
+    await app.reload()
+    await expect(switcher).toHaveValue(secondId)
+    await expect(app.getByText('Only in the second mailbox').first()).toBeVisible()
+
+    // The remembered account is removed (elsewhere): the first one opens.
+    // (Leave the page first: its live connection belongs to that account.)
+    await app.goto('about:blank')
+    await request.delete(`${baseURL}/api/accounts/${encodeURIComponent(second.email)}`, { headers: H })
+    await app.goto('/')
+    await expect(app.getByText('Only in the first mailbox').first()).toBeVisible()
+    await expect(app.getByText('Only in the second mailbox')).toHaveCount(0)
+  })
 })
 
 // A separate server process (own port + data dir) so it can be restarted.
@@ -173,7 +208,7 @@ test.describe('persistence', () => {
 
   function startServer(dataDir: string, out: string[]): Promise<ChildProcess> {
     const child = spawn(process.execPath, ['server/index.js'], {
-      env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', LEOPOSTA_TOKEN: TOKEN, LEOPOSTA_DATA_DIR: dataDir, LEOPOSTA_DIST_DIR: 'dist-e2e', ALLOWED_ORIGINS: `http://127.0.0.1:${PORT}` },
+      env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', LEOPOSTA_TOKEN: TOKEN, LEOPOSTA_DATA_DIR: dataDir, LEOPOSTA_DIST_DIR: 'dist-e2e', ALLOWED_ORIGINS: `http://127.0.0.1:${PORT}`, LEOPOSTA_GOA: 'off' },
       stdio: ['ignore', 'pipe', 'pipe']
     })
     child.stdout!.on('data', (d) => out.push(String(d)))
