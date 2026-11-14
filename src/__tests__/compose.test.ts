@@ -124,7 +124,7 @@ describe('Compose — shared RecipientAutocomplete in To field', () => {
     unmount(c)
   })
 
-  it('send with no recipients alerts and does not call /api/send', async () => {
+  it('send with no recipients shows an inline error and does not call /api/send', async () => {
     const origFetch = globalThis.fetch
     let sendCalled = false
     globalThis.fetch = ((input: any) => {
@@ -144,7 +144,8 @@ describe('Compose — shared RecipientAutocomplete in To field', () => {
     await sleep(200)
     globalThis.fetch = origFetch
 
-    expect(alertSpy, 'alert should fire when no recipients').toHaveBeenCalled()
+    expect(alertSpy, 'no blocking alert').not.toHaveBeenCalled()
+    expect(target.querySelector('[role=alert]')?.textContent).toMatch(/at least one recipient/)
     expect(sendCalled, '/api/send should not be called').toBe(false)
     unmount(c)
   })
@@ -201,6 +202,44 @@ describe('Compose — sending and seeding', () => {
     restore()
     expect(sent.inReplyTo).toBe('<m7@x.test>')
     expect(sent.references).toBe('<m6@x.test> <m7@x.test>')
+    unmount(c)
+  })
+
+  it('an SMTP failure is shown in the window, which stays open and can retry', async () => {
+    setComposeTo(['alice@example.com'])
+    const onClose = vi.fn()
+    let calls = 0
+    const restore = stubSend(async () => {
+      calls++
+      return calls === 1
+        ? { ok: false, status: 500, json: async () => ({ error: 'connect ECONNREFUSED 127.0.0.1:1' }) }
+        : { ok: false, status: 502, statusText: 'Bad Gateway', json: async () => { throw new SyntaxError('not json') } }
+    })
+    const c = mount(Compose as any, { target, props: { onClose } } as any)
+    await sleep(250)
+    sendButton().click()
+    await sleep(100)
+    expect(target.querySelector('[role=alert]')?.textContent).toMatch(/Could not send: connect ECONNREFUSED/)
+    expect(onClose).not.toHaveBeenCalled()
+    sendButton().click()
+    await sleep(100)
+    expect(target.querySelector('[role=alert]')?.textContent).toMatch(/502 Bad Gateway/)
+    expect(calls).toBe(2)
+    restore()
+    unmount(c)
+  })
+
+  it('an invalid address is refused before sending', async () => {
+    setComposeTo(['alice@example.com', 'bob'])
+    let calls = 0
+    const restore = stubSend(async () => { calls++; return { ok: true, status: 200, json: async () => ({ success: true }) } })
+    const c = mount(Compose as any, { target, props: { onClose: vi.fn() } } as any)
+    await sleep(250)
+    sendButton().click()
+    await sleep(100)
+    expect(target.querySelector('[role=alert]')?.textContent).toMatch(/Not a valid email address: bob/)
+    expect(calls).toBe(0)
+    restore()
     unmount(c)
   })
 

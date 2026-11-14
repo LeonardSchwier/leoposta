@@ -6,7 +6,7 @@
   import { buildMessageBody, normalizeAccount, type Signature } from '../lib/signature'
   import { fileToAttachment, type OutboundAttachment, AttachmentTooLargeError } from '../lib/attachments'
   import RecipientAutocomplete from './RecipientAutocomplete.svelte'
-  import { splitRecipients } from '../lib/recipients'
+  import { splitRecipients, recipientAddress } from '../lib/recipients'
   import { quoteOriginal, threadHeaders, type ReplyMode } from '../lib/reply'
   import type { MailMessage } from '../store'
 
@@ -154,7 +154,11 @@
   // while the request is in flight) cannot send the message twice.
   let sending = $state(false)
 
-  function handleSend() {
+  // Why the last send did not go out, shown in the window (which stays open
+  // with everything typed) instead of a blocking alert().
+  let sendError = $state<string | null>(null)
+
+  async function handleSend() {
     if (sending) return
     const to   = parseRecipients(toValue)
     const cc   = parseRecipients(ccValue)
@@ -166,11 +170,17 @@
     if (bcc.length) setComposeBcc(bcc)
 
     if (to.length === 0) {
-      alert('Please add at least one recipient')
+      sendError = 'Please add at least one recipient'
+      return
+    }
+    const invalid = [...to, ...cc, ...bcc].filter(r => !/^[^\s@<>]+@[^\s@<>]+$/.test(recipientAddress(r)))
+    if (invalid.length) {
+      sendError = `Not a valid email address: ${invalid.join(', ')}`
       return
     }
 
     sending = true
+    sendError = null
 
     const message: Record<string, unknown> = {
       to,
@@ -183,52 +193,49 @@
     }
     if (attachments.length) message.attachments = attachments
 
-    apiFetch('/api/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(message)
-    })
-    .then(res => res.json())
-    .then(data => {
-      if (data.success) {
-        clearCompose()
-        setComposing(false)
-        onClose()
-      } else if (data.queued) {
-        clearCompose()
-        setComposing(false)
-        onClose()
-        alert(data.message)
-      } else {
-        alert('Failed to send: ' + data.error)
-      }
-    })
-    .catch(async (err: any) => {
-      if (!navigator.onLine) {
-        try {
-          const queued: Parameters<typeof addQueuedMessage>[0] = {
-            to, cc, bcc,
-            subject: subjectInput,
-            body: bodyInput,
-            scheduled: getState().composeScheduled,
-            ...(fullOriginal && mode ? threadHeaders(fullOriginal, mode) : {}),
-            createdAt: new Date().toISOString()
-          }
-          if (attachments.length) queued.attachments = attachments
-          await addQueuedMessage(queued)
-          clearCompose()
-          setComposing(false)
-          onClose()
-        } catch {
-          alert('Failed to queue message: ' + err.message)
+    const done = () => {
+      clearCompose()
+      setComposing(false)
+      onClose()
+    }
+    try {
+      let res: Response
+      try {
+        res = await apiFetch('/api/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(message)
+        })
+      } catch (err) {
+        if (navigator.onLine) throw err
+        // Offline: keep it in the outbox; App sends it when back online.
+        const queued: Parameters<typeof addQueuedMessage>[0] = {
+          to, cc, bcc,
+          subject: subjectInput,
+          body: bodyInput,
+          scheduled: getState().composeScheduled,
+          ...(fullOriginal && mode ? threadHeaders(fullOriginal, mode) : {}),
+          createdAt: new Date().toISOString()
         }
-      } else {
-        alert('Error: ' + err.message)
+        if (attachments.length) queued.attachments = attachments
+        try {
+          await addQueuedMessage(queued)
+        } catch (qerr) {
+          sendError = 'You are offline and the message could not be queued: ' + (qerr instanceof Error ? qerr.message : String(qerr))
+          return
+        }
+        done()
+        return
       }
-    })
-    .finally(() => {
+      // Not every failure has a JSON body (a proxy error page, a 413).
+      const data = await res.json().catch(() => ({ error: `${res.status} ${res.statusText}`.trim() }))
+      if (res.ok && data.success) done()
+      else sendError = 'Could not send: ' + (data.error || `server answered ${res.status}`)
+    } catch (err) {
+      sendError = 'Could not send: ' + (err instanceof Error ? err.message : String(err))
+    } finally {
       sending = false
-    })
+    }
   }
 
   let savingDraft = $state(false)
@@ -467,6 +474,9 @@
         </span>
       {/if}
     </div>
+    {#if sendError}
+      <p class="send-error" role="alert">{sendError}</p>
+    {/if}
     <div class="footer-right">
       <button type="button" class="btn-secondary" onclick={handleSaveDraft} disabled={savingDraft}>Save Draft</button>
       <button
@@ -743,6 +753,7 @@
     border-top: 1px solid var(--color-border);
     background: var(--color-bg-secondary);
     flex-shrink: 0;
+    flex-wrap: wrap;
   }
 
   .footer-left {
@@ -864,6 +875,14 @@
 
   .schedule-badge button:hover {
     color: var(--color-danger);
+  }
+
+  .send-error {
+    margin: 0 8px;
+    color: var(--color-danger);
+    font-size: 13px;
+    flex: 1 1 100%;
+    order: -1;
   }
 
   .footer-right {

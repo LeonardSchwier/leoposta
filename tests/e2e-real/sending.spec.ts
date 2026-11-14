@@ -256,17 +256,20 @@ test('send with no recipient: a clear message, nothing sent, the text stays', as
   const subject = unique('No rcpt')
   await openCompose(app)
   await fillMessage(app, subject, 'Draft text that must survive.')
-  const dialog = app.waitForEvent('dialog')
-  await app.locator('.modal.compose').getByRole('button', { name: 'Send', exact: true }).click()
-  const d = await dialog
-  expect(d.message()).toMatch(/recipient/i)
-  await d.dismiss()
+  const compose = app.locator('.modal.compose')
+  await compose.getByRole('button', { name: 'Send', exact: true }).click()
+  await expect(compose.getByRole('alert')).toHaveText('Please add at least one recipient')
+  // A typo in an address is caught before anything is sent, too.
+  await typeRecipients(app, 'to', 'not-an-address')
+  await compose.getByRole('button', { name: 'Send', exact: true }).click()
+  await expect(compose.getByRole('alert')).toHaveText('Not a valid email address: not-an-address')
   await expect(app.locator('.modal.compose #compose-body')).toHaveValue('Draft text that must survive.')
   expect(await envelopesFor(subject)).toHaveLength(0)
 })
 
 test.describe('SMTP failure', () => {
-  test.use({ allowApiErrors: ['POST /api/send -> 500'] })
+  // The 500 is provoked on purpose (dead SMTP port); the browser logs it too.
+  test.use({ allowApiErrors: [['POST /api/send -> 500', /status of 500 \(Internal Server Error\)/], { scope: 'test' }] })
   test('shows the error, keeps the message, and sends once SMTP works again', async ({ app, user, request }) => {
     const rcpt = await newRecipient()
     const subject = unique('Retry')
@@ -277,12 +280,9 @@ test.describe('SMTP failure', () => {
     await openCompose(app)
     await typeRecipients(app, 'to', rcpt.email)
     await fillMessage(app, subject, 'Do not lose me.')
-    const dialog = app.waitForEvent('dialog')
-    await app.locator('.modal.compose').getByRole('button', { name: 'Send', exact: true }).click()
-    const d = await dialog
-    expect(d.message()).toMatch(/fail|could not|ECONNREFUSED/i)
-    await d.dismiss()
     const compose = app.locator('.modal.compose')
+    await compose.getByRole('button', { name: 'Send', exact: true }).click()
+    await expect(compose.getByRole('alert')).toHaveText(/^Could not send: .*ECONNREFUSED/)
     await expect(compose).toBeVisible()
     await expect(compose.locator('#compose-subject')).toHaveValue(subject)
     await expect(compose.locator('#compose-body')).toHaveValue('Do not lose me.')
@@ -314,7 +314,7 @@ test('double-clicking Send sends exactly once', async ({ app, mailbox }) => {
 
 test.describe('offline', () => {
   // Requests the test makes fail on purpose while the browser is offline.
-  test.use({ allowApiErrors: [/ERR_INTERNET_DISCONNECTED/, /Failed to fetch/, /Failed to load/] })
+  test.use({ allowApiErrors: [[/ERR_INTERNET_DISCONNECTED/, /Failed to fetch/, /Failed to load/], { scope: 'test' }] })
   test('compose offline: queued, then sent exactly once when back online', async ({ app, context }) => {
     const rcpt = await newRecipient()
     const subject = unique('Offline')
