@@ -90,6 +90,15 @@ export function createIdleRouter({
     client.on('mailbox', () => send('event: mailbox-update\ndata: {"type":"new-messages"}\n\n'))
     client.on('expunge', () => send('event: mailbox-update\ndata: {"type":"expunge"}\n\n'))
     client.on('fetch', () => send('event: mailbox-update\ndata: {"type":"fetch"}\n\n'))
+    // The IMAP connection dropped (server restart, network): ImapFlow does not
+    // always settle idle() then, and a stream with a dead session behind it
+    // never reports new mail again. Ending it makes the browser's EventSource
+    // reconnect, which opens a fresh session.
+    const onImapClose = () => {
+      try { res.end() } catch (e) {}
+      teardown()
+    }
+    client.on('close', onImapClose)
 
     heartbeat = setInterval(() => send(': keepalive\n\n'), heartbeatMs)
     ready = true
