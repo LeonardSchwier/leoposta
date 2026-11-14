@@ -58,7 +58,7 @@ test.describe('XSS payloads in HTML mail', () => {
       expect(dangerous).toEqual([])
       // The app chrome still works.
       await expect(app.locator('.sidebar')).toBeVisible()
-      await expect(app.getByRole('button', { name: 'Reply' })).toBeVisible()
+      await expect(app.getByRole('button', { name: 'Reply', exact: true })).toBeVisible()
     })
   }
 
@@ -90,7 +90,7 @@ test.describe('XSS payloads in HTML mail', () => {
     await openMessage(app, 'Overlay attack')
     await expect(app.locator('.sidebar')).toBeVisible()
     // The sidebar and the Reply button are still the topmost elements at their position.
-    for (const loc of [app.locator('.sidebar'), app.getByRole('button', { name: 'Reply' })]) {
+    for (const loc of [app.locator('.sidebar'), app.getByRole('button', { name: 'Reply', exact: true })]) {
       const top = await loc.evaluate((el) => {
         const r = el.getBoundingClientRect()
         const hit = document.elementFromPoint(r.left + r.width / 2, r.top + Math.min(r.height / 2, 20))
