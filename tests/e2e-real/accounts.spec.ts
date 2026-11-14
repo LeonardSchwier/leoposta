@@ -208,7 +208,7 @@ test.describe('persistence', () => {
 
   function startServer(dataDir: string, out: string[]): Promise<ChildProcess> {
     const child = spawn(process.execPath, ['server/index.js'], {
-      env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', LEOPOSTA_TOKEN: TOKEN, LEOPOSTA_DATA_DIR: dataDir, LEOPOSTA_DIST_DIR: 'dist-e2e', ALLOWED_ORIGINS: `http://127.0.0.1:${PORT}` },
+      env: { ...process.env, PORT: String(PORT), HOST: '127.0.0.1', LEOPOSTA_TOKEN: TOKEN, LEOPOSTA_DATA_DIR: dataDir, LEOPOSTA_DIST_DIR: 'dist-e2e', ALLOWED_ORIGINS: `http://127.0.0.1:${PORT}`, LEOPOSTA_GOA: 'off' },
       stdio: ['ignore', 'pipe', 'pipe']
     })
     child.stdout!.on('data', (d) => out.push(String(d)))

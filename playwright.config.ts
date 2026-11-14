@@ -3,6 +3,7 @@ import { defineConfig, devices } from '@playwright/test'
 const TOKEN = 'test-token'
 // Dedicated ports so e2e never collides with a running dev stack.
 const IMAP_PORT = 1243
+const SMTP_PORT = 2525
 const API_PORT = 3101
 const WEB_PORT = 3100
 
@@ -25,8 +26,23 @@ export default defineConfig({
       reuseExistingServer: false
     },
     {
+      // Settings verifies the SMTP login before it saves an account.
+      command: 'node tests/stack/smtp-sink.mjs',
+      env: { SMTP_PORT: String(SMTP_PORT), IMAP_PORT: String(IMAP_PORT), SMTP_LOG: 'test-results/smtp.jsonl' },
+      port: SMTP_PORT,
+      reuseExistingServer: false
+    },
+    {
       command: 'rm -rf .e2e-data && mkdir -p .e2e-data && node server/index.js',
-      env: { LEOPOSTA_TOKEN: TOKEN, LEOPOSTA_DATA_DIR: '.e2e-data', PORT: String(API_PORT), ALLOWED_ORIGINS: `http://127.0.0.1:${WEB_PORT}` },
+      env: {
+        LEOPOSTA_TOKEN: TOKEN,
+        LEOPOSTA_DATA_DIR: '.e2e-data',
+        PORT: String(API_PORT),
+        ALLOWED_ORIGINS: `http://127.0.0.1:${WEB_PORT},http://127.0.0.1:${API_PORT}`,
+        // Never read the host's real GNOME Online Accounts (session D-Bus):
+        // Settings would list the developer's own accounts (server/lib/goa.js).
+        LEOPOSTA_GOA: 'off'
+      },
       url: `http://127.0.0.1:${API_PORT}/api/health`,
       reuseExistingServer: false
     },

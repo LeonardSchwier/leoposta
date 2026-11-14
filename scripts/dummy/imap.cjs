@@ -363,9 +363,12 @@ function onConn (socket) {
       case 'UID': {
         const sub = (cmd.parts[2] || '').toUpperCase()
         if (sub === 'FETCH' || sub === 'SEARCH' || sub === 'STORE') {
+          // "tag UID FETCH ..." -> "tag FETCH ..." (was re-dispatched as
+          // "tag UID <range>", which answered "BAD UID <range> not supported").
+          cmd.uid = true
           cmd.parts = [
             cmd.parts[0],
-            first,
+            sub,
             ...cmd.parts.slice(3)
           ]
           // Re-dispatch
@@ -399,7 +402,7 @@ function onConn (socket) {
     const range = cmd.parts[2] || '*'
     const attrsStr = cmd.parts.slice(3).join(' ').toUpperCase()
     const attrs = new Set(attrsStr.replace(/[()]/g, '').split(/\s+/).filter(Boolean))
-    const uidMode = attrs.has('UID') || cmd.parts.some(p => p === 'UID')
+    const uidMode = attrs.has('UID') || !!cmd.uid
     const rangeUids = parseRange(range, currentFolder)
     for (const mail of currentFolder.mails) {
       if (!rangeUids.includes(mail.uid)) continue
