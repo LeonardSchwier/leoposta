@@ -352,7 +352,7 @@ test.describe('switching messages', () => {
     // Hold the INBOX body until the Archive message is open.
     let release: () => void = () => {}
     const held = new Promise<void>((r) => { release = r })
-    await app.route(/\/api\/message\/1\?folder=INBOX/, async (route) => { await held; await route.continue() })
+    await app.route(/\/api\/message\/1\?folder=INBOX(&|$)/, async (route) => { await held; await route.continue() })
     await row(app, 'Inbox uid one').click({ position: { x: 60, y: 30 } })
     await app.locator('.sidebar').getByText('Archive', { exact: true }).first().click()
     await openMessage(app, 'Archive uid one', { reload: false })
