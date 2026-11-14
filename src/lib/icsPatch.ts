@@ -16,7 +16,21 @@ export interface EventEdit {
   /** New start/end for that occurrence, in the same formats (end exclusive for all-day). */
   start: string
   end: string
+  /**
+   * The repeat rule: undefined keeps the event's RRULE as it is, a string
+   * replaces it, null removes it — with its EXDATE/RDATE and the overridden
+   * occurrences (RECURRENCE-ID), which only make sense inside a series.
+   */
+  rrule?: string | null
+  /**
+   * The browser's zone. A timed event that becomes a series while its start
+   * is a UTC instant is rewritten to DTSTART;TZID=<zone> (plus VTIMEZONE), so
+   * it repeats at the same local time across DST and BYDAY means local weekdays.
+   */
+  zone?: string
 }
+
+import { buildVTimezone, isKnownZone, utcToWall, wallToIcs, wallToUtc } from './tz'
 
 const DAY = 86_400_000
 
@@ -82,15 +96,14 @@ function serverValueMs(v: string): number | null {
   return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes(), d.getUTCSeconds()).getTime()
 }
 
-/**
- * Apply `edit` to the master VEVENT of `uid` in `ics`. Returns null when the
- * object has no such VEVENT (the caller then builds a fresh one).
- */
-export function patchEventICS(ics: string, uid: string, edit: EventEdit): string | null {
-  const lines = ics.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n[ \t]/g, '').split('\n')
-  // Locate the master VEVENT (no RECURRENCE-ID) for this UID.
-  let begin = -1, end = -1
-  for (let i = 0; i < lines.length && end === -1; i++) {
+function unfold(ics: string): string[] {
+  return ics.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n[ \t]/g, '').split('\n')
+}
+
+/** Line ranges [begin, end] (BEGIN:VEVENT .. END:VEVENT) of each top-level VEVENT of `uid`. */
+function eventBlocks(lines: string[], uid: string): { begin: number, end: number, override: boolean }[] {
+  const out: { begin: number, end: number, override: boolean }[] = []
+  for (let i = 0; i < lines.length; i++) {
     if (!/^BEGIN:VEVENT$/i.test(lines[i].trim())) continue
     let depth = 0, j = i + 1, isUid = false, isOverride = false
     for (; j < lines.length; j++) {
@@ -104,15 +117,110 @@ export function patchEventICS(ics: string, uid: string, edit: EventEdit): string
         if (p.name === 'RECURRENCE-ID') isOverride = true
       }
     }
-    if (isUid && !isOverride) { begin = i; end = j } else i = j
+    if (isUid && j < lines.length) out.push({ begin: i, end: j, override: isOverride })
+    i = j
   }
-  if (begin === -1 || end === -1) return null
+  return out
+}
+
+/** The master VEVENT (no RECURRENCE-ID) of `uid`. */
+function findMaster(lines: string[], uid: string): { begin: number, end: number } | null {
+  return eventBlocks(lines, uid).find(b => !b.override) ?? null
+}
+
+/** Top-level properties of a VEVENT body (nested VALARM skipped). */
+function topProps(body: string[]): { name: string, params: string, value: string }[] {
+  const out = []
+  let depth = 0
+  for (const l of body) {
+    if (/^BEGIN:/i.test(l)) { depth++; continue }
+    if (/^END:/i.test(l)) { depth--; continue }
+    if (!depth) out.push(splitProp(l))
+  }
+  return out
+}
+
+function tzidOf(params: string): string | null {
+  const m = /;TZID=("?)([^";:]+)\1/i.exec(params)
+  return m ? m[2].replace(/^\//, '') : null
+}
+
+/**
+ * How the master's DTSTART is written: all-day (DATE), UTC, TZID or floating.
+ * `zone` is where its dates are read (TZID; UTC -> the browser's zone).
+ */
+export function masterStartInfo(ics: string, uid: string): { kind: 'date' | 'utc' | 'local', tzid: string | null } | null {
+  const lines = unfold(ics)
+  const m = findMaster(lines, uid)
+  if (!m) return null
+  const p = topProps(lines.slice(m.begin + 1, m.end)).find(x => x.name === 'DTSTART')
+  const t = p && parseTime(p.value, p.params)
+  if (!p || !t) return null
+  return { kind: t.kind, tzid: t.kind === 'local' ? tzidOf(p.params) : null }
+}
+
+/**
+ * Local date ("YYYY-MM-DD", browser zone) of the master's DTSTART: the day a
+ * monthly/yearly series is anchored to, which differs from the day of the
+ * occurrence the editor was opened on.
+ */
+export function masterStartLocalDate(ics: string, uid: string): string | null {
+  const lines = unfold(ics)
+  const m = findMaster(lines, uid)
+  if (!m) return null
+  const p = topProps(lines.slice(m.begin + 1, m.end)).find(x => x.name === 'DTSTART')
+  const t = p && parseTime(p.value, p.params)
+  if (!p || !t) return null
+  const d = new Date(t.ms)
+  let local: Date
+  if (t.kind === 'date' || (t.kind === 'local' && !isKnownZone(tzidOf(p.params)))) {
+    local = new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())
+  } else if (t.kind === 'utc') {
+    local = d
+  } else {
+    local = new Date(wallToUtc({ y: d.getUTCFullYear(), mo: d.getUTCMonth() + 1, d: d.getUTCDate(), h: d.getUTCHours(), mi: d.getUTCMinutes(), s: d.getUTCSeconds() }, tzidOf(p.params)!))
+  }
+  return `${local.getFullYear()}-${String(local.getMonth() + 1).padStart(2, '0')}-${String(local.getDate()).padStart(2, '0')}`
+}
+
+const WD = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA']
+
+/**
+ * A weekly series whose DTSTART falls on a day its BYDAY does not list is
+ * ambiguous (RFC 5545 counts DTSTART as an occurrence, most servers do not).
+ * Returns that DTSTART weekday ("MO") then, else null.
+ */
+export function weeklyStartMismatch(ics: string, uid: string): string | null {
+  const lines = unfold(ics)
+  const m = findMaster(lines, uid)
+  if (!m) return null
+  const props = topProps(lines.slice(m.begin + 1, m.end))
+  const rrule = props.find(x => x.name === 'RRULE')?.value.toUpperCase() || ''
+  const ds = props.find(x => x.name === 'DTSTART')
+  if (!/(^|;)FREQ=WEEKLY(;|$)/.test(rrule) || !ds) return null
+  const by = /(?:^|;)BYDAY=([^;]+)/.exec(rrule)
+  const dm = /^(\d{4})(\d{2})(\d{2})/.exec(ds.value.trim())
+  if (!by || !dm) return null
+  const wd = WD[new Date(Date.UTC(+dm[1], +dm[2] - 1, +dm[3])).getUTCDay()]
+  return by[1].split(',').some(d => d.trim().replace(/^[+-]?\d+/, '') === wd) ? null : wd
+}
+
+/**
+ * Apply `edit` to the master VEVENT of `uid` in `ics`. Returns null when the
+ * object has no such VEVENT (the caller then builds a fresh one).
+ */
+export function patchEventICS(ics: string, uid: string, edit: EventEdit): string | null {
+  const lines = unfold(ics)
+  const found = findMaster(lines, uid)
+  if (!found) return null
+  const { begin, end } = found
 
   const body = lines.slice(begin + 1, end)
   let dtstart: { params: string, t: TimeVal } | null = null
   let dtend: TimeVal | null = null
   let duration = false
   let sequence = 0
+  let hadRule = false
   {
     let depth = 0
     for (const l of body) {
@@ -124,6 +232,7 @@ export function patchEventICS(ics: string, uid: string, edit: EventEdit): string
       if (p.name === 'DTEND') dtend = parseTime(p.value, p.params)
       if (p.name === 'DURATION') duration = true
       if (p.name === 'SEQUENCE') sequence = parseInt(p.value, 10) || 0
+      if (p.name === 'RRULE') hadRule = true
     }
   }
 
@@ -132,14 +241,39 @@ export function patchEventICS(ics: string, uid: string, edit: EventEdit): string
   const occMs = serverValueMs(edit.occurrenceStart)
   if (newStartMs === null || newEndMs === null) return null
 
+  const removeRule = edit.rrule === null
+  const willHaveRule = edit.rrule === undefined ? hadRule : !!edit.rrule
+  const zone = isKnownZone(edit.zone) ? edit.zone : null
+  const wasAllDay = dtstart?.t.kind === 'date'
+  // A timed series must repeat in local time: a UTC (or all-day) start that
+  // becomes a timed series is written in the browser's zone. An existing
+  // series keeps its form (its EXDATEs and overrides are written in it).
+  const toZone = !!zone && willHaveRule && !edit.allDay &&
+    ((!hadRule && (!dtstart || dtstart.t.kind === 'utc' || wasAllDay)) || (hadRule && wasAllDay))
+
   // New DTSTART/DTEND lines.
   let timeLines: string[]
-  const wasAllDay = dtstart?.t.kind === 'date'
-  if (dtstart && occMs !== null && wasAllDay === edit.allDay) {
+  const dur = newEndMs - newStartMs
+  if (toZone && zone) {
+    timeLines = [`DTSTART;TZID=${zone}:${wallToIcs(utcToWall(newStartMs, zone))}`, `DTEND;TZID=${zone}:${wallToIcs(utcToWall(newEndMs, zone))}`]
+  } else if (removeRule && hadRule && dtstart && wasAllDay === edit.allDay) {
+    // A series turned into a single event: it is the occurrence the editor
+    // shows, at the time the editor shows, in the start's own form.
+    const ds = dtstart
+    const at = (abs: number, server: string): TimeVal => {
+      if (ds.t.kind === 'date') return parseTime(server, '') ?? { kind: 'date', ms: abs }
+      if (ds.t.kind === 'utc') return { kind: 'utc', ms: abs }
+      const tz = tzidOf(ds.params)
+      if (isKnownZone(tz)) { const w = utcToWall(abs, tz); return { kind: 'local', ms: Date.UTC(w.y, w.mo - 1, w.d, w.h, w.mi, w.s) } }
+      const d = new Date(abs)
+      return { kind: 'local', ms: Date.UTC(d.getFullYear(), d.getMonth(), d.getDate(), d.getHours(), d.getMinutes(), d.getSeconds()) }
+    }
+    timeLines = [`DTSTART${ds.params}:${formatTime(at(newStartMs, edit.start))}`]
+    if (dtend || duration || dur > 0 || edit.allDay) timeLines.push(`DTEND${ds.params}:${formatTime(at(newEndMs, edit.end))}`)
+  } else if (dtstart && occMs !== null && wasAllDay === edit.allDay) {
     // Same kind: shift the series start by how far this occurrence moved,
     // keep the value type and its TZID.
     const delta = newStartMs - occMs
-    const dur = newEndMs - newStartMs
     const shift = (t: TimeVal, by: number): TimeVal => ({ kind: t.kind, ms: t.kind === 'date' ? t.ms + Math.round(by / DAY) * DAY : t.ms + by })
     const s = shift(dtstart.t, delta)
     const unchangedEnd = delta === 0 && dtend && (dtend.ms - dtstart.t.ms) === (edit.allDay ? Math.round(dur / DAY) * DAY : dur)
@@ -156,6 +290,8 @@ export function patchEventICS(ics: string, uid: string, edit: EventEdit): string
 
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+/, '')
   const replaced = new Set(['DTSTART', 'DTEND', 'DURATION', 'SUMMARY', 'LOCATION', 'DESCRIPTION', 'ATTENDEE', 'DTSTAMP', 'LAST-MODIFIED', 'SEQUENCE'])
+  if (edit.rrule !== undefined) replaced.add('RRULE')
+  if (removeRule) { replaced.add('EXDATE'); replaced.add('RDATE') }
   const kept: string[] = []
   let depth = 0
   for (const l of body) {
@@ -175,6 +311,7 @@ export function patchEventICS(ics: string, uid: string, edit: EventEdit): string
     `LAST-MODIFIED:${stamp}`,
     `SEQUENCE:${sequence + 1}`,
     ...timeLines,
+    edit.rrule ? `RRULE:${edit.rrule}` : null,
     edit.summary ? `SUMMARY:${escText(edit.summary)}` : null,
     edit.location ? `LOCATION:${escText(edit.location)}` : null,
     edit.description ? `DESCRIPTION:${escText(edit.description)}` : null,
@@ -188,6 +325,27 @@ export function patchEventICS(ics: string, uid: string, edit: EventEdit): string
   const firstNested = kept.findIndex((l) => /^BEGIN:/i.test(l))
   const at = firstNested === -1 ? kept.length : firstNested
   const newBody = [...kept.slice(0, at), ...props, ...kept.slice(at)]
-  const out = [...lines.slice(0, begin + 1), ...newBody, ...lines.slice(end)].filter((l) => l.trim() !== '')
+  let out = [...lines.slice(0, begin + 1), ...newBody, ...lines.slice(end)]
+  if (removeRule) {
+    // Overridden occurrences of a series that no longer exists go with it.
+    const drop = eventBlocks(out, uid).filter(b => b.override)
+    for (const b of drop.reverse()) out.splice(b.begin, b.end - b.begin + 1)
+  }
+  if (toZone && zone && !hasVTimezone(out, zone)) {
+    const firstEvent = out.findIndex(l => /^BEGIN:VEVENT$/i.test(l.trim()))
+    out.splice(firstEvent, 0, ...buildVTimezone(zone, new Date(newStartMs).getUTCFullYear()))
+  }
+  out = out.filter((l) => l.trim() !== '')
   return out.map(fold).join('\r\n') + '\r\n'
+}
+
+function hasVTimezone(lines: string[], tz: string): boolean {
+  let inTz = false
+  for (const l of lines) {
+    const t = l.trim()
+    if (/^BEGIN:VTIMEZONE$/i.test(t)) inTz = true
+    else if (/^END:VTIMEZONE$/i.test(t)) inTz = false
+    else if (inTz) { const p = splitProp(t); if (p.name === 'TZID' && p.value.trim().replace(/^\//, '') === tz) return true }
+  }
+  return false
 }

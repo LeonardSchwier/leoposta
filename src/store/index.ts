@@ -122,7 +122,6 @@ export interface State {
   composeDraft: ComposeDraft | null
   isLoading: boolean
   error: string | null
-  threadGrouping: boolean
   refreshInterval: RefreshMode
 }
 
@@ -149,7 +148,6 @@ const initialState: State = {
   composeDraft: null,
   isLoading: false,
   error: null,
-  threadGrouping: true,
   refreshInterval: 'instant',
 }
 
@@ -314,9 +312,6 @@ export function clearCompose() {
     composeOriginalMessage: null,
     composeDraft: null
   }))
-}
-export function setThreadGrouping(enabled: boolean) {
-  store.update(s => ({ ...s, threadGrouping: enabled }))
 }
 // Non-reactive getter for use in event handlers
 export function getState(): State {

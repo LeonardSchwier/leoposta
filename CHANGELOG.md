@@ -4,6 +4,12 @@ All notable changes. No tagged release has been published yet.
 
 ## Unreleased
 
+### Added
+- Calendar: repeating events from the event editor. A "Repeat" control (Never / Daily / Weekly on chosen weekdays / Monthly on the start's day / Yearly; every N; ends never, after N times or on a date) writes an RFC 5545 RRULE. A new timed series is stored as `DTSTART;TZID=<your zone>` with a VTIMEZONE, so it stays at the same local time across summer time and BYDAY means your weekday; UNTIL is UTC for timed events and a DATE for all-day ones. Editing a series shows its rule; changing it replaces only RRULE (EXDATE, changed occurrences, alarms stay); "Never" turns the series into one event and drops its EXDATEs and changed occurrences. A rule the control cannot express (BYSETPOS, "2nd Tuesday", several BY* values, ...) is shown read-only as "Custom repeat" and kept as it is.
+
+### Removed
+- Settings: the "Group messages by thread" checkbox. There is no conversation view, so it did nothing.
+
 ### Fixed
 - Delete destroyed mail: the Delete button sent `DELETE /api/message/:id` without `toTrash`, and the server then expunged the message, in every folder, with no way back. It now moves the message to the server's Trash (the mailbox flagged `\Trash`, else one called `Trash`, created if the server has none) and removes it for good only when the selected mailbox is that Trash (compared by the server's full path, so a namespace prefix such as `INBOX.Trash` is handled). A failed move or delete (ImapFlow answers `false` instead of throwing) is now a 500 the UI shows, not a silent success that dropped a message the server still had, and a refusal no longer logs the shared IMAP connection out. `toTrash` is ignored (`?toTrash=false` was the truthy string `"false"`). A message id that is not a positive integer is a 400.
 - Archive and other moves (`POST /api/message/:id/move`) used ImapFlow's `messageMove`, which on a server without the MOVE extension copies and then expunges even when the copy failed. Moves now copy, check, and only then remove the original.
