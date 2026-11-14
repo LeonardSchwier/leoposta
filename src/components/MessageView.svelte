@@ -1,18 +1,22 @@
 <script lang="ts">
-  import { store, getState, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, deleteMessage, updateMessage, selectMessage } from '../store'
+  import { store, getState, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, selectMessage } from '../store'
   import { sanitizeHtml, hasRemoteImages } from '../lib/sanitizeHtml'
   import { MailAPI } from '../api'
   import { downloadAttachment } from '../lib/attachmentDownload'
 
+  import { hasFlag as messageHasFlag, isSpecialFolder, type MessageAction } from '../lib/messageActions'
+
+  // Every toolbar action names the message shown here (lib/messageActions.ts).
   let {
-    onDelete: propDelete,
-    onArchive: propArchive,
-    onStar: propStar,
+    onAction,
+    onMoveRequest,
+    onEditDraft,
     onReply: propReply
   }: {
-    onDelete?: () => void
-    onArchive?: () => void
-    onStar?: () => void
+    onAction?: (id: string, action: MessageAction) => void
+    onMoveRequest?: (id: string) => void
+    /** Set while the Drafts mailbox is open: reopen this draft in Compose. */
+    onEditDraft?: (id: string) => void
     onReply?: () => void
   } = $props()
 
@@ -49,30 +53,12 @@
     setComposing(true)
   }
 
-  function handleDelete() {
-    if (propDelete) { propDelete(); return }
-    const msg = getCurrentMessage()
-    if (!msg) return
-    deleteMessage(msg.id)
-  }
+  const inJunk = $derived(isSpecialFolder($store.folders, $store.activeFolder, '\\Junk', 'Junk'))
+  const inArchive = $derived(isSpecialFolder($store.folders, $store.activeFolder, '\\Archive', 'Archive'))
 
-  function handleArchive() {
-    if (propArchive) { propArchive(); return }
+  function act(action: MessageAction) {
     const msg = getCurrentMessage()
-    if (!msg) return
-    deleteMessage(msg.id)
-  }
-
-  function handleStar() {
-    if (propStar) { propStar(); return }
-    const msg = getCurrentMessage()
-    if (!msg) return
-    const flags = msg.flags || []
-    const hasFlag = flags.includes('\\Flagged') || flags.includes('Flagged')
-    const newFlags = hasFlag
-      ? flags.filter(f => f !== '\\Flagged' && f !== 'Flagged')
-      : [...flags, '\\Flagged']
-    updateMessage(msg.id, { flags: newFlags })
+    if (msg) onAction?.(msg.id, action)
   }
 
   // The last failed download, keyed by message so it does not follow the user
@@ -115,13 +101,29 @@
     <div class="message-view">
     <div class="view-header">
       <div class="header-actions">
-        <button class="action-btn icon" class:starred={hasFlag(msg.flags || [], 'Flagged')} onclick={handleStar} title="Star" aria-label="Star" aria-pressed={hasFlag(msg.flags || [], 'Flagged') ? 'true' : 'false'}>
+        <button class="action-btn icon" class:starred={hasFlag(msg.flags || [], 'Flagged')} onclick={() => act(hasFlag(msg.flags || [], 'Flagged') ? 'unstar' : 'star')} title={hasFlag(msg.flags || [], 'Flagged') ? 'Unstar (s)' : 'Star (s)'} aria-label={hasFlag(msg.flags || [], 'Flagged') ? 'Unstar' : 'Star'} aria-pressed={hasFlag(msg.flags || [], 'Flagged') ? 'true' : 'false'}>
           {#if hasFlag(msg.flags || [], 'Flagged')}⭐{:else}☆{/if}
         </button>
+        {#if onEditDraft}
+          <button class="action-btn" onclick={() => onEditDraft?.(msg.id)} title="Edit draft" aria-label="Edit draft">✎ Edit draft</button>
+        {/if}
         <button class="action-btn" onclick={handleReply} title="Reply" aria-label="Reply">↩ Reply</button>
         <button class="action-btn" onclick={handleForward} title="Forward" aria-label="Forward">↪ Forward</button>
-        <button class="action-btn icon" onclick={handleArchive} title="Archive" aria-label="Archive">📦</button>
-        <button class="action-btn icon danger" onclick={handleDelete} title="Delete" aria-label="Delete">🗑</button>
+        {#if messageHasFlag(msg, '\\Seen')}
+          <button class="action-btn icon" onclick={() => act('unread')} title="Mark as unread (u)" aria-label="Mark as unread">●</button>
+        {:else}
+          <button class="action-btn icon" onclick={() => act('read')} title="Mark as read (u)" aria-label="Mark as read">○</button>
+        {/if}
+        <button class="action-btn icon" onclick={() => onMoveRequest?.(msg.id)} title="Move to folder (v)" aria-label="Move to folder">📁</button>
+        {#if inJunk}
+          <button class="action-btn icon" onclick={() => act('notJunk')} title="Not junk" aria-label="Not junk">📥</button>
+        {:else}
+          <button class="action-btn icon" onclick={() => act('junk')} title="Mark as junk" aria-label="Mark as junk">🚫</button>
+        {/if}
+        {#if !inArchive}
+          <button class="action-btn icon" onclick={() => act('archive')} title="Archive (a)" aria-label="Archive">📦</button>
+        {/if}
+        <button class="action-btn icon danger" onclick={() => act('delete')} title="Delete (d)" aria-label="Delete">🗑</button>
       </div>
       <div class="header-left">
         <button class="back-btn" aria-label="Back to message list" onclick={() => selectMessage(null)}>←</button>

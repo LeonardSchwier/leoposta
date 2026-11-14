@@ -31,6 +31,14 @@ export function apiFetch(input: string, init: RequestInit = {}): Promise<Respons
   return fetch(input, { ...init, headers: authHeaders(init.headers) })
 }
 
+/** A failed API call; `status` is the HTTP status (404: the message is gone). */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+    this.name = 'ApiError'
+  }
+}
+
 async function api(path: string, options: RequestInit = {}): Promise<any> {
   const res = await fetch(`${API_BASE}/api${path}`, {
     ...options,
@@ -38,7 +46,7 @@ async function api(path: string, options: RequestInit = {}): Promise<any> {
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || `API error ${res.status}`)
+    throw new ApiError(err.error || `API error ${res.status}`, res.status)
   }
   return res.json()
 }
@@ -65,15 +73,25 @@ export const MailAPI = {
   search: (query: string, folder = 'INBOX') => api(`/search?q=${enc(query)}&folder=${enc(folder)}`),
   send: (data: any) => api('/send', { method: 'POST', body: JSON.stringify(data) }),
   /** Store the compose window as a draft in the account's Drafts mailbox.
-   *  Resolves { success, folder, uid? }: `folder` is the real IMAP path. */
-  saveDraft: (data: any): Promise<{ success: boolean, folder: string, uid?: number }> =>
+   *  Resolves { success, folder, uid? }: `folder` is the real IMAP path. With
+   *  `replaceUid` (a reopened draft) the server removes that old draft once the
+   *  new one is stored. */
+  saveDraft: (data: any): Promise<{ success: boolean, folder: string, uid?: number, replaced?: boolean }> =>
     api('/drafts', { method: 'POST', body: JSON.stringify(data) }),
-  delete: (id: string, folder: string) => api(`/message/${enc(id)}?folder=${enc(folder)}`, { method: 'DELETE' }),
-  move: (id: string, from: string, to: string) => api(`/message/${id}/move`, {
+  /** Remove a draft from the Drafts mailbox for good (it has been sent). */
+  discardDraft: (uid: string): Promise<{ success: boolean, discarded: boolean }> =>
+    api(`/drafts/${enc(uid)}`, { method: 'DELETE' }),
+  /** Move to Trash (or, inside Trash, delete for good). Resolves { trashed, folder }. */
+  delete: (id: string, folder: string): Promise<{ success: boolean, trashed: boolean, folder: string }> =>
+    api(`/message/${enc(id)}?folder=${enc(folder)}`, { method: 'DELETE' }),
+  move: (id: string, from: string, to: string): Promise<{ success: boolean, folder: string }> => api(`/message/${enc(id)}/move`, {
     method: 'POST', body: JSON.stringify({ from, to })
   }),
+  /** Move to the server's special-use mailbox (RFC 6154), whatever it is called. */
+  moveToSpecial: (id: string, from: string, specialUse: '\\Archive' | '\\Junk' | '\\Trash' | '\\Inbox'): Promise<{ success: boolean, folder: string }> =>
+    api(`/message/${enc(id)}/move`, { method: 'POST', body: JSON.stringify({ from, toSpecialUse: specialUse }) }),
   setFlags: (id: string, folder: string, add: string[], remove: string[]) =>
-    api(`/message/${id}/flags`, {
+    api(`/message/${enc(id)}/flags`, {
       method: 'POST', body: JSON.stringify({ folder, add, remove })
     }),
   addFolder: (name: string, parentId?: string) => api('/folder', {
