@@ -66,3 +66,48 @@ test('parseVcf: trailing junk between END:VCARD and next BEGIN is dropped', () =
   assert.equal(cards.length, 2)
   assert.deepEqual(errors, [])
 })
+
+test('parseVcf: a card is sent with exactly one END:VCARD (was doubled, servers rejected it)', () => {
+  const { cards } = parseVcf(GOOD_SINGLE)
+  assert.equal((cards[0].raw.match(/END:VCARD/g) || []).length, 1)
+  assert.match(cards[0].raw, /^BEGIN:VCARD\r\n[\s\S]*\r\nEND:VCARD\r\n$/)
+})
+
+test('parseVcf: a card without UID gets the synthesized UID inside the card too', () => {
+  const { cards } = parseVcf('BEGIN:VCARD\nVERSION:4.0\nFN:NoUid\nEND:VCARD\n')
+  assert.match(cards[0].raw, new RegExp(`\\r\\nUID:${cards[0].uid}\\r\\n`))
+})
+
+test('parseCard: folded lines, item groups, vCard 4 URIs, escapes and unicode', async () => {
+  const { parseCard } = await import('./vcf.js')
+  const c = parseCard([
+    'BEGIN:VCARD', 'VERSION:4.0', 'UID:urn:uuid:1234', 'FN:Jürgen Müller-Lüdenscheidt\\, Dr.',
+    'item1.EMAIL;TYPE=work:juergen@example.test', 'EMAIL:j2@example.test',
+    'TEL;VALUE=uri;TYPE=cell:tel:+49-170-1234', 'ORG:Größe GmbH;Abteilung',
+    'NOTE:Line one\\nline two that is folded', '  and continues', 'ADR;TYPE=home:;;Hauptstr. 1;Köln;;50667;DE', 'END:VCARD'
+  ].join('\r\n'))
+  assert.equal(c.uid, '1234')
+  assert.equal(c.name, 'Jürgen Müller-Lüdenscheidt, Dr.')
+  assert.deepEqual(c.emails, ['juergen@example.test', 'j2@example.test'])
+  assert.equal(c.email, 'juergen@example.test')
+  assert.equal(c.phone, '+49-170-1234')
+  assert.equal(c.org, 'Größe GmbH')
+  assert.equal(c.notes, 'Line one\nline two that is folded and continues')
+  assert.equal(c.address, 'Hauptstr. 1, Köln, 50667, DE')
+  assert.deepEqual(c.adr, { street: 'Hauptstr. 1', locality: 'Köln', region: '', postalCode: '50667', country: 'DE' })
+})
+
+test('parseCard: vCard 3.0 with only N gets a display name', async () => {
+  const { parseCard } = await import('./vcf.js')
+  assert.equal(parseCard('BEGIN:VCARD\r\nVERSION:3.0\r\nN:Doe;Jane;;;\r\nEND:VCARD').name, 'Jane Doe')
+})
+
+test('parseVcf: a card without FN gets one from N (servers reject cards without FN)', async () => {
+  const { parseVcf, parseCard } = await import('./vcf.js')
+  const { cards, errors } = parseVcf('BEGIN:VCARD\r\nVERSION:3.0\r\nUID:x1\r\nN:Suzuki;Hanako;;;\r\nEMAIL:h@example.test\r\nEND:VCARD\r\n')
+  assert.deepEqual(errors, [])
+  assert.match(cards[0].raw, /\r\nFN:Hanako Suzuki\r\nEND:VCARD\r\n$/)
+  assert.equal(parseCard(cards[0].raw).name, 'Hanako Suzuki')
+  const withFn = parseVcf('BEGIN:VCARD\r\nVERSION:4.0\r\nUID:x2\r\nFN:Kept\r\nEND:VCARD\r\n').cards[0].raw
+  assert.equal(withFn.match(/FN:/g).length, 1)
+})

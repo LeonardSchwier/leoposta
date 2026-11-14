@@ -44,9 +44,6 @@ const fakeDav = http.createServer((req, res) => {
   ) }
 })
 await new Promise((resolve, reject) => { fakeDav.once('error', reject); fakeDav.listen(0, '127.0.0.1', () => resolve()) })
-process.env.DAV_HOST = '127.0.0.1'
-process.env.DAV_PORT = String(fakeDav.address().port)
-process.env.DAV_TLS = 'false'
 
 const { createApp } = await import('./index.js')
 
@@ -139,7 +136,7 @@ test('calendar events is cached and invalidated on write', async () => {
   assert.equal(davCalls.report, reportBefore, 'cache hit → no new REPORT')
 
   // Invalidation on write
-  const ics = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:x\r\nBEGIN:VEVENT\r\nUID:42\r\nSUMMARY:X\r\nEND:VEVENT\r\nEND:VCALENDAR'
+  const ics = 'BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:x\r\nBEGIN:VEVENT\r\nUID:42\r\nDTSTART:20260101T100000Z\r\nSUMMARY:X\r\nEND:VEVENT\r\nEND:VCALENDAR'
   const put = await fetch(`${base}/api/calendar/event`, {
     method: 'PUT', headers: authed,
     body: JSON.stringify({ calendar: 'personal', ics, uid: '42' }),

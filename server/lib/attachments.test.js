@@ -190,7 +190,7 @@ test('safeContentType passes a plain type/subtype and refuses everything else', 
   }
 })
 
-test('mergePgpAttachments appends decrypted attachments without an id and skips duplicates by name', () => {
+test('mergePgpAttachments appends decrypted attachments with a pgp-<index> id and skips duplicates by name', () => {
   const own = [{ id: '0', filename: 'a.pdf', size: 1 }]
   const pgp = [
     { id: 'a.pdf', filename: 'a.pdf', size: 1 },
@@ -199,7 +199,7 @@ test('mergePgpAttachments appends decrypted attachments without an id and skips 
   const merged = mergePgpAttachments(own, pgp)
   assert.deepEqual(merged.map((a) => a.filename), ['a.pdf', 'b.txt'])
   assert.equal(merged[0].id, '0')
-  assert.equal('id' in merged[1], false)
+  assert.equal(merged[1].id, 'pgp-1', 'index in the decrypted message, so the download route finds it')
   assert.deepEqual(mergePgpAttachments(own, undefined), own)
 })
 

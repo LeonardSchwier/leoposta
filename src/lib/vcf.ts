@@ -11,6 +11,7 @@ export interface CalEvent {
   href?: string
   ics?: string
   attendees?: string[] // email addresses; emitted as ATTENDEE;CN=... mailto:addr
+  rrule?: string // kept when an existing series is edited
 }
 
 function foldLine(line: string): string {
@@ -51,6 +52,7 @@ export function eventToICS(ev: Omit<CalEvent, 'uid'>, uid: string): string {
   if (ev.summary) lines.push(`SUMMARY:${escIcs(ev.summary)}`)
   if (ev.location) lines.push(`LOCATION:${escIcs(ev.location)}`)
   if (ev.description) lines.push(`DESCRIPTION:${escIcs(ev.description)}`)
+  if (ev.rrule && /^[A-Z0-9=;,:+-]+$/i.test(ev.rrule)) lines.push(`RRULE:${ev.rrule}`)
   if (ev.attendees && ev.attendees.length) {
     for (const rawAddr of ev.attendees) {
       const addr = (rawAddr || '').trim()
@@ -72,7 +74,7 @@ export interface ContactInput {
   org?: string
   notes?: string
   website?: string
-  addressComponents?: { street?: string; locality?: string; region?: string; postalCode?: string }
+  addressComponents?: { street?: string; locality?: string; region?: string; postalCode?: string; country?: string }
   uid?: string
 }
 
@@ -80,34 +82,76 @@ export function contactToVCF(name: string, email: string, phone: string, org: st
   return contactToVCFObj({ name, email, phone, org, uid })
 }
 
-export function contactToVCFObj(c: ContactInput): string {
-  const id = c.uid || 'leoposta_' + Date.now()
-  const lines = [
-    'BEGIN:VCARD',
-    'VERSION:3.0',
-    `UID:${id}`,
-    `FN:${(c.name || '').replace(/,/g, '\\,').replace(/;/g, '\\;')}`,
-  ]
-  if (c.email) lines.push(`EMAIL;TYPE=INTERNET:${c.email}`)
-  if (c.phone) lines.push(`TEL;TYPE=CELL:${c.phone}`)
-  if (c.org) lines.push(`ORG:${c.org.replace(/;/g, '\\;').replace(/,/g, '\\,')}`)
-  if (c.notes) lines.push(`NOTE:${c.notes.replace(/,/g, '\\,').replace(/;/g, '\\;')}`)
-  if (c.website) lines.push(`URL:${c.website}`)
+/** vCard TEXT escaping (RFC 6350 §3.4): backslash, newline, comma, semicolon. */
+function escVcf(v: string): string {
+  return (v || '').replace(/\\/g, '\\\\').replace(/\r?\n/g, '\\n').replace(/,/g, '\\,').replace(/;/g, '\\;')
+}
+
+/** Fold at 75 octets without splitting a UTF-8 character. */
+function foldOctets(line: string): string {
+  const enc = new TextEncoder()
+  const out: string[] = []
+  let cur = ''
+  let curBytes = 0
+  for (const ch of line) {
+    const b = enc.encode(ch).length
+    const limit = out.length ? 74 : 75 // continuation lines start with a space
+    if (curBytes + b > limit) { out.push(cur); cur = ''; curBytes = 0 }
+    cur += ch
+    curBytes += b
+  }
+  out.push(cur)
+  return out.join('\r\n ')
+}
+
+/** Property name of an unfolded content line ("item1.EMAIL;TYPE=x:..." -> "EMAIL"). */
+function propName(line: string): string {
+  const m = /^(?:[A-Za-z0-9-]+\.)?([A-Za-z0-9-]+)[;:]/.exec(line)
+  return m ? m[1].toUpperCase() : ''
+}
+
+/**
+ * Build the vCard for the contact editor. With `base` (the card as stored on
+ * the server) every property the editor does not show is kept: further
+ * e-mail addresses and phone numbers, photos, birthdays, categories, the
+ * vCard version. Only FN/N/ORG/NOTE/URL and the first EMAIL/TEL/ADR are
+ * replaced by the edited values.
+ */
+export function contactToVCFObj(c: ContactInput, base?: string): string {
+  const id = c.uid || 'leoposta-' + (globalThis.crypto?.randomUUID?.() ?? Date.now())
+  const kept: string[] = []
+  let version = '3.0'
+  if (base) {
+    const seen = new Set<string>()
+    const lines = base.replace(/\r\n/g, '\n').replace(/\r/g, '\n').replace(/\n[ \t]/g, '').split('\n')
+    for (const line of lines) {
+      const name = propName(line)
+      if (!name || name === 'BEGIN' || name === 'END' || name === 'UID' || name === 'REV' || name === 'PRODID') continue
+      if (name === 'VERSION') { version = line.slice(line.indexOf(':') + 1).trim() || version; continue }
+      if (['FN', 'N', 'ORG', 'NOTE', 'URL'].includes(name)) continue
+      if (['EMAIL', 'TEL', 'ADR'].includes(name) && !seen.has(name)) { seen.add(name); continue }
+      kept.push(line)
+    }
+  }
+  const name = (c.name || '').trim()
+  const words = name.split(/\s+/).filter(Boolean)
+  const family = words.length > 1 ? words[words.length - 1] : ''
+  const given = words.length > 1 ? words.slice(0, -1).join(' ') : name
+  const v4 = version.startsWith('4')
+  const lines = ['BEGIN:VCARD', `VERSION:${version}`, `UID:${id}`, `FN:${escVcf(name)}`, `N:${escVcf(family)};${escVcf(given)};;;`]
+  if (c.email) lines.push(v4 ? `EMAIL:${c.email.trim()}` : `EMAIL;TYPE=INTERNET:${c.email.trim()}`)
+  if (c.phone) lines.push(v4 ? `TEL;TYPE=cell:${c.phone.trim()}` : `TEL;TYPE=CELL:${c.phone.trim()}`)
+  if (c.org) lines.push(`ORG:${escVcf(c.org)}`)
+  if (c.notes) lines.push(`NOTE:${escVcf(c.notes)}`)
+  if (c.website) lines.push(`URL:${c.website.trim()}`)
   const ac = c.addressComponents
-  if (ac && (ac.street || ac.locality || ac.region || ac.postalCode)) {
-    const parts = [
-      '',                       // PO box
-      ac.street || '',          // extended
-      '',                       // street
-      ac.locality || '',        // locality (city)
-      ac.region || '',          // region (state)
-      ac.postalCode || '',      // postal code
-      '',                       // country
-    ]
+  if (ac && (ac.street || ac.locality || ac.region || ac.postalCode || ac.country)) {
+    // pobox;extended;street;locality;region;postalCode;country
+    const parts = ['', '', ac.street, ac.locality, ac.region, ac.postalCode, ac.country].map(x => escVcf(x || ''))
     lines.push(`ADR;TYPE=HOME:${parts.join(';')}`)
   }
-  lines.push('END:VCARD')
-  return lines.map(foldLine).join('\r\n')
+  lines.push(...kept, 'END:VCARD')
+  return lines.map(foldOctets).join('\r\n') + '\r\n'
 }
 
 // Parse a naive ICS (single VEVENT or many) into raw parts.

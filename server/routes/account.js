@@ -1,9 +1,10 @@
 import { Router } from 'express'
 import {
   state, getAccount, getActiveAccount,
-  addAccount, updateAccount, removeAccount
+  addAccount, updateAccount, removeAccount, accountPayloadFrom, mergeAccount
 } from '../lib/state.js'
-import { dropPool } from '../lib/imap.js'
+import { dropPool, verifyAccount } from '../lib/imap.js'
+import { clearDavBaseCache } from '../lib/dav.js'
 
 const router = Router()
 
@@ -19,10 +20,38 @@ router.get('/accounts', (req, res) => {
   res.json(state.accounts.map(sanitize))
 })
 
-router.post('/accounts', (req, res) => {
+// A DAV URL, when given, must be an http(s) URL ('' clears it).
+function badDavUrl(body) {
+  const v = body && body.davUrl
+  if (v === undefined || v === null || v === '') return null
+  try {
+    const u = new URL(String(v).trim())
+    if (u.protocol === 'http:' || u.protocol === 'https:') return null
+  } catch {}
+  return 'CalDAV/CardDAV URL must start with https:// (or http://)'
+}
+
+// `verify: true` (what Settings sends): log in to IMAP and SMTP with the
+// new settings first and save nothing if that fails. API clients that only
+// want to store settings (tests, scripts) leave it out.
+async function verifyOr400(res, candidate) {
+  try {
+    await verifyAccount(candidate)
+    return true
+  } catch (err) {
+    res.status(400).json({ error: err.message, field: err.field || null, code: 'verify_failed' })
+    return false
+  }
+}
+
+router.post('/accounts', async (req, res) => {
   try {
     const { email } = req.body || {}
     if (!email) return res.status(400).json({ error: 'email is required' })
+    if (getAccount(email)) return res.status(409).json({ error: 'account already exists' })
+    const davErr = badDavUrl(req.body)
+    if (davErr) return res.status(400).json({ error: davErr, field: 'dav' })
+    if (req.body.verify === true && !await verifyOr400(res, accountPayloadFrom(req.body))) return
     if (getAccount(email)) return res.status(409).json({ error: 'account already exists' })
     const acct = addAccount(req.body)
     dropPool(email) // start with a fresh pool
@@ -32,12 +61,17 @@ router.post('/accounts', (req, res) => {
   }
 })
 
-router.put('/accounts/:email', (req, res) => {
+router.put('/accounts/:email', async (req, res) => {
   try {
     const existing = getAccount(req.params.email)
     if (!existing) return res.status(404).json({ error: 'account not found' })
-    const merged = updateAccount(req.params.email, req.body)
+    const body = req.body || {}
+    const davErr = badDavUrl(body)
+    if (davErr) return res.status(400).json({ error: davErr, field: 'dav' })
+    if (body.verify === true && !await verifyOr400(res, mergeAccount(existing, body))) return
+    const merged = updateAccount(req.params.email, body)
     dropPool(req.params.email)
+    clearDavBaseCache()
     res.json({ success: true, id: merged.id })
   } catch (err) {
     res.status(500).json({ error: err.message })
@@ -47,6 +81,7 @@ router.put('/accounts/:email', (req, res) => {
 router.delete('/accounts/:email', (req, res) => {
   const removed = removeAccount(req.params.email)
   dropPool(req.params.email)
+  clearDavBaseCache()
   if (!removed) return res.status(404).json({ error: 'account not found' })
   res.json({ success: true })
 })

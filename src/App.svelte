@@ -13,6 +13,7 @@
   import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward, bootstrapRefreshMode } from './store'
   import { startRefresh, stopRefresh } from './refresh'
   import { MailAPI } from './api'
+  import { loadAccountsIntoStore } from './lib/accountsBootstrap'
   import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
   import { beginSplitDrag } from './lib/splitHandle'
   import { specialFolderPath } from './lib/specialFolders'
@@ -265,7 +266,9 @@
     const folder = getState().activeFolder
     MailAPI.message(id, folder).then(data => {
       if (data) {
-        putMessageCache({ key: `${folder}:${id}`, folder, id, message: data, full: true }).catch(() => {})
+        // Decrypted PGP plaintext must not outlive the unlocked key: it is never
+        // written to the offline cache.
+        if (!data.pgp?.decrypted) putMessageCache({ key: `${folder}:${id}`, folder, id, message: data, full: true }).catch(() => {})
         updateMessage(id, {
           body: data.body,
           bodyHtml: data.bodyHtml,
@@ -458,7 +461,13 @@
     if (current === prevAccountId) return
     const prev = prevAccountId
     prevAccountId = current
-    if (current == null) return
+    if (current == null) {
+      // Last account removed: nothing of it may stay on screen.
+      setFolders([])
+      setMessages([])
+      selectMessage(null)
+      return
+    }
     const leavingFolder = getState().activeFolder
     activeView = 'inbox'
     searchQuery = ''
@@ -468,10 +477,21 @@
     loadMessages('INBOX')
   })
 
+  // false until the account list arrived: avoids flashing the first-run
+  // screen while it loads.
+  let accountsLoaded = $state(false)
+
   onMount(() => {
     bootstrapRefreshMode()
-    loadFolders()
-    loadMessages('INBOX')
+    loadAccountsIntoStore().then((accounts) => {
+      // Seed the switch tracker first so the effect above does not load twice.
+      prevAccountId = getState().activeAccountId
+      accountsLoaded = true
+      if (accounts.length) {
+        loadFolders()
+        loadMessages('INBOX')
+      }
+    })
     refreshQueueCount()
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', () => refreshQueueCount())
@@ -525,7 +545,13 @@
       ></div>
   
   <main class="main">
-    {#if $store.isComposing}
+    {#if accountsLoaded && $store.accounts.length === 0 && !$store.isComposing}
+      <div class="first-run" data-testid="first-run">
+        <h2>Welcome to Leoposta</h2>
+        <p>No mail account is set up yet. Add your IMAP/SMTP account to read and send mail; calendar and contacts use the optional CalDAV/CardDAV address of the same account.</p>
+        <button class="first-run-btn" onclick={() => showSettings = true}>Set up an account</button>
+      </div>
+    {:else if $store.isComposing}
       <Compose
         onClose={() => { setComposing(false); clearCompose() }}
         onDraftSaved={handleDraftSaved}
@@ -630,6 +656,25 @@
   /* Below 768px the sidebar collapses to a fixed 56px icon rail. */
   @media (max-width: 768px) {
     .sidebar-handle { display: none; }
+  }
+
+  .first-run {
+    margin: auto;
+    max-width: 440px;
+    padding: 32px;
+    text-align: center;
+    color: var(--color-text-secondary);
+  }
+  .first-run h2 { color: var(--color-text); font-size: 20px; margin-bottom: 12px; }
+  .first-run p { font-size: 14px; line-height: 1.5; margin-bottom: 20px; }
+  .first-run-btn {
+    padding: 10px 18px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--color-accent);
+    color: #fff;
+    font-size: 14px;
+    cursor: pointer;
   }
 
   .toast {

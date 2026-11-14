@@ -105,3 +105,19 @@ real mailbox.org servers with the imported passwords.
   kept out of it via `LEOPOSTA_IMAP_PASS`/`LEOPOSTA_SMTP_PASS` for the first
   account) — see [README Credentials](../../README.md#credentials).
 - The import endpoint never returns a password in its response body.
+
+## Mail + WebDAV in one import (2026-11)
+
+GNOME keeps the mail account (`imap_smtp`) and the Calendar/Contacts account
+(`webdav`) separate. Importing only the mail account used to leave `davUrl`
+empty, and `lib/dav.js` then fell back to the `DAV_HOST` placeholder
+(`dav.example.com`). Now:
+
+- importing a mail account also takes the `webdav` account whose identity is
+  the same address (URL host root, identity as DAV user, keyring password);
+  `importDav: false` opts out;
+- a `webdav`-only import attaches to the mail account with the same address,
+  else to `targetEmail` (Settings sends the active account), never creating a
+  mail-less account (409 `goa_needs_mail_account`);
+- there is no DAV fallback host any more: an account without `davUrl` shows
+  "Calendar/Contacts are not set up".

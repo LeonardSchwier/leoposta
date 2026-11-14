@@ -7,6 +7,8 @@
 
   interface Book { uri: string; name: string; canWrite?: boolean }
   let books = $state<Book[]>([])
+  let configured = $state(true)
+  let editingContact = $state<any | null>(null)
   let currentBook = $state<Book | null>(null)
   let contacts = $state<any[]>([])
   let loading = $state(false)
@@ -31,10 +33,18 @@
   async function loadBooks() {
     try {
       const data = await ContactsAPI.addressBooks()
+      configured = data.configured
       books = data.addressBooks || []
+      err = ''
       if (books.length && !currentBook) currentBook = books[0]
       if (currentBook && !books.find(b => b.uri === currentBook!.uri)) currentBook = books[0] || null
-    } catch (e: any) { err = e.message }
+    } catch (e: any) { err = e.message; books = []; currentBook = null; contacts = [] }
+  }
+
+  // Retry: address books first (they failed too when the server was down).
+  async function reload() {
+    await loadBooks()
+    if (!err) await loadContacts(q)
   }
 
   async function loadContacts(search?: string) {
@@ -49,6 +59,7 @@
 
   function openCreate() {
     editingUid = null
+    editingContact = null
     fName = ''; fEmail = ''; fPhone = ''; fOrg = ''
     fNotes = ''; fWebsite = ''
     fStreet = ''; fCity = ''; fRegion = ''; fZip = ''
@@ -59,6 +70,7 @@
   function openEdit(c: any) {
     selectedUid = c.uid
     editingUid = c.uid
+    editingContact = c
     fBookUri = c.bookUri || currentBook?.uri || ''
     fEmail = (c.emails && c.emails[0]) || c.email || ''
     fPhone = (c.phones && c.phones[0]) || c.phone || ''
@@ -66,11 +78,10 @@
     fName = c.name || c.displayName || ''
     fNotes = c.notes || ''
     fWebsite = c.website || ''
-    const addrParts = (c.address || '').split(',').map((s: string) => s.trim()).filter(Boolean)
-    fStreet = addrParts[0] || ''
-    fCity = addrParts[1] || ''
-    fRegion = addrParts[2] || ''
-    fZip = addrParts[3] || ''
+    fStreet = c.adr?.street || ''
+    fCity = c.adr?.locality || ''
+    fRegion = c.adr?.region || ''
+    fZip = c.adr?.postalCode || ''
     showEditor = true
   }
 
@@ -80,27 +91,31 @@
     if (!targetUri) { showToast('No address book available'); return }
     try {
       busy = true
-      const uid = editingUid || (fEmail.trim() || fName.trim().toLowerCase().replace(/\s+/g, '_'))
+      // New contacts get a fresh UID: deriving it from the name/e-mail made a
+      // second "John" overwrite the first one.
+      const orig = editingUid ? editingContact : null
+      const uid = editingUid || ('leoposta-' + crypto.randomUUID())
       const vcf = contactToVCFObj({
         name: fName, email: fEmail, phone: fPhone, org: fOrg,
         notes: fNotes, website: fWebsite,
-        addressComponents: { street: fStreet, locality: fCity, region: fRegion, postalCode: fZip },
+        addressComponents: { street: fStreet, locality: fCity, region: fRegion, postalCode: fZip, country: orig?.adr?.country || '' },
         uid,
-      })
-      await ContactsAPI.saveContact(targetUri, vcf)
+      }, orig?.vcf)
+      // An edit is written back to the resource it was listed under.
+      await ContactsAPI.saveContact(targetUri, vcf, orig?.href)
       showEditor = false
       await loadContacts(q)
       showToast(editingUid ? 'Contact updated' : 'Contact created')
     } catch (e: any) { showToast(e.message, 5000) } finally { busy = false }
   }
 
-  async function deleteContact(uid: string) {
+  async function deleteContact(c: { uid: string, href?: string }) {
     const bookUri = currentBook?.uri || fBookUri || books[0]?.uri || ''
     if (!bookUri) return
     if (!confirm('Delete this contact?')) return
     try {
       busy = true
-      await ContactsAPI.deleteContact(bookUri, uid)
+      await ContactsAPI.deleteContact(bookUri, c.uid, c.href)
       selectedUid = null
       await loadContacts(q)
       showToast('Contact deleted')
@@ -114,11 +129,13 @@
       if (!currentBook) return
       try {
         busy = true
-        await ContactsAPI.importVCF(currentBook.uri, vcf)
+        const r = await ContactsAPI.importVCF(currentBook.uri, vcf)
         await loadContacts(q)
-        showToast('Contacts imported')
+        const failed = r.failed?.length ? `, ${r.failed.length} rejected` : ''
+        showToast(`Imported ${r.imported} of ${r.total} contact(s)${failed}`, failed ? 6000 : 3000)
       } catch (e: any) { showToast(e.message, 5000) } finally { busy = false }
     }
+    reader.onerror = () => showToast('Could not read the file', 5000)
     reader.readAsText(file)
   }
 
@@ -149,7 +166,7 @@
   <aside class="c-side">
     <div class="c-side-head">
       <h2>Address Books</h2>
-      <button class="add-c" onclick={openCreate}>+ New contact</button>
+      <button class="add-c" onclick={openCreate} disabled={!books.length}>+ New contact</button>
     </div>
     <div class="c-list">
       {#each books as book (book.uri)}
@@ -158,23 +175,29 @@
           <span class="c-name">{book.name}</span>
         </button>
       {/each}
-      {#if books.length === 0}<p class="empty">No address books found.</p>{/if}
+      {#if books.length === 0 && configured && !err}<p class="empty">No address books found on the server.</p>{/if}
     </div>
     <div class="c-import">
       <label class="import-btn">
         Import .vcf
-        <input type="file" accept=".vcf,text/vcard" onchange={importVcf} disabled={busy} />
+        <input type="file" accept=".vcf,text/vcard" onchange={importVcf} disabled={busy || !currentBook} />
       </label>
     </div>
   </aside>
 
   <div class="c-main">
+    {#if !configured}
+      <div class="not-configured" data-testid="dav-not-configured">
+        <h3>Contacts are not set up</h3>
+        <p>This account has no CardDAV server. Add a CalDAV/CardDAV URL to the account in <b>Settings → Account</b> to see and edit your contacts here.</p>
+      </div>
+    {:else}
     <header class="c-top">
       <input class="search" type="search" placeholder="Search contacts" bind:value={q} oninput={onSearch} data-search-input />
     </header>
 
     {#if err}
-      <div class="c-err"><span>{err}</span><button onclick={() => loadContacts(q)}>Retry</button></div>
+      <div class="c-err" role="alert"><span>{err}</span><button onclick={reload} disabled={loading}>Retry</button></div>
     {/if}
 
     <div class="c-body">
@@ -195,11 +218,12 @@
               {#if c.address}<div class="d3">{c.address}</div>{/if}
               {#if c.notes}<div class="d3 d-notes" title={c.notes}>{c.notes}</div>{/if}
             </div>
-            <button class="del" onclick={(e) => { e.stopPropagation(); deleteContact(c.uid) }} title="Delete contact" aria-label={`Delete contact ${c.name || c.uid}`}>🗑</button>
+            <button class="del" onclick={(e) => { e.stopPropagation(); deleteContact(c) }} title="Delete contact" aria-label={`Delete contact ${c.name || c.uid}`}>🗑</button>
           </div>
         {/each}
       {/if}
     </div>
+    {/if}
   </div>
 
   {#if showEditor}
@@ -225,7 +249,7 @@
         <label><span>State</span><input type="text" bind:value={fRegion} placeholder="State/Province" /></label>
         <label><span>ZIP / Postal code</span><input type="text" bind:value={fZip} placeholder="12345" /></label>
         <div class="actions">
-          {#if editingUid}<button class="danger" onclick={() => { showEditor = false; deleteContact(editingUid!) }}>Delete</button>{/if}
+          {#if editingUid}<button class="danger" onclick={() => { showEditor = false; if (editingContact) deleteContact(editingContact) }}>Delete</button>{/if}
           <span class="spacer"></span>
           <button class="ghost" onclick={() => showEditor = false}>Cancel</button>
           <button class="primary" onclick={saveContact} disabled={busy}>{editingUid ? 'Save changes' : 'Create'}</button>
