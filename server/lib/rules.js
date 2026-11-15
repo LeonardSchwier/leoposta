@@ -1,5 +1,6 @@
 import { MailActionError, moveChecked } from './removal.js'
 import { parseMessageSource } from './attachments.js'
+import { safeRegexTest } from './safeRegex.js'
 
 const FIELDS = ['from', 'to', 'cc', 'subject', 'body', 'folder']
 
@@ -16,9 +17,15 @@ function getField(msg, field) {
 }
 
 export function matchRule(msg, rule) {
-  for (const c of rule.conditions || []) {
+  // Not a rule object: matches nothing (a hand-edited rules.json must not take
+  // the message list down).
+  if (!rule || typeof rule !== 'object') return false
+  const conditions = rule.conditions === undefined ? [] : rule.conditions
+  if (!Array.isArray(conditions)) return false
+  for (const c of conditions) {
+    if (!c || typeof c !== 'object') return false
     const actual = getField(msg, c.field).toLowerCase()
-    const value = (c.value || '').toLowerCase()
+    const value = String(c.value ?? '').toLowerCase()
     switch (c.operator) {
       case 'contains': if (!actual.includes(value)) return false; break
       case 'not_contains': if (actual.includes(value)) return false; break
@@ -27,9 +34,8 @@ export function matchRule(msg, rule) {
       case 'starts_with': if (!actual.startsWith(value)) return false; break
       case 'ends_with': if (!actual.endsWith(value)) return false; break
       case 'regex':
-        try {
-          if (!new RegExp(c.value, 'i').test(getField(msg, c.field))) return false
-        } catch { return false }
+        // Bounded: a backtracking pattern must not freeze the server.
+        if (!safeRegexTest(String(c.value ?? ''), getField(msg, c.field))) return false
         break
       default: return false
     }
