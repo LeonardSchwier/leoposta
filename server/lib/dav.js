@@ -1,5 +1,6 @@
 import https from 'node:https'
 import http from 'node:http'
+import { trimEndChar, trimStartChar } from './trim.js'
 
 // Read vs write timeouts. Reads (PROPFIND/REPORT) against a large book can take
 // well over the old hard 30s under load, so they get a longer ceiling; writes
@@ -216,7 +217,7 @@ export function sameHref(a, b) {
   const norm = (h) => {
     let p = hrefPath(h)
     try { p = decodeURIComponent(p) } catch {}
-    return p.replace(/\/+$/, '')
+    return trimEndChar(p, '/')
   }
   return norm(a) === norm(b)
 }
@@ -226,26 +227,13 @@ export function sameHref(a, b) {
 // (REPORT / PROPFIND on the collection itself) must append '/' themselves,
 // since OX 400s on a bare (non-collection) href there; file-PUT/DELETE sites
 // rely on this no-slash form so `+ '/uid.ics'` does not double-slash.
-// Trim leading/trailing '/' with index scans, not /\/+$/: a regex anchored
-// at the end is quadratic on a user-supplied path made of many '/'.
-function trimSlashesEnd(str) {
-  let end = str.length
-  while (end > 0 && str[end - 1] === '/') end--
-  return str.slice(0, end)
-}
-function trimSlashes(str) {
-  let start = 0
-  while (start < str.length && str[start] === '/') start++
-  return trimSlashesEnd(str.slice(start))
-}
-
 export function joinDavPath(basePath, sub) {
   // Coerce first: a tampered query/body value may be an array, not a string.
   basePath = typeof basePath === 'string' ? basePath : ''
   sub = typeof sub === 'string' ? sub : ''
-  if (sub.startsWith('/')) return trimSlashesEnd(sub)
-  const base = trimSlashesEnd(basePath)
-  const s = trimSlashes(sub)
+  if (sub.startsWith('/')) return trimEndChar(sub, '/')
+  const base = trimEndChar(basePath, '/')
+  const s = trimEndChar(trimStartChar(sub, '/'), '/')
   return s ? base + '/' + s : base
 }
 
@@ -305,13 +293,24 @@ export function toDavTime(s, endOfDay = false) {
 // minBatch, split the slice in half and retry each half — recursively. Any
 // non-timeout error propagates to the route's 500 handler.
 // `acct` is passed for call-site clarity; `fetchBatch` typically closes over it.
-export async function multigetWithRetry(urlPath, allHrefs, fetchBatch, acct, { maxBatch = 500, minBatch = 50 } = {}) {
+// `concurrency`: how many batches are in flight at once. Some servers (OX)
+// take a fixed time per card whatever the batch size, so a book of a few
+// thousand cards took minutes one batch after another; the batches run in
+// parallel and the result keeps the hrefs' order.
+export async function multigetWithRetry(urlPath, allHrefs, fetchBatch, acct, { maxBatch = 500, minBatch = 50, concurrency = 1 } = {}) {
   if (allHrefs.length > maxBatch) {
-    const out = []
-    for (let i = 0; i < allHrefs.length; i += maxBatch) {
-      out.push(...await multigetWithRetry(urlPath, allHrefs.slice(i, i + maxBatch), fetchBatch, acct, { maxBatch, minBatch }))
+    const chunks = []
+    for (let i = 0; i < allHrefs.length; i += maxBatch) chunks.push(allHrefs.slice(i, i + maxBatch))
+    const results = new Array(chunks.length)
+    let next = 0
+    const worker = async () => {
+      while (next < chunks.length) {
+        const i = next++
+        results[i] = await multigetWithRetry(urlPath, chunks[i], fetchBatch, acct, { maxBatch, minBatch })
+      }
     }
-    return out
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, chunks.length)) }, worker))
+    return results.flat()
   }
   try {
     return await fetchBatch(allHrefs)

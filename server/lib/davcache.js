@@ -12,6 +12,9 @@ export const TTL_LONG = 10 * 60 * 1000
 // the back). Lazy expiry happens on read.
 export function createCache(maxEntries = 500) {
   const store = new Map()
+  // Bumped by every invalidation: a load that started before one must not
+  // put its (now outdated) result into the cache.
+  let epoch = 0
   function evictToLimit() {
     while (store.size > maxEntries) {
       const oldest = store.keys().next().value
@@ -30,11 +33,19 @@ export function createCache(maxEntries = 500) {
       store.set(key, { value, expiresAt: _now() + ttlMs })
       evictToLimit()
     },
-    invalidate(key) { store.delete(key) },
+    /** { value, stale } even after expiry (until evicted or invalidated), or undefined. */
+    peek(key) {
+      const entry = store.get(key)
+      if (!entry) return undefined
+      return { value: entry.value, stale: _now() > entry.expiresAt }
+    },
+    epoch() { return epoch },
+    invalidate(key) { epoch++; store.delete(key) },
     invalidatePrefix(prefix) {
+      epoch++
       for (const k of [...store.keys()]) if (k.startsWith(prefix)) store.delete(k)
     },
-    clear() { store.clear() },
+    clear() { epoch++; store.clear() },
     size() { return store.size }
   }
   return cache

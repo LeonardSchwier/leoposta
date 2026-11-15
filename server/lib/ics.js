@@ -504,14 +504,14 @@ export function splitIcsByUid(ics) {
   const tzs = rawBlocks(text, 'VTIMEZONE')
   const tzById = new Map()
   for (const tz of tzs) {
-    const m = /^TZID[^:]*:(.*)$/im.exec(tz.replace(/\r?\n[ \t]/g, ''))
+    const m = /^TZID[^:\r\n]*:(.*)$/im.exec(tz.replace(/\r?\n[ \t]/g, ''))
     if (m) tzById.set(m[1].trim(), tz)
   }
   const groups = new Map()
   let anon = 0
   for (const ev of rawBlocks(text, 'VEVENT')) {
     const unfolded = ev.replace(/\r?\n[ \t]/g, '')
-    const um = /^UID[^:]*:(.*)$/im.exec(unfolded)
+    const um = /^UID[^:\r\n]*:(.*)$/im.exec(unfolded)
     const uid = um ? um[1].trim() : `leoposta-import-${Date.now()}-${anon++}`
     if (!groups.has(uid)) groups.set(uid, { uid, events: [], hasUid: !!um })
     groups.get(uid).events.push(ev)

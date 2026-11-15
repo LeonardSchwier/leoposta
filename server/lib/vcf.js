@@ -55,7 +55,7 @@ export function parseVcf(blob) {
       errors.push(`card #${cards.length + errors.length + 1}: too large (${Buffer.byteLength(raw, 'utf8')} > ${MAX_CARD_BYTES} bytes)`)
       continue
     }
-    const um = raw.replace(/\r?\n[ \t]/g, '').match(/^\s*(?:[\w-]+\.)?UID(?:;[^:\r\n]*)?:([^\r\n]+)/im)
+    const um = raw.replace(/\r?\n[ \t]/g, '').match(/^[ \t]*(?:[\w-]+\.)?UID(?:;[^:\r\n]*)?:([^\r\n]+)/im)
     const uid = um ? um[1].trim().replace(/^urn:uuid:/i, '') : `leoposta_${Date.now()}_${cards.length}`
     // `raw` already ends with END:VCARD. Normalise to CRLF and give a card
     // without a UID the one we use for its file name (servers require one).

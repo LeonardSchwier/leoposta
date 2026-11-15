@@ -6,6 +6,7 @@ import {
 } from '../lib/dav.js'
 import { parseVcf, parseCard } from '../lib/vcf.js'
 import { TTL_LONG } from '../lib/davcache.js'
+import { trimEndChar } from '../lib/trim.js'
 
 const router = Router()
 
@@ -28,7 +29,7 @@ function cardPath(basePath, book, uid, href) {
 }
 
 function lastSegment(href) {
-  const seg = String(href || '').replace(/\/+$/, '').split('/').pop() || ''
+  const seg = trimEndChar(String(href || ''), '/').split('/').pop() || ''
   try { return decodeURIComponent(seg) } catch { return seg }
 }
 
@@ -67,6 +68,74 @@ router.get('/contacts/calendars', async (req, res) => {
 })
 
 // GET /api/contacts?book=<id>&q=<query>
+// One book's contacts from the server: PROPFIND for the members, then the
+// card bodies by addressbook-multiget.
+async function fetchBookContacts(acct, book) {
+  const basePath = (await resolveDavBase(acct, 'cards')).basePath
+  const profind = `<?xml version="1.0" encoding="utf-8"?>
+<d:propfind xmlns:d="DAV:">
+  <d:prop>
+<d:getetag/>
+<d:getcontenttype/>
+<d:resourcetype/>
+  </d:prop>
+</d:propfind>`
+  const urlPath = joinDavPath(basePath, book) + '/'
+  const r = await davRequest('PROPFIND', urlPath, profind, null, acct)
+  // Every member resource, not just "*.vcf": servers are free to name
+  // cards however they like (RFC 6352 §5.1).
+  const entries = extractResponseSet(r.body)
+    .filter(e => !sameHref(e.href, urlPath) && !e.resourcetype.includes('collection'))
+  let contacts = []
+  if (entries.length) {
+    // RFC 6352 §8.7 addressbook-multiget: card bodies in batches of <= 100,
+    // 6 at a time (larger REPORTs make OX hang, and its time is per card); a
+    // timed-out batch is halved.
+    const fetchBatch = async (hrefs) => {
+      const report = `<?xml version="1.0" encoding="utf-8"?>
+<c:addressbook-multiget xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
+  <d:prop>
+<d:getetag/>
+<c:address-data content-type="text/vcard"/>
+  </d:prop>
+${hrefs.join('')}
+</c:addressbook-multiget>`
+      const r2 = await davRequest('REPORT', urlPath, report, null, acct, 0)
+      return extractAddressData(r2.body)
+    }
+    const allCards = await multigetWithRetry(urlPath, entries.map(e => `<d:href>${e.href}</d:href>`), fetchBatch, acct, { maxBatch: 100, minBatch: 25, concurrency: 6 })
+    contacts = allCards.map(c => {
+      const vcf = decodeXmlText(c.vcf)
+      const card = parseCard(vcf)
+      const fallbackId = lastSegment(c.href).replace(/\.vcf$/i, '')
+      return {
+        ...card,
+        uid: card.uid || fallbackId,
+        name: card.name || card.email || fallbackId || '(unknown)',
+        vcf, href: c.href, etag: c.etag || '', bookUri: book
+      }
+    })
+  }
+  return contacts
+}
+
+// Loads in flight per cache key: concurrent requests for one book (each search
+// keystroke, Compose's autocomplete, a reload) share one download instead of
+// each fetching every card again.
+const inflight = new Map()
+function loadBookContacts(acct, book, cacheKey) {
+  if (inflight.has(cacheKey)) return inflight.get(cacheKey)
+  const epoch = state.davCache.epoch()
+  const p = fetchBookContacts(acct, book)
+    .then((contacts) => {
+      if (state.davCache.epoch() === epoch) state.davCache.set(cacheKey, contacts, TTL_LONG)
+      return contacts
+    })
+    .finally(() => inflight.delete(cacheKey))
+  inflight.set(cacheKey, p)
+  return p
+}
+
 router.get('/contacts', async (req, res) => {
   const acct = davAccount(req)
   if (!acct) return fail(res, new DavNotConfiguredError(), null, 'contacts')
@@ -74,54 +143,15 @@ router.get('/contacts', async (req, res) => {
     const { book, q } = req.query
     if (!book || typeof book !== 'string') return res.status(400).json({ error: 'book param required' })
     const cacheKey = `contacts|${acct.id}|${book}`
-    let contacts = state.davCache.get(cacheKey)
-    if (!contacts) {
-      const basePath = (await resolveDavBase(acct, 'cards')).basePath
-      const profind = `<?xml version="1.0" encoding="utf-8"?>
-<d:propfind xmlns:d="DAV:">
-  <d:prop>
-    <d:getetag/>
-    <d:getcontenttype/>
-    <d:resourcetype/>
-  </d:prop>
-</d:propfind>`
-      const urlPath = joinDavPath(basePath, book) + '/'
-      const r = await davRequest('PROPFIND', urlPath, profind, null, acct)
-      // Every member resource, not just "*.vcf": servers are free to name
-      // cards however they like (RFC 6352 §5.1).
-      const entries = extractResponseSet(r.body)
-        .filter(e => !sameHref(e.href, urlPath) && !e.resourcetype.includes('collection'))
-      contacts = []
-      if (entries.length) {
-        // RFC 6352 §8.7 addressbook-multiget: card bodies in round-trips of
-        // <= 500 (larger REPORTs make OX hang); a timed-out batch is halved.
-        const fetchBatch = async (hrefs) => {
-          const report = `<?xml version="1.0" encoding="utf-8"?>
-<c:addressbook-multiget xmlns:d="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">
-  <d:prop>
-    <d:getetag/>
-    <c:address-data content-type="text/vcard"/>
-  </d:prop>
-    ${hrefs.join('')}
-</c:addressbook-multiget>`
-          const r2 = await davRequest('REPORT', urlPath, report, null, acct, 0)
-          return extractAddressData(r2.body)
-        }
-        const allCards = await multigetWithRetry(urlPath, entries.map(e => `<d:href>${e.href}</d:href>`), fetchBatch, acct, { maxBatch: 500, minBatch: 50 })
-        contacts = allCards.map(c => {
-          const vcf = decodeXmlText(c.vcf)
-          const card = parseCard(vcf)
-          const fallbackId = lastSegment(c.href).replace(/\.vcf$/i, '')
-          return {
-            ...card,
-            uid: card.uid || fallbackId,
-            name: card.name || card.email || fallbackId || '(unknown)',
-            vcf, href: c.href, etag: c.etag || '', bookUri: book
-          }
-        })
-      }
-      state.davCache.set(cacheKey, contacts, TTL_LONG)
-    }
+    // Fresh: from the cache. Expired: the last list right away, refreshed in
+    // the background (a large book takes the server a while). None: load it.
+    const cached = state.davCache.peek(cacheKey)
+    let contacts
+    if (cached && !cached.stale) contacts = cached.value
+    else if (cached) {
+      contacts = cached.value
+      loadBookContacts(acct, book, cacheKey).catch((err) => console.error('[carddav] background refresh failed:', err && err.message))
+    } else contacts = await loadBookContacts(acct, book, cacheKey)
 
     let filtered = contacts
     if (typeof q === 'string' && q.trim()) {

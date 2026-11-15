@@ -27,7 +27,7 @@ const MAIL_ACCOUNT = {
       'org.gnome.OnlineAccounts.PasswordBased': {},
       'org.gnome.OnlineAccounts.Mail': {
         EmailAddress: { type: 's', data: 'erika@example.test' },
-        Name: { type: 's', data: 'Leonard Schwier' },
+        Name: { type: 's', data: 'Erika Muster' },
         ImapHost: { type: 's', data: 'imap.example.test' },
         ImapUseSsl: { type: 'b', data: true },
         ImapUserName: { type: 's', data: 'erika@example.test' },

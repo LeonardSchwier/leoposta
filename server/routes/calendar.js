@@ -6,6 +6,7 @@ import {
 } from '../lib/dav.js'
 import { expandForRange, boundToMs, splitIcsByUid, parseEvents } from '../lib/ics.js'
 import { TTL_LONG } from '../lib/davcache.js'
+import { trimEndChar } from '../lib/trim.js'
 
 const router = Router()
 
@@ -27,7 +28,7 @@ function eventPath(basePath, calendar, uid, href) {
 }
 
 function lastSegment(href) {
-  const seg = String(href || '').replace(/\/+$/, '').split('/').pop() || ''
+  const seg = trimEndChar(String(href || ''), '/').split('/').pop() || ''
   try { return decodeURIComponent(seg) } catch { return seg }
 }
 

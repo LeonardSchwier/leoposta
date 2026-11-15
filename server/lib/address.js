@@ -17,8 +17,14 @@ export function parseAddr(str) {
   if (m) return { name: m[1] || '', address: m[2].trim() }
   const plain = str.match(/^[\w.+-]+@[\w.-]+\.[a-z]{2,}$/i)
   if (plain) return { name: '', address: str.trim() }
-  const noBrk = str.match(/^(.*?)\s+([\w.+-]+@[\w.-]+\.[a-z]{2,})$/i)
-  if (noBrk) return { name: noBrk[1].trim(), address: noBrk[2].trim() }
+  // "Name addr@host" without brackets: the last word is the address. Split
+  // by index, not /^(.*?)\s+(addr)$/ (quadratic on a long run of spaces).
+  const t = str.trimEnd()
+  let cut = t.length
+  while (cut > 0 && !/\s/.test(t[cut - 1])) cut--
+  if (cut > 0 && /^[\w.+-]+@[\w.-]+\.[a-z]{2,}$/i.test(t.slice(cut))) {
+    return { name: t.slice(0, cut).trim(), address: t.slice(cut) }
+  }
   if (str.includes('@')) return { name: '', address: str.trim() }
   return { name: str.trim(), address: '' }
 }

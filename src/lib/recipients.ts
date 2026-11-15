@@ -44,6 +44,12 @@ function pushSegment(out: string[], segment: string) {
 
 /** The address part of one recipient (`Anna <a@x.y>` → `a@x.y`). */
 export function recipientAddress(recipient: string): string {
-  const m = recipient.match(/<([^>]*)>\s*$/)
-  return (m ? m[1] : recipient).trim()
+  // As /<([^>]*)>\s*$/ did (the leftmost "<" after the last ">" but one), by
+  // index: that regex was quadratic on a long run of "<".
+  const t = recipient.trimEnd()
+  if (t.endsWith('>')) {
+    const open = t.indexOf('<', t.lastIndexOf('>', t.length - 2) + 1)
+    if (open >= 0 && open < t.length - 1) return t.slice(open + 1, -1).trim()
+  }
+  return recipient.trim()
 }

@@ -24,7 +24,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.app.json && tsc --noEmit -p tsconfig.node.json && npm run check:svelte",
     "screenshots": "SCREENSHOTS=1 playwright test",
     "setup": "npm ci && playwright install chromium",
-    "check": "npm run typecheck && npm test && npm run test:server && npm run build"
+    "check": "npm run typecheck && npm test && npm run test:server && npm run build",
+    "check:redos": "node scripts/check-redos.cjs"
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
