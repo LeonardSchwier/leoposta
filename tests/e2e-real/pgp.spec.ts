@@ -31,6 +31,12 @@ test.describe('pgp', () => {
     test.use({ allowApiErrors: [['PUT /api/pgp -> 400', /status of 400/], { scope: 'test' }] })
     test('wrong passphrase is a clear error and stores nothing; the right one stores the key in LEOPOSTA_DATA_DIR', async ({ app, request, baseURL, user }, info) => {
       await resetPgp(request, baseURL!)
+      // The source tree's server/ may be a real data dir (the deploy checkout
+      // runs this suite before an update): note its legacy key file by size
+      // and mtime only, so the check below is "this test wrote nothing there".
+      const legacy = path.resolve('server/pgp_private.asc')
+      const legacyStat = () => (fs.existsSync(legacy) ? (({ size, mtimeMs }) => ({ size, mtimeMs }))(fs.statSync(legacy)) : null)
+      const legacyBefore = legacyStat()
       const key = await makeKey({ email: 'me@example.test', passphrase: PASS })
       await openPgpSettings(app)
       await app.locator('#pgp-private').fill(key.privateKey)
@@ -56,7 +62,9 @@ test.describe('pgp', () => {
         const p = path.join(dataDir, f)
         if (fs.statSync(p).isFile()) expect(fs.readFileSync(p, 'utf8')).not.toContain(PASS)
       }
-      expect(fs.existsSync(path.resolve('server/pgp_private.asc'))).toBe(false)
+      // Nothing written to the source tree's server/ (only to LEOPOSTA_DATA_DIR).
+      expect(legacyStat(), 'server/pgp_private.asc untouched').toEqual(legacyBefore)
+      expect(fs.existsSync(path.resolve('server/pgp-keys', `${id}.asc`)), 'no key in server/pgp-keys').toBe(false)
 
       // Lock / unlock from Settings
       await app.getByTestId('pgp-state').getByRole('button', { name: 'Lock key' }).click()
