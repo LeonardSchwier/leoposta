@@ -9,6 +9,7 @@
 //            uncaught page error, or failed /api/ response (>= 400, network
 //            failure) — unless the test declares it with `allowApiErrors`.
 //   smtp     the SMTP sink's envelope log (what the app actually handed off)
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import { test as base, expect, type Page } from '@playwright/test'
 import { ImapFlow } from 'imapflow'
@@ -137,7 +138,7 @@ export class Mailbox {
 }
 
 export function uniqueUser(prefix = 'u'): string {
-  return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 7)}@example.test`
+  return `${prefix}${Date.now().toString(36)}${crypto.randomBytes(4).toString('hex').slice(0, 5)}@example.test`
 }
 
 export function smtpLog(): { from: string; to: string[]; raw: string }[] {
