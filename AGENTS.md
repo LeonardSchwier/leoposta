@@ -38,6 +38,23 @@ take precedence over speed:
 7. CI (`.github/workflows/ci.yml`) runs all of the above; the nightly
    `scripts/auto-update.sh` runs them again before it deploys and keeps the
    current version if anything fails.
+8. **No personal data, ever, in anything that is committed or published.**
+   This repository is public. Never put the owner's (or anyone's) real data in
+   code, test fixtures, docs, ROADMAP, comments, commit messages, PR titles,
+   descriptions or comments: no real e-mail addresses, names, account or login
+   names, IMAP/SMTP/DAV hosts or URLs, mail provider, GNOME Online Accounts
+   details, contacts, calendar entries or mail content. Use fictional values:
+   `erika@example.test`, "Erika Muster", `imap.example.test`,
+   `dav.example.test`, "an OX-based provider". The only exception is the
+   author's name in `LICENSE` and the GitHub handle in repo/package URLs.
+   - Testing against a real account (GOA import, a real DAV server) is fine,
+     but print only status codes and counts, and never copy its output
+     (`busctl`, API answers, logs, screenshots) into a fixture or a doc —
+     rebuild it with fictional values first.
+   - gitleaks and semgrep look for secrets, not personal data: they will not
+     catch this. Read your staged diff and your PR text for real identifiers
+     before every commit and PR. (The owner's machine also runs a local
+     pre-commit/pre-push guard.)
 
 ## Roadmap (source of truth for open work)
 **Open features and their status: see [`ROADMAP.md`](./ROADMAP.md).**
