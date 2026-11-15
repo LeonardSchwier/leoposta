@@ -1,5 +1,6 @@
 <script lang="ts">
   import { store, selectMessage, updateMessage } from '../store'
+  import { stripTags } from '../lib/stripTags'
   import { startReply } from '../lib/reply'
   import ContextMenu from './ContextMenu.svelte'
   import { computeVirtualRange } from '../lib/virtualList'
@@ -101,7 +102,7 @@
   function getPreview(message: any): string {
     if (message.snippet) return message.snippet
     if (message.body) return message.body.substring(0, 100)
-    if (message.bodyHtml) return message.bodyHtml.replace(/<[^>]*>/g, '').substring(0, 100)
+    if (message.bodyHtml) return stripTags(message.bodyHtml).substring(0, 100)
     if (message.attachments?.length) return '📎 ' + message.attachments.length + ' attachment(s)'
     return ''
   }

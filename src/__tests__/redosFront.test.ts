@@ -85,3 +85,17 @@ describe('recipientAddress', () => {
     fast(() => recipientAddress('<'.repeat(200_000)), '<<<<')
   })
 })
+
+import { stripTags } from '../lib/stripTags'
+describe('stripTags (list preview of HTML mail)', () => {
+  it('gives the old results on 20 000 random strings', () => {
+    const next = rng(99)
+    for (let i = 0; i < 20_000; i++) {
+      const s = randomText(next, 1 + Math.floor(next() * 20))
+      expect(stripTags(s), JSON.stringify(s)).toBe(s.replace(/<[^>]*>/g, ''))
+    }
+  })
+  it('is linear on a mail full of "<"', () => {
+    fast(() => stripTags('<'.repeat(200_000) + '!'), '<<<<')
+  })
+})

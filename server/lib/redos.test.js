@@ -66,3 +66,12 @@ test('splitIcsByUid: TZID/UID found as before, linear on many lines without ":"'
     'BEGIN:VEVENT\r\n' + 'UID\r\n'.repeat(N / 5) + 'END:VEVENT\r\nEND:VCALENDAR'
   fast(() => splitIcsByUid(evil), 'splitIcsByUid')
 })
+
+import { parseVcf } from './vcf.js'
+test('parseVcf: UID found as before, linear on a card full of blank lines', () => {
+  const one = parseVcf('BEGIN:VCARD\r\nVERSION:3.0\r\nFN:Erika\r\nUID:urn:uuid:abc-1\r\nEND:VCARD\r\n')
+  assert.ok(JSON.stringify(one).includes('abc-1'), JSON.stringify(one))
+  const evil = 'BEGIN:VCARD\r\nVERSION:3.0\r\nFN:X' + '\r\n'.repeat(30_000) + '\u0000\r\nEND:VCARD\r\n'
+  assert.ok(evil.length < 64 * 1024, 'the card must be under MAX_CARD_BYTES so the regex runs')
+  fast(() => parseVcf(evil), 'parseVcf')
+})
