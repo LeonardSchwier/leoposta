@@ -28,7 +28,7 @@ const fakeDav = http.createServer((req, res) => {
     res.writeHead(207, { 'content-type': 'application/xml' })
     if (req.method === 'PROPFIND') {
       if (p === '/' || p.startsWith('/dav/1')) {
-        return res.end(`<D:multistatus xmlns:D="DAV:">${resp(p, '<D:current-user-principal><D:href>/dav/1</D:href></D:current-user-principal><D:carddav-home-set><D:href>/carddav/</D:href></D:carddav-home-set>')}</D:multistatus>`)
+        return res.end(`<D:multistatus xmlns:D="DAV:">${resp('/dav/1', '<D:current-user-principal><D:href>/dav/1</D:href></D:current-user-principal><D:carddav-home-set><D:href>/carddav/</D:href></D:carddav-home-set>')}</D:multistatus>`)
       }
       if (p.startsWith('/carddav/big')) {
         calls.bookPropfind++
