@@ -49,6 +49,22 @@ test('Save Draft stores it in Drafts (\\Draft) and the open Drafts view shows it
   expect(smtpLog().some((e) => e.raw.includes('Plan A'))).toBe(false)
 })
 
+test('a Drafts view opened before the folder list arrived still shows the saved draft', async ({ mailbox, app }) => {
+  // With no folder list yet (cold start, a failed first LIST) the sidebar's
+  // Drafts item falls back to the path "Drafts"; saving reports the real one
+  // (INBOX.Drafts in the dot layout) and the open view must follow it.
+  await app.route('**/api/folders**', (r) => r.fulfill({ json: { folders: [] } }), { times: 1 })
+  await app.reload()
+  await openMailbox(app, 'Drafts')
+  await openCompose(app)
+  await fillCompose(app, { to: 'alice@example.test', subject: 'First ever', body: 'folder list not there yet' })
+  await compose(app).getByRole('button', { name: 'Save Draft' }).click()
+  await expect(compose(app)).toHaveCount(0)
+  await mailbox.waitFor('Drafts', (m) => (m.length === 1 ? m : null))
+  await expect(row(app, 'First ever')).toBeVisible()
+  await expect(app.locator('.folder-item.active .folder-name')).toHaveText('Drafts')
+})
+
 test('a reopened draft restores To/Cc/Bcc/Subject/Body/attachment; saving again replaces it', async ({ mailbox, app }) => {
   await openCompose(app)
   await fillCompose(app, { to: 'alice@example.test', cc: 'carol@example.test', bcc: 'bob@example.test', subject: 'Quarterly', body: 'first version' })
@@ -74,8 +90,17 @@ test('a reopened draft restores To/Cc/Bcc/Subject/Body/attachment; saving again 
   await expect(compose(app)).toHaveCount(0)
 
   await row(app, 'Quarterly').locator('.message-subject').click()
+  await expect(compose(app).locator('#compose-subject')).toHaveValue('Quarterly')
   await fillCompose(app, { subject: 'Quarterly v2', body: 'second version' })
+  // Pin down where an edit could get lost (CI once stored the old text with
+  // replaceUid): in the window, in the request, or on the server.
+  await expect(compose(app).locator('#compose-subject')).toHaveValue('Quarterly v2')
+  await expect(compose(app).locator('#compose-body')).toHaveValue(/^second version/)
+  const saveReq = app.waitForRequest((r) => r.url().endsWith('/api/drafts') && r.method() === 'POST')
   await compose(app).getByRole('button', { name: 'Save Draft' }).click()
+  const sent = (await saveReq).postDataJSON()
+  expect(sent.subject).toBe('Quarterly v2')
+  expect(String(sent.replaceUid)).toBe(String(first.uid))
   await expect(compose(app)).toHaveCount(0)
   const [second] = await mailbox.waitFor('Drafts', (m) => (m.length === 1 && m[0].subject === 'Quarterly v2' ? m : null))
   expect(second.uid).not.toBe(first.uid)
