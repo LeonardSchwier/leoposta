@@ -41,11 +41,13 @@ const fakeDav = http.createServer((req, res) => {
       calls.report++
       calls.inFlight++
       calls.maxInFlight = Math.max(calls.maxInFlight, calls.inFlight)
-      const hrefs = [...body.matchAll(/<d:href>([^<]+)<\/d:href>/g)].map((m) => m[1])
+      // Only the card numbers are taken from the request; the response is
+      // built from them, nothing of the request is echoed.
+      const ids = [...body.matchAll(/<d:href>\/carddav\/big\/c(\d{1,4})\.vcf<\/d:href>/g)].map((m) => Number(m[1])).filter((i) => i < N)
       setTimeout(() => {
         calls.inFlight--
         res.end(`<D:multistatus xmlns:D="DAV:" xmlns:c="urn:ietf:params:xml:ns:carddav">` +
-          hrefs.map((h) => resp(h, `<D:getetag>"e"</D:getetag><c:address-data>${card(Number(/c(\d+)\.vcf/.exec(h)[1]))}</c:address-data>`)).join('') +
+          ids.map((i) => resp(`/carddav/big/c${i}.vcf`, `<D:getetag>"e"</D:getetag><c:address-data>${card(i)}</c:address-data>`)).join('') +
           `</D:multistatus>`)
       }, REPORT_DELAY_MS)
       return

@@ -13,7 +13,7 @@ const files = require('child_process').execSync(
 const regs = []
 for (const f of files) {
   let src = fs.readFileSync(path.join(root, f), 'utf8')
-  if (f.endsWith('.svelte')) src = [...src.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)].map(m => m[1]).join('\n')
+  if (f.endsWith('.svelte')) src = [...src.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map(m => m[1]).join('\n')
   const sf = ts.createSourceFile(f, src, ts.ScriptTarget.Latest, true, f.endsWith('.ts') || f.endsWith('.svelte') ? ts.ScriptKind.TS : ts.ScriptKind.JS)
   const visit = (n) => {
     if (n.kind === ts.SyntaxKind.RegularExpressionLiteral) {

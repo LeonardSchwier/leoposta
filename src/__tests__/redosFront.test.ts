@@ -87,12 +87,23 @@ describe('recipientAddress', () => {
 })
 
 import { stripTags } from '../lib/stripTags'
+// The old html.replace(/<[^>]*>/g, ''), as the text between its matches (the
+// preview is rendered as text, not HTML: this strips for display only).
+function oldStripTags(html: string): string {
+  let out = ''
+  let last = 0
+  for (const m of html.matchAll(/<[^>]*>/g)) {
+    out += html.slice(last, m.index)
+    last = (m.index ?? 0) + m[0].length
+  }
+  return out + html.slice(last)
+}
 describe('stripTags (list preview of HTML mail)', () => {
   it('gives the old results on 20 000 random strings', () => {
     const next = rng(99)
     for (let i = 0; i < 20_000; i++) {
       const s = randomText(next, 1 + Math.floor(next() * 20))
-      expect(stripTags(s), JSON.stringify(s)).toBe(s.replace(/<[^>]*>/g, ''))
+      expect(stripTags(s), JSON.stringify(s)).toBe(oldStripTags(s))
     }
   })
   it('is linear on a mail full of "<"', () => {
