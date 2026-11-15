@@ -1,5 +1,6 @@
 // Helpers for the reading / rendering specs: hand-crafted RFC 822 sources,
 // opening a message in the UI, and reading back what the server stored.
+import crypto from 'node:crypto'
 import { expect, type Locator, type Page } from '@playwright/test'
 import { mbox, type Mailbox } from './fixtures'
 
@@ -23,7 +24,7 @@ export function rawMessage(opts: {
   head.push(`To: ${opts.self}`)
   if (opts.subject !== undefined) head.push(`Subject: ${opts.subject}`)
   head.push(`Date: ${(opts.date ?? new Date()).toUTCString().replace('GMT', '+0000')}`)
-  head.push(`Message-ID: ${opts.messageId ?? `<${Math.random().toString(36).slice(2)}@example.test>`}`)
+  head.push(`Message-ID: ${opts.messageId ?? `<${crypto.randomBytes(8).toString('hex')}@example.test>`}`)
   head.push('MIME-Version: 1.0')
   head.push(...(opts.headers ?? []))
   const headBuf = Buffer.from(head.join('\r\n') + '\r\n\r\n', 'utf8')

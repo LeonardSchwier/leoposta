@@ -99,5 +99,5 @@ export async function openMessage(app: Page, subject: string) {
 }
 
 export function unique(label: string): string {
-  return `${label} ${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
+  return `${label} ${Date.now().toString(36)}${crypto.randomBytes(2).toString('hex')}`
 }
