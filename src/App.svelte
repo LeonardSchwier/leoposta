@@ -150,10 +150,30 @@
     }
   }
 
+  // The sidebar opens a special mailbox by a fallback path ('Drafts', 'Sent',
+  // ...) while the folder list is not there yet (cold start, slow LIST). Once
+  // it is, a view still on such a path that does not exist moves to the
+  // server's real one (e.g. INBOX.Drafts), instead of staying empty.
+  const SPECIAL_FALLBACKS: Record<string, string> = {
+    Sent: '\\Sent', Drafts: '\\Drafts', Archive: '\\Archive', Junk: '\\Junk', Trash: '\\Trash'
+  }
+  function followRealSpecialFolder(folders: Folder[]) {
+    const active = getState().activeFolder
+    const use = SPECIAL_FALLBACKS[active]
+    if (!use || folders.some((f) => f.id === active)) return
+    const real = specialFolderPath(folders, use, active)
+    if (real === active) return
+    setActiveFolder(real)
+    loadMessages(real)
+  }
+
   async function loadFolders() {
     try {
       const data = await MailAPI.folders()
-      if (data.folders) setFolders(data.folders)
+      if (data.folders) {
+        setFolders(data.folders)
+        followRealSpecialFolder(data.folders)
+      }
     } catch (e) {
       // Offline (PWA served from the SW cache) is an expected state with its
       // own banner in the list, not an error: keep the folders we have.
@@ -352,9 +372,12 @@
 
   // The draft is now in `folder` on the server: confirm it, refresh the folder
   // counts, and reload the list when that Drafts folder is the one on screen.
-  function handleDraftSaved(folder: string) {
+  // The draft is now in `folder` on the server: confirm it, refresh the folder
+  // counts (which also moves a Drafts view off a fallback path, see
+  // followRealSpecialFolder), and reload the list when that folder is on screen.
+  async function handleDraftSaved(folder: string) {
     showToast('Draft saved')
-    loadFolders()
+    await loadFolders()
     if (getState().activeFolder === folder) loadMessages(folder)
   }
 
