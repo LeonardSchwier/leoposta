@@ -4,13 +4,28 @@ import DOMPurify from 'dompurify'
 const purify = DOMPurify(window)
 let allowRemote = false
 
+// Characters a browser ignores in a URL (leading/trailing C0 controls and
+// spaces are stripped, tab/CR/LF are removed anywhere) plus the Unicode
+// spaces DOMPurify ignores when it checks the scheme. "ht\ttps://x" is
+// fetched as https://x, so the remote-image test must see what the browser sees.
+// eslint-disable-next-line no-control-regex
+const URL_IGNORED = /[\u0000-\u0020\u007f-\u009f\u00a0\u1680\u180e\u2000-\u2029\u205f\u3000\ufeff]/g
+const LOCAL_IMAGE = /^(?:cid:|data:)/i
+
 purify.addHook('afterSanitizeAttributes', (node: Element) => {
   if (node.tagName === 'A') {
+    // A link in a mail must never navigate the app itself (the sender's
+    // target="_self"/"_top" included): it always opens a new browsing context
+    // that cannot reach back through window.opener.
     node.setAttribute('rel', 'noopener noreferrer')
+    if (node.hasAttribute('href')) node.setAttribute('target', '_blank')
+    else node.removeAttribute('target')
   }
-  if (!allowRemote && node.tagName === 'IMG') {
-    const src = node.getAttribute('src') || ''
-    if (/^https?:/i.test(src)) {
+  if (!allowRemote && node.tagName === 'IMG' && node.hasAttribute('src')) {
+    // Only embedded images load before the user opts in; anything else,
+    // however it is spelled, waits behind "Load images".
+    const src = (node.getAttribute('src') || '').replace(URL_IGNORED, '')
+    if (!LOCAL_IMAGE.test(src)) {
       node.setAttribute('data-remote-src', src)
       node.removeAttribute('src')
     }
@@ -48,7 +63,10 @@ export function sanitizeHtml(html: string, opts: { allowRemoteImages?: boolean }
   }
 }
 
+/** True when sanitizing held back at least one remote image (see the hook). */
 export function hasRemoteImages(html: string): boolean {
   if (!html) return false
-  return /<img\b[^>]*\bsrc\s*=\s*["']?\s*https?:/i.test(html)
+  const probe = document.createElement('div')
+  probe.innerHTML = sanitizeHtml(html)
+  return probe.querySelector('img[data-remote-src]') !== null
 }

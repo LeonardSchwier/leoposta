@@ -6,9 +6,14 @@
   --color-bg-secondary: var(--ds-color-panel);
   --color-text: var(--ds-color-text);
   --color-text-secondary: var(--ds-color-text-secondary);
+  --color-text-muted: var(--ds-color-text-muted);
   --color-accent: var(--ds-color-accent);
   --color-accent-hover: var(--ds-color-accent-hover);
   --color-accent-soft: var(--ds-color-accent-soft);
+  /* Text on an accent / danger fill: light in the light theme, dark in the
+     dark theme (the dark accent is a light gold; white on it is ~1.9:1). */
+  --color-on-accent: var(--ds-color-on-accent);
+  --color-on-danger: var(--ds-color-on-danger);
   --accent-soft: var(--ds-color-accent-soft);
   --color-surface: var(--ds-color-raised);
   --color-border: var(--ds-color-border);

@@ -5,6 +5,40 @@ Build a complete, standalone web-based mail client with a clean, familiar
 native-mail UX.
 It must work offline (PWA), support IMAP/SMTP, and include all mail features.
 
+## Quality gates (mandatory for every change — bug fix, feature, refactor)
+The owner must never find a bug that a test could have found. These apply to
+**every** change, including "small" fixes and changes outside ROADMAP.md, and
+take precedence over speed:
+
+1. **Real-stack end-to-end first.** Any change to a user-reachable path gets a
+   Playwright journey in `tests/e2e-real/` that drives the real UI against a
+   real Dovecot/Radicale/SMTP stack and asserts the result on the server too
+   (did the mail arrive, is the draft in Drafts, did the message move).
+   Mocked-fetch unit tests alone are never enough for these paths.
+2. **Every bug fix ships a regression test that fails without the fix** —
+   the e2e journey plus a narrow unit/server test where the cause lives.
+   Follow [`skills/bug-fixing.md`](skills/bug-fixing.md): reproduce, root
+   cause with file:line, fix the class (search for siblings), not the line.
+3. **Pre-push gate:** read [`skills/verification.md`](skills/verification.md)
+   before every push and run every applicable check in that session on that
+   tree: `npm run typecheck` (tsc + svelte-check, 0 errors), `npm test`,
+   `npm run test:server`, `npm run test:e2e:real`, and for desktop/packaging/
+   CORS/token/header changes `tests/desktop/run-desktop-smoke.sh` (WebKitGTK).
+   Name the commands and pass counts in the PR. Never claim "works" for a case
+   you did not run.
+4. **Never** weaken, skip or delete a failing test, widen `allowApiErrors` to
+   hide an error a user would see, or silence a checker (`@ts-ignore`,
+   `as any`). A red check is a bug report.
+5. **No inert UI.** A button, menu item or setting that is visible must work
+   end to end (tonight's incidents: "Save Draft" only closed the window;
+   folder Rename/Delete were never wired). If it can't work yet, don't show it.
+6. **Answer the crash-freedom questions** in `skills/bug-fixing.md` for every
+   change (errors handled and shown, boundary inputs, lifecycle/teardown,
+   double clicks and races, WebKitGTK as well as Chromium, partial failure).
+7. CI (`.github/workflows/ci.yml`) runs all of the above; the nightly
+   `scripts/auto-update.sh` runs them again before it deploys and keeps the
+   current version if anything fails.
+
 ## Roadmap (source of truth for open work)
 **Open features and their status: see [`ROADMAP.md`](./ROADMAP.md).**
 Update it every time a P0/P1 item lands or a new item enters the backlog;
@@ -141,6 +175,10 @@ list. (Multi-account support and email signature are both shipped —
 Leoposta is a mail client: HTML body rendering, IMAP/SMTP credentials on the
 backend, and a REST API are the three trust boundaries to defend.
 
+**When to run it, what to do with findings and the scanner commands:
+[`skills/security-review.md`](skills/security-review.md).** CI runs the
+scanners in `.github/workflows/security.yml`.
+
 - Skill installed at `~/.config/opencode/skills/security-audit/` (Cloudflare
   `security-audit-skill`, MIT). It is an OpenCode agent skill — run it from
   the agent, not from the app; it is not a runtime dependency.
@@ -208,18 +246,25 @@ REST API served by the Node.js backend:
 ## Build Commands
 ```bash
 npm install
-npm run dev          # Dev server (frontend + backend)
-npm run build        # Production build
-npm run test         # Unit tests
-npm run test:e2e     # E2E tests
-npm run typecheck    # tsc, app and node configs
+npm run dev            # Dev server (frontend + backend)
+npm run build          # Production build
+npm run typecheck      # tsc (app + node) and svelte-check — 0 errors required
+npm test               # Vitest unit/component tests
+npm run test:server    # node --test server tests
+npm run test:e2e:real  # Playwright vs real Dovecot/Radicale/SMTP (podman/docker)
+npm run test:e2e       # legacy fast e2e against the fake IMAP server
+tests/desktop/run-desktop-smoke.sh   # WebKitGTK smoke of the desktop bundle
 ```
 
 ## Testing
-- Unit: Vitest for components, utilities, API handlers
-- Integration: Supertest for API endpoints
-- E2E: Playwright for full user flows
-- Visual: Screenshot tests for key screens
+See [`skills/verification.md`](skills/verification.md) for which checks apply
+to which change and the pre-push gate.
+- Unit: Vitest for logic and mounted components (`src/__tests__`)
+- Server: `node --test` for routes and libs (`server/*.test.js`)
+- **E2E (primary):** `tests/e2e-real/` — real UI, real mail servers, both IMAP
+  layouts, PWA and desktop builds; the page guard fails a test on any console
+  error or failed API call
+- Desktop: `tests/desktop/` — WebKitGTK, the engine the Tauri app uses
 
 ## Important
 - This is a STANDALONE app — no external dependencies except npm

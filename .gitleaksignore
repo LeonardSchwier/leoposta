@@ -1,0 +1,5 @@
+# Verified false positives only, one per line, each with its reason.
+# Settings.svelte at a10ec22c: the PGP import hint and textarea placeholder
+# contain the literal armor lines "-----BEGIN/END PGP PRIVATE KEY-----" as
+# example text; there is no key material.
+a10ec22c797fb0de448623d1aa681b1abce6a86d:src/components/Settings.svelte:private-key:194

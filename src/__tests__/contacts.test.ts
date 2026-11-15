@@ -160,3 +160,24 @@ describe('createContactsCache', () => {
     expect(second).toEqual(CONTACTS_BY_BOOK['dav://host/b1'])
   })
 })
+
+describe('createContactsCache: real server cards', () => {
+  const card = (c: Partial<Contact> & { uid: string }): Contact => ({ name: '', email: '', ...c })
+  const fetcherOf = (cs: Contact[]): ContactFetcher => ({ fetchBooks: async () => BOOKS.slice(0, 1), fetchContacts: async () => cs })
+
+  it('offers every address of a card, not only the first', async () => {
+    const cache = createContactsCache({ fetcher: fetcherOf([card({ uid: 'm', name: 'Multi Mail', email: 'a@x.test', emails: ['a@x.test', 'b@x.test'] })]) })
+    await cache.loadContacts(BOOKS[0].uri)
+    expect(cache.matches('multi').map((c) => c.email)).toEqual(['a@x.test', 'b@x.test'])
+  })
+  it('finds a contact by any word of the name (family name)', async () => {
+    const cache = createContactsCache({ fetcher: fetcherOf([card({ uid: 'j', name: 'Jürgen Müller', email: 'jm@x.test' })]) })
+    await cache.loadContacts(BOOKS[0].uri)
+    expect(cache.matches('mül').map((c) => c.uid)).toEqual(['j'])
+  })
+  it('a card without an e-mail address is never suggested', async () => {
+    const cache = createContactsCache({ fetcher: fetcherOf([card({ uid: 'p', name: 'Phone Only', email: '', emails: [] })]) })
+    await cache.loadContacts(BOOKS[0].uri)
+    expect(cache.matches('phone')).toEqual([])
+  })
+})

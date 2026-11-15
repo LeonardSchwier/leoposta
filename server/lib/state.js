@@ -1,16 +1,41 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
+import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 const __filename = fileURLToPath(import.meta.url)
 const SERVER_DIR = path.dirname(path.dirname(__filename))
 
-export const DATA_DIR = process.env.LEOPOSTA_DATA_DIR || SERVER_DIR
+const LEGACY_STATE_FILES = ['accounts.json', 'account.json', 'scheduled.json', 'rules.json', 'pgp_private.asc', 'pgp_publics.asc']
+
+/**
+ * Where accounts, rules, scheduled mail and PGP keys live.
+ * LEOPOSTA_DATA_DIR wins (desktop app, container). Otherwise the per-user
+ * data dir ($XDG_DATA_HOME/leoposta, ~/.local/share/leoposta) — never the
+ * install/checkout directory, which an update replaces and a `git add -A`
+ * could pick up. A checkout that already keeps its state in server/ (how
+ * older versions stored it) keeps using it, so nothing is lost.
+ */
+export function resolveDataDir({ env = process.env, serverDir = SERVER_DIR, home = os.homedir(), exists = fs.existsSync } = {}) {
+  if (env.LEOPOSTA_DATA_DIR) return path.resolve(env.LEOPOSTA_DATA_DIR)
+  if (LEGACY_STATE_FILES.some(f => exists(path.join(serverDir, f)))) return serverDir
+  const base = env.XDG_DATA_HOME && path.isAbsolute(env.XDG_DATA_HOME) ? env.XDG_DATA_HOME : path.join(home, '.local', 'share')
+  return path.join(base, 'leoposta')
+}
+
+export const DATA_DIR = resolveDataDir()
+fs.mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 })
 export const ACCOUNTS_FILE = path.join(DATA_DIR, 'accounts.json')
 export const LEGACY_ACCOUNT_FILE = path.join(DATA_DIR, 'account.json')
 export const SCHEDULED_FILE = path.join(DATA_DIR, 'scheduled.json')
 export const RULES_FILE = path.join(DATA_DIR, 'rules.json')
+// Per account: the highest INBOX UID the rules have already seen (lib/rules.js).
+export const RULE_CURSORS_FILE = path.join(DATA_DIR, 'rule-cursors.json')
+// The account the user last chose in the UI. Kept here (not only in the
+// page's localStorage) because the desktop shell serves the app on a new
+// random port per launch, i.e. a new origin with an empty localStorage.
+export const UI_STATE_FILE = path.join(DATA_DIR, 'ui-state.json')
 export const DEV_TOKEN_FILE = path.join(SERVER_DIR, '.dev-token')
 
 // Read the shared local dev token (server/.dev-token) if present. Created once
@@ -42,8 +67,12 @@ export const API_TOKEN = process.env.LEOPOSTA_TOKEN
   || fileToken
   || writeDevTokenFile(crypto.randomBytes(32).toString('hex'))
 export const TOKEN_FROM_ENV = !!process.env.LEOPOSTA_TOKEN
+// Only this server's own origins by default. The Vite dev server on :3000
+// proxies /api and rewrites Origin to this one (vite.config.ts), so any other
+// page that happens to be served on :3000 is not trusted with the API.
+const OWN_PORT = process.env.PORT || '3001'
 export const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS
-  || 'http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001')
+  || `http://localhost:${OWN_PORT},http://127.0.0.1:${OWN_PORT}`)
   .split(',').map(s => s.trim()).filter(Boolean)
 
 // Server-side DAV response cache shared by every route module and the tests.
@@ -54,13 +83,14 @@ export const state = {
   accounts: [],
   scheduledMessages: [],
   rules: [],
+  ruleCursors: {},
   davCache: createCache(500)
 }
 
 // Drop every cached DAV read for one account (contacts, calendar list, events).
 export function invalidateAccountDavCache(acctId) {
   state.davCache.invalidatePrefix(`contacts|${acctId}|`)
-  state.davCache.invalidate(`calendars|${acctId}`)
+  state.davCache.invalidate(`books|${acctId}`)
   state.davCache.invalidatePrefix(`events|${acctId}|`)
 }
 
@@ -78,6 +108,20 @@ if (fs.existsSync(SCHEDULED_FILE)) {
 }
 if (fs.existsSync(RULES_FILE)) {
   state.rules = JSON.parse(fs.readFileSync(RULES_FILE, 'utf-8'))
+}
+if (fs.existsSync(RULE_CURSORS_FILE)) {
+  try { state.ruleCursors = JSON.parse(fs.readFileSync(RULE_CURSORS_FILE, 'utf-8')) || {} } catch { state.ruleCursors = {} }
+}
+
+/** The remembered active account's email, or null (none / unreadable file). */
+export function getRememberedAccount() {
+  try {
+    const v = JSON.parse(fs.readFileSync(UI_STATE_FILE, 'utf-8'))?.activeAccount
+    return typeof v === 'string' && v ? v : null
+  } catch { return null }
+}
+export function setRememberedAccount(email) {
+  fs.writeFileSync(UI_STATE_FILE, JSON.stringify({ activeAccount: email }, null, 2), { mode: 0o600 })
 }
 
 // ── Accessors ────────────────────────────────────────────────────────────────
@@ -142,6 +186,10 @@ export function saveRules() {
   fs.writeFileSync(RULES_FILE, JSON.stringify(state.rules, null, 2), { mode: 0o600 })
 }
 
+export function saveRuleCursors() {
+  fs.writeFileSync(RULE_CURSORS_FILE, JSON.stringify(state.ruleCursors, null, 2), { mode: 0o600 })
+}
+
 export function saveScheduled() {
   fs.writeFileSync(SCHEDULED_FILE, JSON.stringify(state.scheduledMessages, null, 2), { mode: 0o600 })
 }
@@ -180,44 +228,52 @@ export function addAccount(body) {
   return state.accounts[state.accounts.length - 1]
 }
 
+/**
+ * The account `cur` would become after applying `body` (no side effects).
+ * accountPayloadFrom always returns every field (defaulting/undefined-ing
+ * whatever body doesn't set), so running it on `body` alone would turn any
+ * partial update (e.g. GOA import sending only davUrl/davUser/davPass) into
+ * one that blanks every other field. It runs on `cur` overlaid with `body`
+ * instead: an omitted field keeps its value; a field present in body
+ * (including '' / false, to clear it) changes. A password only changes when
+ * body carries one (never inherited from the first-slot env override).
+ */
+export function mergeAccount(cur, body) {
+  const fresh = accountPayloadFrom({ ...cur, ...body })
+  const keep = (k) => (body[k] !== undefined && body[k] !== null ? body[k] : cur[k])
+  const merged = {
+    ...cur,
+    ...fresh,
+    id: cur.id,
+    imapPass: keep('imapPass'),
+    smtpPass: keep('smtpPass'),
+    davUrl: keep('davUrl'),
+    davUser: keep('davUser'),
+    davPass: keep('davPass')
+  }
+  delete merged.email
+  merged.email = cur.email
+  return merged
+}
+
 export function updateAccount(email, body) {
   const idx = state.accounts.findIndex(a => (a.email || '').toLowerCase() === String(email).toLowerCase())
   if (idx === -1) return null
   const cur = state.accounts[idx]
-  // accountPayloadFrom always returns every field (defaulting/undefined-ing
-  // whatever body doesn't set), so running it on `body` alone turns any
-  // partial update (e.g. GOA import sending only davUrl/davUser/davPass)
-  // into one that blanks every field body didn't mention — imapHost,
-  // imapUser, smtpHost, smtpUser, signature included. Compute it from
-  // `cur` overlaid with `body` instead, so an omitted field keeps its
-  // current value and only a field actually present in body (including
-  // explicitly sent as '' / false, to clear it) changes.
-  const fresh = accountPayloadFrom({ ...cur, ...body })
-  // Password only comes from body (never from the inherited in-memory
-  // first-slot env override, so we don't persist a stale env secret to a
-  // non-first account).
-  const merged = {
-    ...cur,
-    ...fresh,
-    email: cur.email,
-    id: cur.id,
-    imapPass: body.imapPass !== undefined ? body.imapPass : (cur.imapPass !== undefined ? cur.imapPass : undefined),
-    smtpPass: body.smtpPass !== undefined ? body.smtpPass : (cur.smtpPass !== undefined ? cur.smtpPass : undefined),
-    davUrl: body.davUrl !== undefined ? body.davUrl : (cur.davUrl !== undefined ? cur.davUrl : undefined),
-    davUser: body.davUser !== undefined ? body.davUser : (cur.davUser !== undefined ? cur.davUser : undefined),
-    davPass: body.davPass !== undefined ? body.davPass : (cur.davPass !== undefined ? cur.davPass : undefined)
-  }
-  delete merged.email
-  merged.email = cur.email
-  state.accounts[idx] = merged
+  state.accounts[idx] = mergeAccount(cur, body)
   saveAccounts()
   state.accounts[idx] = restoreEnvPasswordsForRuntime(state.accounts)[idx]
+  // New DAV URL or credentials: cached address books/events are someone
+  // else's now.
+  invalidateAccountDavCache(cur.id)
   return state.accounts[idx]
 }
 
 export function removeAccount(email) {
   const before = state.accounts.length
+  const gone = state.accounts.filter((a) => (a.email || '').toLowerCase() === String(email).toLowerCase())
   state.accounts = state.accounts.filter((a) => (a.email || '').toLowerCase() !== String(email).toLowerCase())
   if (state.accounts.length !== before) saveAccounts()
+  for (const a of gone) invalidateAccountDavCache(a.id)
   return state.accounts.length !== before
 }

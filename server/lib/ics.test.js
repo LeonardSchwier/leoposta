@@ -1,0 +1,137 @@
+import { test } from 'node:test'
+import assert from 'node:assert/strict'
+import { parseEvents, expandForRange, splitIcsByUid, unfoldLines, parseProperty, boundToMs, formatForClient, parseDateValue } from './ics.js'
+
+const TZ_BERLIN = [
+  'BEGIN:VTIMEZONE', 'TZID:Europe/Berlin',
+  'BEGIN:STANDARD', 'DTSTART:19701025T030000', 'TZOFFSETFROM:+0200', 'TZOFFSETTO:+0100', 'END:STANDARD',
+  'BEGIN:DAYLIGHT', 'DTSTART:19700329T020000', 'TZOFFSETFROM:+0100', 'TZOFFSETTO:+0200', 'END:DAYLIGHT',
+  'END:VTIMEZONE'
+].join('\r\n')
+
+const cal = (...events) => ['BEGIN:VCALENDAR', 'VERSION:2.0', TZ_BERLIN, ...events, 'END:VCALENDAR'].join('\r\n')
+
+test('unfoldLines joins continuation lines; parseProperty handles params, quotes and groups', () => {
+  assert.deepEqual(unfoldLines('SUMMARY:Long\r\n  title\r\nX:1'), ['SUMMARY:Long title', 'X:1'])
+  const p = parseProperty('ATTENDEE;CN="Doe, Jane";RSVP=TRUE:mailto:jane@example.test')
+  assert.equal(p.name, 'ATTENDEE')
+  assert.equal(p.params.CN, 'Doe, Jane')
+  assert.equal(p.value, 'mailto:jane@example.test')
+  assert.equal(parseProperty('item1.EMAIL;type=INTERNET:a@b.test').name, 'EMAIL')
+})
+
+test('parseEvents reads the VEVENT DTSTART, never the VTIMEZONE one, and unescapes text', () => {
+  const [ev] = parseEvents(cal(
+    'BEGIN:VEVENT', 'UID:a1', 'DTSTART;TZID=Europe/Berlin:20261120T100000', 'DTEND;TZID=Europe/Berlin:20261120T113000',
+    'SUMMARY;LANGUAGE=de:Grüße\\, Team', 'DESCRIPTION:Zeile 1\\nZeile 2 mit \\\\n', 'END:VEVENT'))
+  assert.equal(ev.uid, 'a1')
+  assert.equal(ev.dtstart.y, 2026)
+  assert.equal(ev.dtstart.tzid, 'Europe/Berlin')
+  assert.equal(ev.summary, 'Grüße, Team')
+  assert.equal(ev.description, 'Zeile 1\nZeile 2 mit \\n')
+})
+
+test('TZID times become UTC instants (DST aware); all-day and floating stay as they are', () => {
+  assert.equal(formatForClient(parseDateValue('20261120T100000', { TZID: 'Europe/Berlin' })), '20261120T090000Z') // CET
+  assert.equal(formatForClient(parseDateValue('20260720T100000', { TZID: 'Europe/Berlin' })), '20260720T080000Z') // CEST
+  assert.equal(formatForClient(parseDateValue('20261120', { VALUE: 'DATE' })), '20261120')
+  assert.equal(formatForClient(parseDateValue('20261120T100000')), '20261120T100000')
+  assert.equal(formatForClient(parseDateValue('20261120T100000', { TZID: 'Not/AZone' })), '20261120T100000')
+})
+
+test('expandForRange: weekly series shows every occurrence in range, EXDATE skipped, COUNT honoured', () => {
+  const ics = cal('BEGIN:VEVENT', 'UID:w1', 'DTSTART;TZID=Europe/Berlin:20261005T090000', 'DTEND;TZID=Europe/Berlin:20261005T100000',
+    'RRULE:FREQ=WEEKLY;BYDAY=MO;COUNT=8', 'EXDATE;TZID=Europe/Berlin:20261109T090000', 'SUMMARY:Standup', 'END:VEVENT')
+  const occ = expandForRange(ics, boundToMs('2026-11-01'), boundToMs('2026-11-30', true))
+  // Oct 5..Nov 23 = 8 Mondays; November: 2, 9 (excluded), 16, 23
+  assert.deepEqual(occ.map(o => o.start), ['20261102T080000Z', '20261116T080000Z', '20261123T080000Z'])
+  assert.ok(occ.every(o => o.recurring && o.end))
+})
+
+test('expandForRange: RECURRENCE-ID override replaces its occurrence', () => {
+  const ics = cal(
+    'BEGIN:VEVENT', 'UID:d1', 'DTSTART:20261110T120000Z', 'DTEND:20261110T130000Z', 'RRULE:FREQ=DAILY;UNTIL=20261112T120000Z', 'SUMMARY:Lunch', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:d1', 'RECURRENCE-ID:20261111T120000Z', 'DTSTART:20261111T140000Z', 'DTEND:20261111T150000Z', 'SUMMARY:Late lunch', 'END:VEVENT')
+  const occ = expandForRange(ics, boundToMs('2026-11-01'), boundToMs('2026-11-30', true))
+  assert.deepEqual(occ.map(o => [o.start, o.summary]).sort(), [
+    ['20261110T120000Z', 'Lunch'], ['20261111T140000Z', 'Late lunch'], ['20261112T120000Z', 'Lunch']
+  ])
+})
+
+test('expandForRange: monthly by nth weekday and yearly all-day', () => {
+  const m = expandForRange(cal('BEGIN:VEVENT', 'UID:m', 'DTSTART:20260101T180000Z', 'RRULE:FREQ=MONTHLY;BYDAY=-1FR', 'SUMMARY:x', 'END:VEVENT'),
+    boundToMs('2026-11-01'), boundToMs('2026-11-30', true))
+  assert.deepEqual(m.map(o => o.start), ['20261127T180000Z'])
+  const y = expandForRange(cal('BEGIN:VEVENT', 'UID:y', 'DTSTART;VALUE=DATE:20200314', 'DTEND;VALUE=DATE:20200315', 'RRULE:FREQ=YEARLY', 'SUMMARY:Bday', 'END:VEVENT'),
+    boundToMs('2026-03-01'), boundToMs('2026-03-31', true))
+  assert.deepEqual(y.map(o => [o.start, o.end, o.allDay]), [['20260314', '20260315', true]])
+})
+
+test('expandForRange: a non-recurring multi-day event overlapping the range start is kept', () => {
+  const occ = expandForRange(cal('BEGIN:VEVENT', 'UID:t', 'DTSTART;VALUE=DATE:20261030', 'DTEND;VALUE=DATE:20261103', 'SUMMARY:Trip', 'END:VEVENT'),
+    boundToMs('2026-11-01'), boundToMs('2026-11-30', true))
+  assert.equal(occ.length, 1)
+  assert.equal(occ[0].recurring, false)
+})
+
+test('splitIcsByUid groups overrides with their master, keeps escapes and adds the VTIMEZONE used', () => {
+  const ics = cal(
+    'BEGIN:VEVENT', 'UID:s1', 'DTSTART;TZID=Europe/Berlin:20261110T120000', 'RRULE:FREQ=DAILY;COUNT=3', 'DESCRIPTION:a\\nb\\, c', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:s1', 'RECURRENCE-ID;TZID=Europe/Berlin:20261111T120000', 'DTSTART;TZID=Europe/Berlin:20261111T150000', 'END:VEVENT',
+    'BEGIN:VEVENT', 'UID:s2', 'DTSTART:20261112T120000Z', 'END:VEVENT',
+    'BEGIN:VEVENT', 'DTSTART:20261113T120000Z', 'SUMMARY:no uid', 'END:VEVENT')
+  const parts = splitIcsByUid(ics)
+  assert.equal(parts.length, 3)
+  const s1 = parts.find(p => p.uid === 's1')
+  assert.equal((s1.ics.match(/BEGIN:VEVENT/g) || []).length, 2)
+  assert.match(s1.ics, /BEGIN:VTIMEZONE[\s\S]*TZID:Europe\/Berlin/)
+  assert.match(s1.ics, /DESCRIPTION:a\\nb\\, c/)
+  const s2 = parts.find(p => p.uid === 's2')
+  assert.doesNotMatch(s2.ics, /VTIMEZONE/)
+  const anon = parts.find(p => p.uid.startsWith('leoposta-import-'))
+  assert.match(anon.ics, new RegExp(`UID:${anon.uid}`))
+})
+
+// ── BYSETPOS and ordinal BYDAY (RFC 5545 §3.3.10) ───────────────────────────
+// A "first Monday" written as BYDAY=MO;BYSETPOS=1 used to show on every Monday.
+const series = (rrule, dtstart = 'DTSTART:20260101T090000Z') => cal('BEGIN:VEVENT', 'UID:s', dtstart, `RRULE:${rrule}`, 'SUMMARY:x', 'END:VEVENT')
+const days = (occ) => occ.map(o => o.start.slice(0, 8))
+const Y2026 = [boundToMs('2026-01-01'), boundToMs('2026-12-31', true)]
+
+test('MONTHLY first Monday: BYDAY=1MO and BYDAY=MO;BYSETPOS=1 agree, one per month', () => {
+  const want = ['20260105', '20260202', '20260302', '20260406', '20260504', '20260601', '20260706', '20260803', '20260907', '20261005', '20261102', '20261207']
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=1MO'), ...Y2026)), want)
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1'), ...Y2026)), want)
+})
+
+test('MONTHLY last Friday (-1FR) and second Tuesday (2TU)', () => {
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=-1FR'), boundToMs('2026-01-01'), boundToMs('2026-04-30', true))), ['20260130', '20260227', '20260327', '20260424'])
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=FR;BYSETPOS=-1'), boundToMs('2026-01-01'), boundToMs('2026-04-30', true))), ['20260130', '20260227', '20260327', '20260424'])
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=2TU'), boundToMs('2026-01-01'), boundToMs('2026-03-31', true))), ['20260113', '20260210', '20260310'])
+})
+
+test('MONTHLY last weekday: BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1', () => {
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=MO,TU,WE,TH,FR;BYSETPOS=-1'), boundToMs('2026-01-01'), boundToMs('2026-06-30', true))),
+    ['20260130', '20260227', '20260331', '20260430', '20260529', '20260630'])
+})
+
+test('COUNT and UNTIL count the BYSETPOS-selected occurrences only', () => {
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=MO;BYSETPOS=1;COUNT=3'), ...Y2026)), ['20260105', '20260202', '20260302'])
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=-1FR;UNTIL=20260331T235959Z'), ...Y2026)), ['20260130', '20260227', '20260327'])
+  // DTSTART after the month's first Monday: that one is not an occurrence and not counted.
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=1MO;COUNT=2', 'DTSTART:20260110T090000Z'), ...Y2026)), ['20260202', '20260302'])
+})
+
+test('YEARLY: ordinal BYDAY with BYMONTH counts in the month; without BYMONTH in the year', () => {
+  const last = expandForRange(series('FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU'), boundToMs('2026-01-01'), boundToMs('2028-12-31', true))
+  assert.deepEqual(days(last), ['20261025', '20271031', '20281029'])
+  const twentieth = expandForRange(series('FREQ=YEARLY;BYDAY=20MO'), boundToMs('2026-01-01'), boundToMs('2027-12-31', true))
+  assert.deepEqual(days(twentieth), ['20260518', '20270517'])
+  const first = expandForRange(series('FREQ=YEARLY;BYMONTH=1,7;BYDAY=MO;BYSETPOS=1'), ...Y2026)
+  assert.deepEqual(days(first), ['20260105'])
+})
+
+test('BYDAY with BYMONTHDAY intersects (Friday the 13th); a WEEKLY series is unchanged', () => {
+  assert.deepEqual(days(expandForRange(series('FREQ=MONTHLY;BYDAY=FR;BYMONTHDAY=13'), boundToMs('2026-01-01'), boundToMs('2027-12-31', true))), ['20260213', '20260313', '20261113', '20270813'])
+  assert.deepEqual(days(expandForRange(series('FREQ=WEEKLY;BYDAY=MO,WE;COUNT=4', 'DTSTART:20260105T090000Z'), ...Y2026)), ['20260105', '20260107', '20260112', '20260114'])
+})

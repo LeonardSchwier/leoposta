@@ -53,11 +53,14 @@ for name in "${NODE_LIBS[@]}"; do
   # Resolve against the live `node` binary so we ship the exact sonames it
   # needs (avoids guessing the versioned name per-distro).
   # ldd: "<name> => <path> (addr)"; ldconfig -p: "<name> (cpu) => <path>"
-  base_name=$(ldd "$OUT/node" 2>/dev/null | awk -v n="$name" '$1==n{print $1; exit}')
+  # Each lookup may find nothing (`|| true`): under `set -o pipefail` a miss
+  # (ls exit 2) would end the whole script silently, e.g. with the
+  # setup-node binary in CI, which has no separate libnode.
+  base_name=$(ldd "$OUT/node" 2>/dev/null | awk -v n="$name" '$1==n{print $1; exit}' || true)
   [[ -z "$base_name" ]] && base_name="$name"
-  so_path=$(ldd "$OUT/node" 2>/dev/null | awk -v n="$name" '$1==n{print $3; exit}')
-  [[ -z "$so_path" ]] && so_path=$(ldconfig -p 2>/dev/null | awk -v n="$base_name" '$1==n{print $NF; exit}')
-  [[ -z "$so_path" ]] && so_path=$(ls /lib64/$base_name /usr/lib64/$base_name /lib/x86_64-linux-gnu/$base_name /usr/lib/x86_64-linux-gnu/$base_name 2>/dev/null | head -1)
+  so_path=$(ldd "$OUT/node" 2>/dev/null | awk -v n="$name" '$1==n{print $3; exit}' || true)
+  [[ -z "$so_path" ]] && so_path=$(ldconfig -p 2>/dev/null | awk -v n="$base_name" '$1==n{print $NF; exit}' || true)
+  [[ -z "$so_path" ]] && so_path=$(ls /lib64/$base_name /usr/lib64/$base_name /lib/x86_64-linux-gnu/$base_name /usr/lib/x86_64-linux-gnu/$base_name 2>/dev/null | head -1 || true)
   if [[ -n "$so_path" && -f "$so_path" ]]; then
     cp -L "$so_path" "$OUT/libs/"
     shipped+=("$(basename "$so_path")")

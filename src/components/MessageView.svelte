@@ -1,23 +1,45 @@
 <script lang="ts">
-  import { store, getState, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, deleteMessage, updateMessage, selectMessage } from '../store'
+  import { store, getState, selectMessage } from '../store'
+  import { startReply } from '../lib/reply'
   import { sanitizeHtml, hasRemoteImages } from '../lib/sanitizeHtml'
   import { MailAPI } from '../api'
   import { downloadAttachment } from '../lib/attachmentDownload'
+  import PgpUnlock from './PgpUnlock.svelte'
+  import { linkify } from '../lib/linkify'
 
+  import { hasFlag as messageHasFlag, isSpecialFolder, type MessageAction } from '../lib/messageActions'
+
+  // Every toolbar action names the message shown here (lib/messageActions.ts).
   let {
-    onDelete: propDelete,
-    onArchive: propArchive,
-    onStar: propStar,
-    onReply: propReply
+    onAction,
+    onMoveRequest,
+    onEditDraft,
+    onReply: propReply,
+    onGone
   }: {
-    onDelete?: () => void
-    onArchive?: () => void
-    onStar?: () => void
+    onAction?: (id: string, action: MessageAction) => void
+    onMoveRequest?: (id: string) => void
+    /** Set while the Drafts mailbox is open: reopen this draft in Compose. */
+    onEditDraft?: (id: string) => void
     onReply?: () => void
+    /** The message was deleted on the server (a 404): drop the row + toast. */
+    onGone?: (id: string) => void
   } = $props()
 
   // Per-message opt-in; not persisted.
   let imagesLoadedFor = $state<string | null>(null)
+
+  // Sanitizing a large mail is costly: do it once per body, not on every store
+  // update (the template re-runs whenever anything in the store changes).
+  const current = $derived($store.messages.find(m => m.id === $store.selectedMessageId))
+  const currentHtml = $derived(current?.bodyHtml || '')
+  const allowRemote = $derived(!!current && imagesLoadedFor === current.id)
+  const safeHtml = $derived(currentHtml ? sanitizeHtml(currentHtml, { allowRemoteImages: allowRemote }) : '')
+  const remoteBlocked = $derived(!!currentHtml && !allowRemote && hasRemoteImages(currentHtml))
+  const plainSegments = $derived(current && !currentHtml && current.body ? linkify(current.body) : [])
+  // An S/MIME message body is one application/pkcs7-mime part; it cannot be shown.
+  const smime = $derived((current?.attachments || []).some(a => /^application\/(x-)?pkcs7-mime$/i.test(a.contentType) || /\.p7m$/i.test(a.filename)))
+  const files = $derived((current?.attachments || []).filter(a => !a.inline))
 
   function formatFullDate(dateStr: string) {
     return new Date(dateStr).toLocaleString()
@@ -32,47 +54,27 @@
     const msg = getCurrentMessage()
     if (!msg) return
     if (propReply) { propReply(); return }
-    setComposeTo([msg.from])
-    setComposeSubject(`Re: ${msg.subject}`)
-    setComposeReplyTo(msg.id)
-    setComposeOriginalMessage(msg)
-    setComposing(true)
+    void startReply(msg, 'reply')
+  }
+
+  function handleReplyAll() {
+    const msg = getCurrentMessage()
+    if (!msg) return
+    void startReply(msg, 'replyAll')
   }
 
   function handleForward() {
     const msg = getCurrentMessage()
     if (!msg) return
-    setComposeTo([])
-    setComposeSubject(`Fwd: ${msg.subject}`)
-    setComposeForward(true)
-    setComposeOriginalMessage(msg)
-    setComposing(true)
+    void startReply(msg, 'forward')
   }
 
-  function handleDelete() {
-    if (propDelete) { propDelete(); return }
-    const msg = getCurrentMessage()
-    if (!msg) return
-    deleteMessage(msg.id)
-  }
+  const inJunk = $derived(isSpecialFolder($store.folders, $store.activeFolder, '\\Junk', 'Junk'))
+  const inArchive = $derived(isSpecialFolder($store.folders, $store.activeFolder, '\\Archive', 'Archive'))
 
-  function handleArchive() {
-    if (propArchive) { propArchive(); return }
+  function act(action: MessageAction) {
     const msg = getCurrentMessage()
-    if (!msg) return
-    deleteMessage(msg.id)
-  }
-
-  function handleStar() {
-    if (propStar) { propStar(); return }
-    const msg = getCurrentMessage()
-    if (!msg) return
-    const flags = msg.flags || []
-    const hasFlag = flags.includes('\\Flagged') || flags.includes('Flagged')
-    const newFlags = hasFlag
-      ? flags.filter(f => f !== '\\Flagged' && f !== 'Flagged')
-      : [...flags, '\\Flagged']
-    updateMessage(msg.id, { flags: newFlags })
+    if (msg) onAction?.(msg.id, action)
   }
 
   // The last failed download, keyed by message so it does not follow the user
@@ -98,10 +100,21 @@
   }
 
   function formatSize(bytes: number) {
-    if (!bytes) return ''
+    if (typeof bytes !== 'number' || !isFinite(bytes)) return ''
     if (bytes < 1024) return bytes + ' B'
     if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
     return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+  }
+
+  // A link in a message must never replace the app itself: in the desktop
+  // window there is no address bar or back button, so the linked page could
+  // pose as Leoposta. Web and mail links open outside the app instead.
+  function handleContentClick(e: MouseEvent) {
+    const link = (e.target as Element | null)?.closest?.('a[href]')
+    if (!link || !(e.currentTarget as Element).contains(link)) return
+    e.preventDefault()
+    const href = (link.getAttribute('href') || '').trim()
+    if (/^(?:https?:|mailto:)/i.test(href)) window.open(href, '_blank', 'noopener,noreferrer')
   }
 
   function hasFlag(flags: string[], flag: string) {
@@ -115,20 +128,37 @@
     <div class="message-view">
     <div class="view-header">
       <div class="header-actions">
-        <button class="action-btn icon" class:starred={hasFlag(msg.flags || [], 'Flagged')} onclick={handleStar} title="Star" aria-label="Star" aria-pressed={hasFlag(msg.flags || [], 'Flagged') ? 'true' : 'false'}>
+        <button class="action-btn icon" class:starred={hasFlag(msg.flags || [], 'Flagged')} onclick={() => act(hasFlag(msg.flags || [], 'Flagged') ? 'unstar' : 'star')} title={hasFlag(msg.flags || [], 'Flagged') ? 'Unstar (s)' : 'Star (s)'} aria-label={hasFlag(msg.flags || [], 'Flagged') ? 'Unstar' : 'Star'} aria-pressed={hasFlag(msg.flags || [], 'Flagged') ? 'true' : 'false'}>
           {#if hasFlag(msg.flags || [], 'Flagged')}⭐{:else}☆{/if}
         </button>
+        {#if onEditDraft}
+          <button class="action-btn" onclick={() => onEditDraft?.(msg.id)} title="Edit draft" aria-label="Edit draft">✎ Edit draft</button>
+        {/if}
         <button class="action-btn" onclick={handleReply} title="Reply" aria-label="Reply">↩ Reply</button>
+        <button class="action-btn" onclick={handleReplyAll} title="Reply all" aria-label="Reply all">↩↩ Reply all</button>
         <button class="action-btn" onclick={handleForward} title="Forward" aria-label="Forward">↪ Forward</button>
-        <button class="action-btn icon" onclick={handleArchive} title="Archive" aria-label="Archive">📦</button>
-        <button class="action-btn icon danger" onclick={handleDelete} title="Delete" aria-label="Delete">🗑</button>
+        {#if messageHasFlag(msg, '\\Seen')}
+          <button class="action-btn icon" onclick={() => act('unread')} title="Mark as unread (u)" aria-label="Mark as unread">●</button>
+        {:else}
+          <button class="action-btn icon" onclick={() => act('read')} title="Mark as read (u)" aria-label="Mark as read">○</button>
+        {/if}
+        <button class="action-btn icon" onclick={() => onMoveRequest?.(msg.id)} title="Move to folder (v)" aria-label="Move to folder">📁</button>
+        {#if inJunk}
+          <button class="action-btn icon" onclick={() => act('notJunk')} title="Not junk" aria-label="Not junk">📥</button>
+        {:else}
+          <button class="action-btn icon" onclick={() => act('junk')} title="Mark as junk" aria-label="Mark as junk">🚫</button>
+        {/if}
+        {#if !inArchive}
+          <button class="action-btn icon" onclick={() => act('archive')} title="Archive (a)" aria-label="Archive">📦</button>
+        {/if}
+        <button class="action-btn icon danger" onclick={() => act('delete')} title="Delete (d)" aria-label="Delete">🗑</button>
       </div>
       <div class="header-left">
         <button class="back-btn" aria-label="Back to message list" onclick={() => selectMessage(null)}>←</button>
         <div class="subject-area">
           <h2 class="message-subject">{msg.subject || '(no subject)'}</h2>
           <div class="message-meta">
-            <span class="sender">From: {msg.from}</span>
+            <span class="sender">From: {msg.from || msg.fromAddress || '(no sender)'}{#if msg.fromAddress && msg.from && msg.from !== msg.fromAddress} &lt;{msg.fromAddress}&gt;{/if}</span>
             <span class="recipient">To: {msg.to?.join(', ')}</span>
             <span class="date">{formatFullDate(msg.date || '')}</span>
           </div>
@@ -136,7 +166,9 @@
       </div>
     </div>
 
-      <div class="message-content">
+      <!-- Clicks are delegated from links inside sender HTML; keyboard activation of a link also fires click. -->
+      <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+      <div class="message-content" onclick={handleContentClick}>
         {#if msg.pgp && msg.pgp.encrypted}
           <div class="pgp-banner" class:pgp-banner-decrypted={!!msg.pgp.decrypted}>
             <div class="pgp-banner-row">
@@ -154,11 +186,8 @@
                 </span>
               {/if}
             </div>
+            <PgpUnlock {msg} {onGone} />
             {#if !msg.pgp.decrypted}
-              <p class="pgp-help">
-                {msg.pgp.error || 'OpenPGP private key not configured.'}
-                Add your private key in <b>Settings → PGP</b> and reopen this message.
-              </p>
               {#if msg.pgp.armored}
                 <details class="pgp-armor">
                   <summary>Raw armored message</summary>
@@ -167,28 +196,49 @@
               {/if}
             {/if}
           </div>
+        {:else if msg.pgp && msg.pgp.signed}
+          <!-- Signed, not encrypted (RFC 3156 multipart/signed or clearsigned). -->
+          <div class="pgp-banner" class:pgp-banner-decrypted={msg.pgp.verified === true} data-testid="pgp-signed">
+            <div class="pgp-banner-row">
+              <span class="pgp-ico">🔏</span>
+              <span class="pgp-title">Signed message</span>
+              <span class="pgp-chip" class:verified={!!msg.pgp.verified}>
+                {#if msg.pgp.verified === true}✓ signature verified
+                {:else if msg.pgp.verified === false}✕ signature invalid
+                {:else}signed (not verified: the signer's public key is unknown){/if}
+              </span>
+            </div>
+          </div>
         {/if}
 
-        {#if msg.bodyHtml}
-          {#if hasRemoteImages(msg.bodyHtml) && imagesLoadedFor !== msg.id}
+        {#if msg.loadError}
+          <p class="load-error" role="alert">{msg.loadError}</p>
+        {:else if msg.bodyHtml}
+          {#if remoteBlocked}
             <div class="remote-images-banner">
               Remote images blocked
               <button type="button" onclick={() => (imagesLoadedFor = msg.id)}>Load images</button>
             </div>
           {/if}
-          {@html sanitizeHtml(msg.bodyHtml, { allowRemoteImages: imagesLoadedFor === msg.id })}
+          <div class="html-body">{@html safeHtml}</div>
         {:else if msg.body}
-          <div class="plain-body">{msg.body}</div>
+          <div class="plain-body">{#each plainSegments as seg, i (i)}{#if seg.href}<a href={seg.href} target="_blank" rel="noopener noreferrer">{seg.text}</a>{:else}{seg.text}{/if}{/each}</div>
+        {:else if smime}
+          <p class="empty-body">This message is S/MIME encrypted or signed in a form Leoposta cannot open. The protected part is attached below as {(msg.attachments || []).find(a => /p7m$/i.test(a.filename))?.filename || 'smime.p7m'}.</p>
+        {:else if msg.pgp?.encrypted && !msg.pgp?.decrypted}
+          <!-- Locked or undecryptable PGP: the banner above says why; no "empty" notice. -->
+        {:else if !msg.bodyLoaded}
+          <p class="loading-body" aria-busy="true">Loading…</p>
         {:else}
-          <p class="empty-body">This message has no visible content. It may be PGP-encrypted or empty.</p>
+          <p class="empty-body">This message has no visible content.</p>
         {/if}
       </div>
 
-      {#if msg.attachments?.length > 0}
+      {#if files.length > 0}
         <div class="attachments">
-          <h3>📎 {msg.attachments.length} Attachment{msg.attachments.length !== 1 ? 's' : ''}</h3>
+          <h3>📎 {files.length} Attachment{files.length !== 1 ? 's' : ''}</h3>
           <div class="attachment-list">
-            {#each msg.attachments as att, i (i)}
+            {#each files as att, i (i)}
               <button
                 class="attachment-item"
                 disabled={!att.id || downloadingId !== null}
@@ -209,6 +259,11 @@
           {/if}
         </div>
       {/if}
+    </div>
+  {:else}
+    <div class="no-message">
+      <div class="empty-icon">📭</div>
+      <p>This message is no longer in this folder.</p>
     </div>
   {/if}
 {:else}
@@ -233,11 +288,20 @@
   .action-btn:hover { background: var(--color-hover); }
   .action-btn.starred { background: var(--color-selected); border-color: var(--color-star); }
   .action-btn.danger:hover { background: var(--danger-bg); border-color: var(--color-danger); color: var(--color-danger); }
-  .message-content { flex: 1; overflow-y: auto; padding: 24px; font-size: 14px; line-height: 1.7; color: var(--color-text); }
-  .message-content img { max-width: 100%; height: auto; }
-  .message-content a { color: var(--color-accent); text-decoration: underline; }
-  .message-content pre { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; font-size: 13px; }
+  /* contain: paint makes this pane the containing block of position:fixed/absolute
+     sender content and clips it, so a message cannot overlay the app (UI redress). */
+  .message-content { flex: 1; overflow-y: auto; padding: 24px; font-size: 14px; line-height: 1.7; color: var(--color-text); contain: paint; isolation: isolate; }
+  /* The mail's HTML is a guest: its own box is clipped as well (layout +
+     paint containment), so a mail cannot overlay the headers or toolbar. */
+  .html-body { position: relative; contain: layout paint; isolation: isolate; overflow-wrap: anywhere; }
+  /* The mail body is {@html}: its elements carry no Svelte scope class, so
+     these must be :global (scoped, they matched nothing). */
+  .message-content :global(img) { max-width: 100%; height: auto; }
+  .message-content :global(a) { color: var(--color-accent); text-decoration: underline; }
+  .message-content :global(pre) { background: var(--color-bg); border: 1px solid var(--color-border); border-radius: var(--radius-sm); padding: 12px; overflow-x: auto; font-size: 13px; }
   .plain-body { white-space: pre-wrap; word-wrap: break-word; }
+  .load-error { color: var(--color-danger); padding: 24px; text-align: center; }
+  .loading-body { color: var(--color-text-secondary); padding: 40px; text-align: center; }
   .empty-body { color: var(--color-text-secondary); font-style: italic; padding: 40px; text-align: center; }
 
   /* ---- PGP banner ---- */
@@ -258,7 +322,6 @@
   .pgp-title { font-weight: 600; }
   .pgp-title b { color: var(--color-star); }
   .pgp-banner.pgp-banner-decrypted .pgp-title b { color: var(--color-success); }
-  .pgp-help { margin: 8px 0 0 26px; color: var(--color-text-secondary); font-size: 12px; }
   .pgp-chip {
     font-size: 11px;
     padding: 2px 8px;

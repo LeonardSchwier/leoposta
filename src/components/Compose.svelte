@@ -1,13 +1,24 @@
 <script lang="ts">
-  import { apiFetch } from '../api'
-  import { store, getState, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setIsLoading, setComposeScheduled, clearCompose, setComposing } from '../store'
+  import { apiFetch, MailAPI } from '../api'
+  import { store, getState, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setComposeScheduled, clearCompose, setComposing } from '../store'
   import { onMount } from 'svelte'
   import { addQueuedMessage } from '../lib/offlineQueue'
   import { buildMessageBody, normalizeAccount, type Signature } from '../lib/signature'
   import { fileToAttachment, type OutboundAttachment, AttachmentTooLargeError } from '../lib/attachments'
   import RecipientAutocomplete from './RecipientAutocomplete.svelte'
+  import { splitRecipients, recipientAddress } from '../lib/recipients'
+  import { quoteOriginal, threadHeaders, type ReplyMode } from '../lib/reply'
+  import type { MailMessage } from '../store'
+  import { pgpStatus, pgpLookup, pgpUnlock, pgpSendProblem, type PgpStatus } from '../lib/pgp'
 
-  let { onClose } = $props()
+  // onDraftSaved(folder): the draft is stored on the server in `folder` (the
+  // real IMAP path of the Drafts mailbox), so the app can refresh that view.
+  // onSent: the mail was handed to the server (and a reopened draft removed).
+  let { onClose, onDraftSaved, onSent }: { onClose: () => void, onDraftSaved?: (folder: string) => void, onSent?: () => void } = $props()
+
+  // A draft reopened from the Drafts mailbox (App.openDraft): its fields are
+  // already in the store; saving replaces that server copy, sending removes it.
+  const draft = getState().composeDraft
 
   // Local flat-string state driven by RecipientAutocomplete (same pattern as Calendar).
   // Seed once from the store; the store is written back on send.
@@ -18,45 +29,97 @@
   let subjectInput = $state(getState().composeSubject || '')
   let bodyInput    = $state(getState().composeBody || '')
 
-  // ---- Signature seeding ----
-  function quotedOriginal(): string | null {
-    const m = getState().composeOriginalMessage
-    if (!m) return null
-    return m.body || m.bodyHtml || null
-  }
-  function applySignature(sig: Signature, original: string | null): boolean {
-    if (!sig || !sig.enabled || !sig.text.trim()) {
-      if (original) { const q = '\n--\n' + original; bodyInput = q; setComposeBody(q) }
-      return false
-    }
-    const body = buildMessageBody(sig, '', original)
-    if (body) { bodyInput = body; setComposeBody(body) }
-    return true
-  }
-  async function seedBody() {
-    const s = getState()
-    const account = s.accounts.find(a => a.id === s.activeAccountId)
-    if (account && (account as any).signature) {
-      applySignature((account as any).signature, quotedOriginal())
-      return
-    }
+  // ---- Reply / forward: the full original ----
+  // The list row (or the store copy) may lack the body, Message-ID and
+  // attachment ids, so fetch the message itself; fall back to what we have.
+  const original = getState().composeOriginalMessage
+  const mode: ReplyMode | null = original ? (getState().composeForward ? 'forward' : 'reply') : null
+  let fullOriginal: MailMessage | null = original
+  async function loadOriginal(): Promise<MailMessage | null> {
+    if (!original) return null
     try {
-      const res = await apiFetch('/api/account')
-      if (!res.ok) return
-      const raw = await res.json()
-      if (!raw || raw.connected === false || !raw.signature) return
-      applySignature(normalizeAccount(raw as Record<string, unknown>).signature, quotedOriginal())
-    } catch { /* offline / no backend: seed with nothing */ }
+      const full = await MailAPI.message(original.id, original.folder || getState().activeFolder)
+      if (full) fullOriginal = { ...original, ...full }
+    } catch { /* offline: quote what the list had */ }
+    return fullOriginal
   }
 
-  let showCc = $state(false)
-  let showBcc = $state(false)
+  // ---- Signature seeding ----
+  function applySignature(sig: Signature, quoted: string | null): string {
+    if (!sig || !sig.enabled || !sig.text.trim()) return quoted ? '\n--\n' + quoted : ''
+    return buildMessageBody(sig, '', quoted)
+  }
+  async function loadSignature(): Promise<Signature | null> {
+    const s = getState()
+    const account = s.accounts.find(a => a.id === s.activeAccountId)
+    if (account && account.signature) return account.signature
+    try {
+      const res = await apiFetch('/api/account')
+      if (!res.ok) return null
+      const raw = await res.json()
+      if (!raw || raw.connected === false || !raw.signature) return null
+      return normalizeAccount(raw as Record<string, unknown>).signature
+    } catch { return null /* offline / no backend: seed with nothing */ }
+  }
+  // Signature and quote are filled in once loaded; text typed meanwhile is
+  // kept in front of them instead of being overwritten.
+  let seeded = $state(false)
+  const initialBody = bodyInput
+  async function seedBody() {
+    const [sig, orig] = await Promise.all([loadSignature(), loadOriginal()])
+    // Only the seeding (signature, quote, forwarded files) changed the
+    // window: there is still nothing to lose on close.
+    const untouched = snapshot() === pristine
+    const quoted = orig && mode ? quoteOriginal(orig, mode) : null
+    const extra = sig ? applySignature(sig, quoted) : (quoted ? '\n--\n' + quoted : '')
+    if (extra && initialBody === '') {
+      const typed = bodyInput
+      bodyInput = typed ? typed + (extra.startsWith('\n') ? '' : '\n\n') + extra : extra
+      setComposeBody(bodyInput)
+    }
+    if (orig && mode === 'forward') await attachForwarded(orig)
+    if (untouched) pristine = snapshot()
+    seeded = true
+  }
+
+  // ---- Unsaved changes ----
+  // What the window held when it opened (after the signature was seeded):
+  // closing with anything else asks whether to keep it as a draft.
+  function snapshot(): string {
+    return JSON.stringify([toValue, ccValue, bccValue, subjectInput, bodyInput, attachments.map(a => a.filename + ':' + a.content.length)])
+  }
+  let pristine = ''
+  let confirmClose = $state(false)
+  function requestClose() {
+    if (savingDraft) return
+    if (snapshot() === pristine) { onClose(); return }
+    confirmClose = true
+  }
+
+  // A forward carries the original's attachments (removable like any other).
+  async function attachForwarded(orig: MailMessage) {
+    for (const att of orig.attachments ?? []) {
+      if (!att.id) continue
+      try {
+        const res = await MailAPI.attachment(orig.id, att.id, orig.folder || getState().activeFolder)
+        if (!res.ok) throw new Error(`HTTP ${res.status}`)
+        const blob = await res.blob()
+        const file = new File([blob], att.filename || 'attachment', { type: att.contentType || blob.type })
+        attachments.push(await fileToAttachment(file))
+      } catch (err) {
+        attachmentError = `Could not attach ${att.filename}: ${err instanceof Error ? err.message : String(err)}`
+      }
+    }
+  }
+
+  let showCc = $state(ccValue !== '')
+  let showBcc = $state(bccValue !== '')
   let showSchedule = $state(false)
   let scheduleDate = $state('')
   let scheduleTime = $state('')
   let scheduleError = $state<string | null>(null)
   let attachFile: HTMLInputElement | null = null
-  let attachments = $state<OutboundAttachment[]>([])
+  let attachments = $state<OutboundAttachment[]>(draft ? [...draft.attachments] : [])
   let attachmentError = $state<string | null>(null)
 
   function formatSize(bytes: number): string {
@@ -65,14 +128,18 @@
     return `${(bytes / 1024 / 1024).toFixed(1)} MB`
   }
 
+  // "Anna Älter <a@x.y>, b@x.y": split on "," / ";" only, so display names survive.
   function parseRecipients(value: string): string[] {
-    return value.split(/[,;\s]+/).map(e => e.trim()).filter(e => e)
+    return splitRecipients(value)
   }
 
   function handleKeyDown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
+    // Escape already used (e.g. to close the recipient suggestions) must not
+    // also close the window and lose the message.
+    if (e.key === 'Escape' && !e.defaultPrevented) {
       e.preventDefault()
-      onClose()
+      if (confirmClose) confirmClose = false
+      else requestClose()
       return
     }
     if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
@@ -108,7 +175,62 @@
     }
   }
 
-  function handleSend() {
+  // Set synchronously on the first click, so a double click (or Ctrl+Enter
+  // while the request is in flight) cannot send the message twice.
+  let sending = $state(false)
+
+  // Why the last send did not go out, shown in the window (which stays open
+  // with everything typed) instead of a blocking alert().
+  let sendError = $state<string | null>(null)
+
+  // ---- OpenPGP: sign with the account's key / encrypt to the recipients ----
+  let pgpSign = $state(false)
+  let pgpEncrypt = $state(false)
+  let ownPgp = $state<PgpStatus | null>(null)
+  // The key is locked: the window asks for its passphrase, then sends.
+  let pgpAskPass = $state(false)
+  let pgpPassphrase = $state('')
+  let pgpPassError = $state<string | null>(null)
+  let pgpUnlocking = $state(false)
+  // Recipients without a public key while Encrypt is on (checked as you type).
+  let pgpMissing = $state<string[]>([])
+  const accountEmail = $derived($store.accounts.find(a => a.id === $store.activeAccountId)?.email || '')
+
+  onMount(() => {
+    pgpStatus().then(s => { ownPgp = s }).catch(() => { /* offline: checked again on send */ })
+  })
+
+  $effect(() => {
+    if (!pgpEncrypt) { pgpMissing = []; return }
+    const all = [...parseRecipients(toValue), ...parseRecipients(ccValue), ...parseRecipients(bccValue)]
+      .map(r => recipientAddress(r)).filter(a => /^[^\s@<>]+@[^\s@<>]+$/.test(a))
+    if (!all.length) { pgpMissing = []; return }
+    const t = setTimeout(() => {
+      pgpLookup(all).then(r => { pgpMissing = r.missing }).catch(() => { /* checked again on send */ })
+    }, 300)
+    return () => clearTimeout(t)
+  })
+
+  async function unlockAndSend(e: Event) {
+    e.preventDefault()
+    if (pgpUnlocking) return
+    pgpUnlocking = true
+    pgpPassError = null
+    try {
+      await pgpUnlock(pgpPassphrase)
+      pgpPassphrase = ''
+      pgpAskPass = false
+    } catch (err) {
+      pgpPassError = err instanceof Error ? err.message : String(err)
+      return
+    } finally {
+      pgpUnlocking = false
+    }
+    await handleSend()
+  }
+
+  async function handleSend() {
+    if (sending) return
     const to   = parseRecipients(toValue)
     const cc   = parseRecipients(ccValue)
     const bcc  = parseRecipients(bccValue)
@@ -119,11 +241,46 @@
     if (bcc.length) setComposeBcc(bcc)
 
     if (to.length === 0) {
-      alert('Please add at least one recipient')
+      sendError = 'Please add at least one recipient'
+      return
+    }
+    const invalid = [...to, ...cc, ...bcc].filter(r => !/^[^\s@<>]+@[^\s@<>]+$/.test(recipientAddress(r)))
+    if (invalid.length) {
+      sendError = `Not a valid email address: ${invalid.join(', ')}`
       return
     }
 
-    setIsLoading(true)
+    sending = true
+    sendError = null
+
+    const pgp = { sign: pgpSign, encrypt: pgpEncrypt }
+    const usePgp = pgp.sign || pgp.encrypt
+    if (usePgp) {
+      // Checked here first (fresh: the key may have been locked meanwhile),
+      // so a missing key or passphrase is explained before anything is sent.
+      // The server checks again and never sends unencrypted.
+      try {
+        const status = await pgpStatus()
+        ownPgp = status
+        const missing = pgp.encrypt ? (await pgpLookup([...to, ...cc, ...bcc].map(r => recipientAddress(r)))).missing : []
+        pgpMissing = missing
+        const problem = pgpSendProblem(pgp, status, missing, { scheduled: !!getState().composeScheduled, accountEmail })
+        if (problem === 'locked') {
+          pgpAskPass = true
+          sending = false
+          return
+        }
+        if (problem) {
+          sendError = problem
+          sending = false
+          return
+        }
+      } catch (err) {
+        sendError = 'Could not check the PGP keys: ' + (err instanceof Error ? err.message : String(err))
+        sending = false
+        return
+      }
+    }
 
     const message: Record<string, unknown> = {
       to,
@@ -131,55 +288,103 @@
       bcc,
       subject: subjectInput,
       body: bodyInput,
-      scheduled: getState().composeScheduled
+      scheduled: getState().composeScheduled,
+      ...(fullOriginal && mode ? threadHeaders(fullOriginal, mode) : {})
     }
     if (attachments.length) message.attachments = attachments
+    if (usePgp) message.pgp = pgp
 
-    apiFetch('/api/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(message)
-    })
-    .then(res => res.json())
-    .then(data => {
-      if (data.success) {
-        clearCompose()
-        setComposing(false)
-        onClose()
-      } else if (data.queued) {
-        clearCompose()
-        setComposing(false)
-        onClose()
-        alert(data.message)
-      } else {
-        alert('Failed to send: ' + data.error)
-      }
-    })
-    .catch(async (err: any) => {
-      if (!navigator.onLine) {
-        try {
-          const queued: Parameters<typeof addQueuedMessage>[0] = {
-            to, cc, bcc,
-            subject: subjectInput,
-            body: bodyInput,
-            scheduled: getState().composeScheduled,
-            createdAt: new Date().toISOString()
-          }
-          if (attachments.length) queued.attachments = attachments
-          await addQueuedMessage(queued)
-          clearCompose()
-          setComposing(false)
-          onClose()
-        } catch {
-          alert('Failed to queue message: ' + err.message)
+    const done = () => {
+      clearCompose()
+      setComposing(false)
+      onClose()
+    }
+    try {
+      let res: Response
+      try {
+        res = await apiFetch('/api/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(message)
+        })
+      } catch (err) {
+        // Signed/encrypted mail is not queued: the outbox sends it later in
+        // plain form, and it would sit unencrypted in the browser meanwhile.
+        if (navigator.onLine || usePgp) throw err
+        // Offline: keep it in the outbox; App sends it when back online.
+        const queued: Parameters<typeof addQueuedMessage>[0] = {
+          to, cc, bcc,
+          subject: subjectInput,
+          body: bodyInput,
+          scheduled: getState().composeScheduled,
+          ...(fullOriginal && mode ? threadHeaders(fullOriginal, mode) : {}),
+          createdAt: new Date().toISOString()
         }
-      } else {
-        alert('Error: ' + err.message)
+        if (attachments.length) queued.attachments = attachments
+        try {
+          await addQueuedMessage(queued)
+        } catch (qerr) {
+          sendError = 'You are offline and the message could not be queued: ' + (qerr instanceof Error ? qerr.message : String(qerr))
+          return
+        }
+        done()
+        return
       }
-    })
-    .finally(() => {
-      setIsLoading(false)
-    })
+      // Not every failure has a JSON body (a proxy error page, a 413).
+      const data = await res.json().catch(() => ({ error: `${res.status} ${res.statusText}`.trim() }))
+      if (res.ok && data.success) {
+        // The reopened draft has been sent: remove it from Drafts.
+        if (draft) {
+          try { await MailAPI.discardDraft(draft.uid) } catch (err) {
+            alert('The message was sent, but its draft could not be removed from Drafts: ' + (err instanceof Error ? err.message : String(err)))
+          }
+        }
+        if (Array.isArray(data.bccFailed) && data.bccFailed.length) {
+          alert('The message was sent, but the encrypted copy to these Bcc recipients failed: ' + data.bccFailed.join(', '))
+        }
+        onSent?.()
+        done()
+      } else if (res.status === 423 && data.code === 'pgp_locked') {
+        // The key was locked between the check and the send.
+        pgpAskPass = true
+      } else sendError = 'Could not send: ' + (data.error || `server answered ${res.status}`)
+    } catch (err) {
+      sendError = 'Could not send: ' + (err instanceof Error ? err.message : String(err))
+    } finally {
+      sending = false
+    }
+  }
+
+  let savingDraft = $state(false)
+
+  // Save Draft stores the message on the server (IMAP APPEND to the account's
+  // Drafts mailbox, see server/lib/drafts.js), so it shows in the Drafts folder.
+  // The window only closes once the server confirms; on failure it stays open
+  // so nothing typed is lost.
+  async function handleSaveDraft() {
+    if (savingDraft) return
+    savingDraft = true
+    const payload: Record<string, unknown> = {
+      to: parseRecipients(toValue),
+      cc: parseRecipients(ccValue),
+      bcc: parseRecipients(bccValue),
+      subject: subjectInput,
+      body: bodyInput
+    }
+    if (attachments.length) payload.attachments = attachments
+    // Saving a reopened draft replaces it on the server instead of adding a copy.
+    if (draft) payload.replaceUid = draft.uid
+    try {
+      const data = await MailAPI.saveDraft(payload)
+      onDraftSaved?.(data.folder)
+      clearCompose()
+      setComposing(false)
+      onClose()
+    } catch (err: any) {
+      alert('Failed to save draft: ' + (err?.message ?? String(err)))
+    } finally {
+      savingDraft = false
+    }
   }
 
   function handleSchedule() {
@@ -233,7 +438,7 @@
       } catch (err) {
         lastError = err instanceof AttachmentTooLargeError
           ? err.message
-          : `Could not attach ${f.name}: ${err?.message ?? String(err)}`
+          : `Could not attach ${f.name}: ${err instanceof Error ? err.message : String(err)}`
       }
     }
     attachmentError = lastError
@@ -245,11 +450,13 @@
   }
 
   function onCloseBack(e: MouseEvent) {
-    if (e.target === e.currentTarget) onClose()
+    if (e.target === e.currentTarget) requestClose()
   }
 
   onMount(() => {
-    void seedBody()
+    pristine = snapshot()
+    // A reopened draft already carries its body (and signature): do not seed again.
+    if (!draft) void seedBody()
     window.addEventListener('keydown', handleKeyDown)
     requestAnimationFrame(() => {
       (document.querySelector<HTMLElement>('.modal.compose input.ra-input')
@@ -264,9 +471,9 @@
 <div class="modal compose">
   <div class="compose-header">
     <h2 class="compose-title">
-      {#if $store.composeReplyTo}Reply{:else if $store.composeForward}Forward{:else}New Message{/if}
+      {#if draft}Edit Draft{:else if $store.composeReplyTo}Reply{:else if $store.composeForward}Forward{:else}New Message{/if}
     </h2>
-    <button class="close-btn" onclick={onClose} aria-label="Close compose (Esc)">✕</button>
+    <button class="close-btn" onclick={requestClose} aria-label="Close compose (Esc)">✕</button>
   </div>
 
   <div class="compose-body">
@@ -322,10 +529,11 @@
     <div class="compose-editor">
       <textarea
         id="compose-body"
+        data-seeded={seeded ? 'true' : undefined}
         bind:value={bodyInput}
         oninput={() => setComposeBody(bodyInput)}
         placeholder="Write your message..."
-        rows="15"
+        rows="8"
       ></textarea>
     </div>
   </div>
@@ -353,8 +561,38 @@
     </div>
   {/if}
 
+  {#if confirmClose}
+    <div class="confirm-close" role="alertdialog" aria-modal="true" aria-labelledby="confirm-close-title">
+      <p id="confirm-close-title">Save this message as a draft before closing?</p>
+      <div class="confirm-actions">
+        <button type="button" class="btn-secondary" onclick={() => { confirmClose = false }}>Keep Editing</button>
+        <button type="button" class="btn-secondary danger" onclick={() => { confirmClose = false; onClose() }}>Discard</button>
+        <button type="button" class="btn-primary" onclick={() => { confirmClose = false; void handleSaveDraft() }}>Save Draft</button>
+      </div>
+    </div>
+  {/if}
+
+  {#if pgpAskPass}
+    <form class="pgp-pass" onsubmit={unlockAndSend}>
+      <label for="compose-pgp-pass">Your PGP key for {accountEmail || 'this account'} is locked. Enter its passphrase to sign this message.</label>
+      <div class="pgp-pass-row">
+        <!-- svelte-ignore a11y_autofocus -->
+        <input id="compose-pgp-pass" type="password" autocomplete="off" autofocus bind:value={pgpPassphrase} placeholder="Key passphrase" disabled={pgpUnlocking} />
+        <button type="submit" class="btn-primary" disabled={pgpUnlocking || !pgpPassphrase}>{pgpUnlocking ? 'Unlocking…' : 'Unlock and send'}</button>
+        <button type="button" class="btn-secondary" onclick={() => { pgpAskPass = false; pgpPassphrase = ''; pgpPassError = null }}>Cancel</button>
+      </div>
+      {#if pgpPassError}<p class="send-error" role="alert">{pgpPassError}</p>{/if}
+    </form>
+  {/if}
+
   <div class="compose-footer">
     <div class="footer-left">
+      <label class="pgp-toggle" title={ownPgp && !ownPgp.hasPrivateKey ? `Add your PGP key for ${accountEmail} in Settings → PGP to sign` : 'Sign with your PGP key (RFC 3156 PGP/MIME)'}>
+        <input type="checkbox" bind:checked={pgpSign} /> Sign
+      </label>
+      <label class="pgp-toggle" title="Encrypt to the recipients' PGP keys (and to your own, for Sent)">
+        <input type="checkbox" bind:checked={pgpEncrypt} /> Encrypt
+      </label>
       <button type="button" class="icon-btn" title="Attach file" aria-label="Attach file" onclick={() => attachFile?.click()}>
         <span>📎</span>
       </button>
@@ -387,15 +625,21 @@
         </span>
       {/if}
     </div>
+    {#if pgpEncrypt && pgpMissing.length}
+      <p class="pgp-missing" data-testid="pgp-missing">No PGP key for: {pgpMissing.join(', ')}</p>
+    {/if}
+    {#if sendError}
+      <p class="send-error" role="alert">{sendError}</p>
+    {/if}
     <div class="footer-right">
-      <button type="button" class="btn-secondary" onclick={onClose}>Save Draft</button>
+      <button type="button" class="btn-secondary" onclick={handleSaveDraft} disabled={savingDraft}>Save Draft</button>
       <button
         type="button"
         class="btn-primary"
         onclick={handleSend}
-        disabled={$store.isLoading}
+        disabled={sending}
       >
-        {#if $store.isLoading}Sending...{:else}Send{/if}
+        {#if sending}Sending...{:else}Send{/if}
       </button>
     </div>
   </div>
@@ -403,6 +647,21 @@
 </div>
 
 <style>
+  .pgp-toggle { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--color-text); cursor: pointer; white-space: nowrap; }
+  .pgp-missing { margin: 0; font-size: 12px; color: var(--color-star); }
+  .pgp-pass { padding: 10px 20px; border-top: 1px solid var(--color-border); background: var(--color-surface); display: flex; flex-direction: column; gap: 6px; flex-shrink: 0; }
+  .pgp-pass label { font-size: 13px; color: var(--color-text); }
+  .pgp-pass-row { display: flex; gap: 8px; }
+  .pgp-pass-row input { flex: 1; padding: 6px 10px; font-size: 13px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text); }
+  .confirm-close {
+    padding: 12px 20px;
+    border-top: 1px solid var(--color-border);
+    background: var(--color-surface);
+    flex-shrink: 0;
+  }
+  .confirm-close p { margin: 0 0 8px; font-size: 13px; color: var(--color-text); }
+  .confirm-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .confirm-actions .danger { color: var(--color-danger); }
   .modal-back {
     position: fixed;
     inset: 0;
@@ -414,9 +673,11 @@
   }
 
   .modal.compose {
-    width: min(560px, 92vw);
-    height: min(80vh, 720px);
-    max-height: 90vh;
+    width: min(560px, calc(100vw - 32px));
+    /* Fill most of the viewport (capped at 720px) so the body textarea gets
+       the leftover space; short windows use nearly the full height. */
+    height: min(720px, calc(100vh - 48px));
+    height: min(720px, calc(100dvh - 48px));
     display: flex;
     flex-direction: column;
     background: var(--color-bg);
@@ -463,8 +724,15 @@
     background: var(--color-hover);
   }
 
+  /* Header and footer keep their natural height; the body is a flex column
+     whose last child (the editor) takes all remaining height. When the
+     window is too short for the editor's min-height, the body scrolls
+     instead of pushing the footer out of view. */
   .compose-body {
-    flex: 1;
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
     padding: 16px 20px;
   }
@@ -476,6 +744,7 @@
      (scoped under .field-control, so Calendar's use is unaffected) gives
      them exactly the same box and type as the Subject field. */
   .field-row {
+    flex-shrink: 0;
     display: flex;
     align-items: center;
     gap: var(--ds-space-3);
@@ -548,11 +817,20 @@
   }
 
   .compose-editor {
+    flex: 1 1 0;
+    display: flex;
+    flex-direction: column;
+    /* ~8 lines of 14px / 1.6 text + 24px padding + 2px border */
+    min-height: calc(8 * 1.6 * 14px + 26px);
     margin-top: 12px;
   }
 
   .compose-editor textarea {
+    flex: 1 1 0;
+    min-height: 0;
     width: 100%;
+    box-sizing: border-box;
+    margin: 0;
     padding: 12px;
     border: 1px solid var(--color-border);
     border-radius: var(--radius-sm);
@@ -560,7 +838,7 @@
     line-height: 1.6;
     color: var(--color-text);
     background: var(--color-bg);
-    resize: vertical;
+    resize: none;
     font-family: inherit;
   }
 
@@ -644,6 +922,7 @@
     border-top: 1px solid var(--color-border);
     background: var(--color-bg-secondary);
     flex-shrink: 0;
+    flex-wrap: wrap;
   }
 
   .footer-left {
@@ -767,6 +1046,14 @@
     color: var(--color-danger);
   }
 
+  .send-error {
+    margin: 0 8px;
+    color: var(--color-danger);
+    font-size: 13px;
+    flex: 1 1 100%;
+    order: -1;
+  }
+
   .footer-right {
     display: flex;
     gap: 8px;
@@ -794,7 +1081,7 @@
     border-radius: var(--radius-sm);
     font-size: 14px;
     font-weight: 500;
-    color: white;
+    color: var(--color-on-accent);
     cursor: pointer;
     transition: background var(--transition);
   }

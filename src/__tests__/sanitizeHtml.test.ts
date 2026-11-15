@@ -52,3 +52,45 @@ describe('sanitizeHtml', () => {
     expect(hasRemoteImages('')).toBe(false)
   })
 })
+
+// leoposta.render.remote-image-block-bypass.url-control-chars (audit run-2):
+// browsers drop tab/CR/LF anywhere in a URL and C0 controls at its start, so
+// these all fetch https://tracker.example before the user clicks Load images.
+describe('remote image blocking cannot be bypassed by URL spelling', () => {
+  const tricks = [
+    '<img src="ht&#x09;tps://tracker.example/t.gif">',
+    '<img src="https&#x0A;://tracker.example/n.gif">',
+    '<img src="&#x01;https://tracker.example/c.gif">',
+    '<img src="&#x0D;https://tracker.example/r.gif">',
+    '<img src="HTTPS://tracker.example/u.gif">'
+  ]
+  for (const html of tricks) {
+    it(`holds back ${JSON.stringify(html)}`, () => {
+      const img = el(html).querySelector('img')!
+      expect(img.hasAttribute('src')).toBe(false)
+      expect(img.getAttribute('data-remote-src')).toMatch(/^https:\/\/tracker\.example\//i)
+      expect(hasRemoteImages(html)).toBe(true)
+    })
+  }
+  it('keeps embedded cid: and data: images', () => {
+    expect(el('<img src="cid:logo@x">').querySelector('img')!.getAttribute('src')).toBe('cid:logo@x')
+    expect(el('<img src="data:image/png;base64,AAAA">').querySelector('img')!.getAttribute('src')).toBe('data:image/png;base64,AAAA')
+    expect(hasRemoteImages('<img src="cid:logo@x">')).toBe(false)
+  })
+  it('loads the image once the user allowed remote images', () => {
+    expect(el('<img src="https://img.example/a.png">', { allowRemoteImages: true }).querySelector('img')!.getAttribute('src')).toBe('https://img.example/a.png')
+  })
+})
+
+describe('sanitizeHtml links', () => {
+  it('forces target=_blank on every link, overriding _self and _top', () => {
+    const d = el('<a href="https://a.test/" target="_self">a</a><a href="https://b.test/" target="_top">b</a><a href="https://c.test/">c</a>')
+    for (const a of Array.from(d.querySelectorAll('a'))) {
+      expect(a.getAttribute('target')).toBe('_blank')
+      expect(a.getAttribute('rel')).toBe('noopener noreferrer')
+    }
+  })
+  it('drops a target on an anchor without href', () => {
+    expect(el('<a target="_top">x</a>').querySelector('a')!.hasAttribute('target')).toBe(false)
+  })
+})

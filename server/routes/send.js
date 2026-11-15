@@ -1,14 +1,59 @@
 import express, { Router } from 'express'
 import { state, saveScheduled, resolveAccount, getActiveAccount } from '../lib/state.js'
-import { createSmtpTransporter, saveToSentFolder } from '../lib/imap.js'
+import { createSmtpTransporter, saveToSentFolder, getPoolFor } from '../lib/imap.js'
+import { buildDraftSource, ensureDraftsPath, appendDraft, discardDraft } from '../lib/drafts.js'
+import { MailActionError, parseUid } from '../lib/removal.js'
 import { scrubOutboundHtml } from '../lib/sanitize.js'
+import { pgpOptions, buildPgpMail, PgpSendError } from '../lib/pgpSend.js'
 
 const router = Router()
 
+/** Attachments as Compose sends them (OutboundAttachment: base64 `content`)
+ * in nodemailer's shape. Without `encoding: 'base64'` nodemailer would take
+ * the base64 text itself as the file content. */
+export function outboundAttachments(list) {
+  return list.map(a => ({
+    filename: a.filename,
+    content: a.content,
+    encoding: 'base64',
+    contentType: a.contentType || 'application/octet-stream'
+  }))
+}
+
+const list = (v) => (Array.isArray(v) ? v.join(', ') : v) || undefined
+
+/** The nodemailer message for a /api/send body. The compose editor is plain
+ * text: an HTML part is only added when the client sends `bodyHtml` (turning
+ * the text itself into HTML collapsed its line breaks and dropped anything
+ * that looked like a tag, e.g. "<anna@example.com>"). */
+export function buildMessageData(acct, { to, cc, bcc, subject, body, bodyHtml, attachments, inReplyTo, references } = {}) {
+  const messageData = {
+    from: { name: acct.name || acct.email, address: acct.email },
+    to: list(to),
+    cc: list(cc),
+    bcc: list(bcc),
+    subject: subject || '(No Subject)',
+    text: body || '',
+    accountId: acct.email
+  }
+  if (bodyHtml) messageData.html = scrubOutboundHtml(bodyHtml)
+  if (inReplyTo) messageData.inReplyTo = inReplyTo
+  if (references) messageData.references = references
+  if (Array.isArray(attachments) && attachments.length > 0) {
+    messageData.attachments = outboundAttachments(attachments)
+  }
+  return messageData
+}
+
 // POST /api/send
 router.post('/send', express.json({ limit: '35mb' }), async (req, res) => {
+  // express.json() leaves req.body undefined unless Content-Type is exactly a
+  // JSON type; say so instead of crashing on the destructuring below.
+  if (!req.body || typeof req.body !== 'object') {
+    return res.status(400).json({ success: false, error: 'Expected a JSON body (Content-Type: application/json)' })
+  }
   try {
-    const { to, cc, bcc, subject, body, bodyHtml, scheduled, attachments } = req.body
+    const { to, scheduled } = req.body
     const acct = resolveAccount(req)
 
     if (!acct) {
@@ -19,27 +64,19 @@ router.post('/send', express.json({ limit: '35mb' }), async (req, res) => {
       return res.status(400).json({ error: 'At least one recipient is required' })
     }
 
-    const messageData = {
-      from: `"${acct.name}" <${acct.email}>`,
-      to: to.join(', '),
-      cc: cc?.join(', '),
-      bcc: bcc?.join(', '),
-      subject: subject || '(No Subject)',
-      text: body || '',
-      html: scrubOutboundHtml(bodyHtml || body || ''),
-      accountId: acct.email
-    }
+    const messageData = buildMessageData(acct, req.body)
+    const pgp = pgpOptions(req.body.pgp)
 
-    if (attachments && attachments.length > 0) {
-      messageData.attachments = attachments.map(a => ({
-        filename: a.filename,
-        content: a.content,
-        contentType: a.contentType || 'application/octet-stream'
-      }))
+    if (pgp && scheduled) {
+      // A scheduled mail is sent when nobody is there to unlock the key.
+      return res.status(400).json({ error: 'Signed or encrypted mail cannot be scheduled yet. Send it now, or turn off Sign/Encrypt.', code: 'pgp_not_schedulable' })
     }
+    if (pgp) return res.json(await sendPgp(acct, messageData, pgp))
 
     if (scheduled) {
-      const when = new Date(scheduled).toISOString()
+      const at = new Date(scheduled)
+      if (Number.isNaN(at.getTime())) return res.status(400).json({ error: 'scheduled is not a valid date' })
+      const when = at.toISOString()
       const msg = {
         id: Date.now().toString(),
         ...messageData,
@@ -52,17 +89,125 @@ router.post('/send', express.json({ limit: '35mb' }), async (req, res) => {
       res.json({ success: true, scheduled: true })
     } else {
       const transporter = createSmtpTransporter(acct)
-      const info = await transporter.sendMail(messageData)
+      const date = new Date()
+      const info = await transporter.sendMail({ ...messageData, date })
       const messageId = info.messageId
       console.log(`[send] IMMEDIATE send to ${messageData.to} (id=${messageId})`)
       // Async fire-and-forget; never blocks the response or fails the send.
-      saveToSentFolder(acct, messageData, { messageId }).catch(err => {
+      saveToSentFolder(acct, messageData, { messageId, date }).catch(err => {
         console.error('[send] saveToSentFolder failed (immediate):', err && err.message)
       })
       res.json({ success: true, messageId })
     }
   } catch (err) {
+    if (err instanceof PgpSendError) {
+      return res.status(err.status).json({ error: err.message, code: err.code, ...(err.missing ? { missing: err.missing } : {}) })
+    }
     console.error('Error sending message:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+/**
+ * Send a signed and/or encrypted mail (lib/pgpSend.js) and keep its copy in
+ * Sent. Everything is built before anything is sent, so a missing key or a
+ * locked key sends nothing. A Bcc copy that fails after the main message
+ * went out is reported (`bccFailed`), not turned into a failed send that the
+ * user would repeat.
+ */
+async function sendPgp(acct, messageData, pgp) {
+  const date = new Date()
+  const built = await buildPgpMail(acct, messageData, pgp, { date })
+  const transporter = createSmtpTransporter(acct)
+  const [main, ...bccCopies] = built.sends
+  await transporter.sendMail({ envelope: main.envelope, raw: main.raw })
+  const bccFailed = []
+  for (const copy of bccCopies) {
+    try {
+      await transporter.sendMail({ envelope: copy.envelope, raw: copy.raw })
+    } catch (err) {
+      console.error(`[send] encrypted Bcc copy to ${copy.bcc} failed:`, err && err.message)
+      bccFailed.push(copy.bcc)
+    }
+  }
+  console.log(`[send] IMMEDIATE ${pgp.encrypt ? 'encrypted' : 'signed'} send to ${messageData.to} (id=${built.messageId})`)
+  saveToSentFolder(acct, messageData, { messageId: built.messageId, date, raw: built.sentRaw }).catch(err => {
+    console.error('[send] saveToSentFolder failed (pgp):', err && err.message)
+  })
+  return { success: true, messageId: built.messageId, ...(bccFailed.length ? { bccFailed } : {}) }
+}
+
+// A refusal by the server is returned as a value, not thrown: an error thrown
+// inside pool.run makes the pool log the shared IMAP client out.
+const asOutcome = (fn) => async (client) => {
+  try { return await fn(client) } catch (err) {
+    if (err instanceof MailActionError) return { error: err.message }
+    throw err
+  }
+}
+
+/** `replaceUid` / `:uid` of a draft: a positive integer (string or number), or null. */
+function draftUid(raw) {
+  return parseUid(typeof raw === 'number' ? String(raw) : raw)
+}
+
+// POST /api/drafts  { to, cc, bcc, subject, body, attachments, replaceUid? }
+// Saves the compose window as a draft: APPENDs it to the account's Drafts
+// mailbox (SPECIAL-USE \Drafts, else "Drafts", created if missing) flagged
+// \Draft \Seen. Recipients and subject are optional. With `replaceUid` (the
+// draft that was reopened) the old draft is removed once the new one is
+// stored, so saving again never leaves duplicates; if that removal fails the
+// new draft is kept and `replaced: false` says so. See lib/drafts.js.
+router.post('/drafts', express.json({ limit: '35mb' }), async (req, res) => {
+  try {
+    const acct = resolveAccount(req)
+    if (!acct) return res.status(400).json({ error: 'No account configured' })
+    const body = req.body || {}
+    const replaceUid = body.replaceUid === undefined || body.replaceUid === null ? null : draftUid(body.replaceUid)
+    if (body.replaceUid != null && replaceUid === null) return res.status(400).json({ error: 'invalid replaceUid' })
+    const source = await buildDraftSource(acct, body)
+    const pool = getPoolFor(acct)
+
+    const found = await pool.run(asOutcome(async (client) => ({ folder: await ensureDraftsPath(client) })))
+    if (found.error) return res.status(500).json({ error: found.error })
+    // One attempt only: retrying an APPEND whose reply was lost would store the draft twice.
+    const saved = await pool.run(asOutcome((client) => appendDraft(client, found.folder, source)), 1)
+    if (saved.error) return res.status(500).json({ error: saved.error })
+    console.log(`[drafts] saved draft to ${acct.email} :: ${saved.folder} (uid=${saved.uid ?? 'unknown'})`)
+
+    const out = { success: true, folder: saved.folder, uid: saved.uid }
+    if (replaceUid !== null && replaceUid !== saved.uid) {
+      try {
+        const gone = await pool.run(asOutcome((client) => discardDraft(client, saved.folder, replaceUid)))
+        out.replaced = !gone.error
+        if (gone.error) console.error(`[drafts] could not remove the replaced draft ${replaceUid}: ${gone.error}`)
+      } catch (err) {
+        out.replaced = false
+        console.error(`[drafts] could not remove the replaced draft ${replaceUid}:`, err && err.message)
+      }
+    }
+    res.json(out)
+  } catch (err) {
+    console.error('Error saving draft:', err)
+    res.status(500).json({ error: err.message })
+  }
+})
+
+// DELETE /api/drafts/:uid
+// Removes a draft from the Drafts mailbox for good, e.g. once it has been sent.
+// Only a message flagged \Draft is removed; one that is already gone is a success.
+router.delete('/drafts/:uid', async (req, res) => {
+  try {
+    const uid = draftUid(req.params.uid)
+    if (uid === null) return res.status(400).json({ error: 'invalid draft id' })
+    const acct = resolveAccount(req)
+    if (!acct) return res.status(400).json({ error: 'No account configured' })
+    const pool = getPoolFor(acct)
+    const out = await pool.run(asOutcome(async (client) => discardDraft(client, await ensureDraftsPath(client), uid)))
+    if (out.error) return res.status(500).json({ error: out.error })
+    res.json({ success: true, discarded: out.discarded })
+  } catch (err) {
+    console.error('Error deleting draft:', err)
     res.status(500).json({ error: err.message })
   }
 })
@@ -97,22 +242,21 @@ export async function sendScheduledMessage(msg) {
     bcc: msg.bcc,
     subject: msg.subject,
     text: msg.text,
-    html: scrubOutboundHtml(msg.html)
+    inReplyTo: msg.inReplyTo,
+    references: msg.references,
+    html: scrubOutboundHtml(msg.html) || undefined
   }
 
   if (msg.attachments && msg.attachments.length > 0) {
-    messageData.attachments = msg.attachments.map(a => ({
-      filename: a.filename,
-      content: a.content,
-      contentType: a.contentType || 'application/octet-stream'
-    }))
+    messageData.attachments = outboundAttachments(msg.attachments)
   }
 
   const transporter = createSmtpTransporter(acct)
-  const info = await transporter.sendMail(messageData)
+  const date = new Date()
+  const info = await transporter.sendMail({ ...messageData, date })
   const messageId = info.messageId
   // Async fire-and-forget; never blocks the scheduler or fails the send.
-  saveToSentFolder(acct, messageData, { messageId }).catch(err => {
+  saveToSentFolder(acct, messageData, { messageId, date }).catch(err => {
     console.error('[send] saveToSentFolder failed (scheduled):', err && err.message)
   })
   return messageId

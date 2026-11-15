@@ -34,9 +34,6 @@ const fakeDav = http.createServer((req, res) => {
   res.end('<?xml version="1.0"?><multistatus xmlns="DAV:"/>')
 })
 await new Promise((resolve) => fakeDav.listen(0, '127.0.0.1', resolve))
-process.env.DAV_HOST = '127.0.0.1'
-process.env.DAV_PORT = String(fakeDav.address().port)
-process.env.DAV_TLS = 'false'
 
 const { createApp } = await import('./index.js')
 
@@ -52,6 +49,7 @@ function seedOneAccount() {
     imapHost: 'imap.example.com', 'imapPort': '993', 'imapUser': 'import-test-example-com',
     'smtpHost': 'smtp.example.com', 'smtpPort': '465', 'smtpUser': 'import-test-example-com',
     password: 'x', 'imapTls': true, 'smtpTls': true,
+    davUrl: `http://127.0.0.1:${fakeDav.address().port}/dav/import-test/`,
   })
   return fetch(`${base}/api/accounts`, { method: 'POST', headers: { ...authed, 'content-type': 'application/json' }, body })
     .then((r) => r.json())

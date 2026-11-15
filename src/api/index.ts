@@ -16,17 +16,27 @@ export function setActiveAccountEmail(email: string | null) {
 }
 
 function authHeaders(extra: HeadersInit = {}): Record<string, string> {
-  return {
-    'Content-Type': 'application/json',
-    'x-leoposta-token': API_TOKEN,
-    ...(activeAccountEmail ? { 'x-account': activeAccountEmail } : {}),
-    ...Object.fromEntries(new Headers(extra))
-  }
+  // Merge through Headers.set: header names are case-insensitive, and a plain
+  // object spread kept 'Content-Type' next to the caller's 'content-type', so
+  // fetch sent "application/json, application/json" and express.json() left
+  // req.body undefined.
+  const h = new Headers({ 'Content-Type': 'application/json', 'x-leoposta-token': API_TOKEN })
+  if (activeAccountEmail) h.set('x-account', activeAccountEmail)
+  new Headers(extra).forEach((value, key) => h.set(key, value))
+  return Object.fromEntries(h)
 }
 
 /** fetch() with the API token + account headers; use for raw stream calls. */
 export function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
   return fetch(input, { ...init, headers: authHeaders(init.headers) })
+}
+
+/** A failed API call; `status` is the HTTP status (404: the message is gone). */
+export class ApiError extends Error {
+  constructor(message: string, readonly status: number) {
+    super(message)
+    this.name = 'ApiError'
+  }
 }
 
 async function api(path: string, options: RequestInit = {}): Promise<any> {
@@ -36,7 +46,7 @@ async function api(path: string, options: RequestInit = {}): Promise<any> {
   })
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }))
-    throw new Error(err.error || `API error ${res.status}`)
+    throw new ApiError(err.error || `API error ${res.status}`, res.status)
   }
   return res.json()
 }
@@ -48,30 +58,54 @@ export const AccountAPI = {
     api(`/accounts/${encodeURIComponent(email)}`, { method: 'PUT', body: JSON.stringify(data) }),
   remove: (email: string) =>
     api(`/accounts/${encodeURIComponent(email)}`, { method: 'DELETE' }),
+  /** The account last chosen in the UI (lib/activeAccountMemory.ts). */
+  getActive: (): Promise<{ email: string | null }> => api('/active-account'),
+  setActive: (email: string) => api('/active-account', { method: 'PUT', body: JSON.stringify({ email }) }),
 }
+
+const enc = encodeURIComponent
 
 export const MailAPI = {
   status: () => api('/status'),
   account: () => api('/account'),
-  messages: (folder: string, limit = 50) => api(`/messages?folder=${folder}&limit=${limit}`),
-  message: (id: string, folder: string) => api(`/message/${id}?folder=${folder}`),
+  // Mailbox paths are free text ("# Archive", "R&D"): always encode them, or a
+  // "#" turns the rest of the URL into a fragment and the server sees folder="".
+  /** One page, newest first: the `limit` messages after the newest `offset`. */
+  messages: (folder: string, limit = 50, offset = 0) =>
+    api(`/messages?folder=${enc(folder)}&limit=${limit}${offset ? `&offset=${offset}` : ''}`),
+  message: (id: string, folder: string) => api(`/message/${enc(id)}?folder=${enc(folder)}`),
   folders: () => api('/folders'),
-  search: (query: string, folder = 'INBOX') => api(`/search?q=${encodeURIComponent(query)}&folder=${folder}`),
+  search: (query: string, folder = 'INBOX') => api(`/search?q=${enc(query)}&folder=${enc(folder)}`),
   send: (data: any) => api('/send', { method: 'POST', body: JSON.stringify(data) }),
-  delete: (id: string, folder: string) => api(`/message/${id}?folder=${folder}`, { method: 'DELETE' }),
-  move: (id: string, from: string, to: string) => api(`/message/${id}/move`, {
+  /** Store the compose window as a draft in the account's Drafts mailbox.
+   *  Resolves { success, folder, uid? }: `folder` is the real IMAP path. With
+   *  `replaceUid` (a reopened draft) the server removes that old draft once the
+   *  new one is stored. */
+  saveDraft: (data: any): Promise<{ success: boolean, folder: string, uid?: number, replaced?: boolean }> =>
+    api('/drafts', { method: 'POST', body: JSON.stringify(data) }),
+  /** Remove a draft from the Drafts mailbox for good (it has been sent). */
+  discardDraft: (uid: string): Promise<{ success: boolean, discarded: boolean }> =>
+    api(`/drafts/${enc(uid)}`, { method: 'DELETE' }),
+  /** Move to Trash (or, inside Trash, delete for good). Resolves { trashed, folder }. */
+  delete: (id: string, folder: string): Promise<{ success: boolean, trashed: boolean, folder: string }> =>
+    api(`/message/${enc(id)}?folder=${enc(folder)}`, { method: 'DELETE' }),
+  move: (id: string, from: string, to: string): Promise<{ success: boolean, folder: string }> => api(`/message/${enc(id)}/move`, {
     method: 'POST', body: JSON.stringify({ from, to })
   }),
+  /** Move to the server's special-use mailbox (RFC 6154), whatever it is called. */
+  moveToSpecial: (id: string, from: string, specialUse: '\\Archive' | '\\Junk' | '\\Trash' | '\\Inbox'): Promise<{ success: boolean, folder: string }> =>
+    api(`/message/${enc(id)}/move`, { method: 'POST', body: JSON.stringify({ from, toSpecialUse: specialUse }) }),
   setFlags: (id: string, folder: string, add: string[], remove: string[]) =>
-    api(`/message/${id}/flags`, {
+    api(`/message/${enc(id)}/flags`, {
       method: 'POST', body: JSON.stringify({ folder, add, remove })
     }),
   addFolder: (name: string, parentId?: string) => api('/folder', {
     method: 'POST', body: JSON.stringify({ name, parentId })
   }),
   deleteFolder: (name: string) => api(`/folder?path=${encodeURIComponent(name)}`, { method: 'DELETE' }),
-  renameFolder: (from: string, to: string) => api('/folder/rename', {
-    method: 'POST', body: JSON.stringify({ from, to })
+  /** Rename a folder in place (same parent); resolves { success, path } with its new path. */
+  renameFolder: (from: string, name: string): Promise<{ success: boolean, path: string }> => api('/folder/rename', {
+    method: 'POST', body: JSON.stringify({ from, name })
   }),
   /** Authenticated download of one received attachment (see lib/attachmentDownload). */
   attachment: (id: string, attachmentId: string, folder: string) =>
@@ -88,16 +122,19 @@ export const MailAPI = {
 function toCal(e: any) { return { uri: e.href ?? e.uri, name: e.displayname ?? e.name ?? '' } }
 
 export const CalendarAPI = {
+  /** `configured: false` when the account has no CalDAV URL (not an error). */
   calendars: () => api('/calendar/calendars').then((r: any) => ({
+    configured: r.configured !== false,
     calendars: (r.calendars || []).map(toCal)
   })),
   events: (calendar: string, start: string, end: string) =>
     api(`/calendar/events?calendar=${encodeURIComponent(calendar)}&start=${start}&end=${end}`),
-  saveEvent: (calendar: string, ics: string, uid?: string) =>
-    api('/calendar/event', { method: 'PUT', body: JSON.stringify({ calendar, ics, uid }) }),
-  deleteEvent: (calendar: string, uid: string) =>
-    api(`/calendar/event?calendar=${encodeURIComponent(calendar)}&uid=${encodeURIComponent(uid)}`, { method: 'DELETE' }),
-  importICS: (calendar: string, ics: string) =>
+  /** `href`: the event's resource as listed by the server (edit in place). */
+  saveEvent: (calendar: string, ics: string, uid?: string, href?: string) =>
+    api('/calendar/event', { method: 'PUT', body: JSON.stringify({ calendar, ics, uid, href }) }),
+  deleteEvent: (calendar: string, uid: string, href?: string) =>
+    api(`/calendar/event?calendar=${encodeURIComponent(calendar)}&uid=${encodeURIComponent(uid)}${href ? `&href=${encodeURIComponent(href)}` : ''}`, { method: 'DELETE' }),
+  importICS: (calendar: string, ics: string): Promise<{ imported: number, total: number, failed?: { uid: string, error: string }[] }> =>
     api('/calendar/import', { method: 'POST', body: JSON.stringify({ calendar, ics }) }),
 }
 
@@ -108,20 +145,22 @@ export const GoaAPI = {
     const res = await apiFetch(`${API_BASE}/api/goa/accounts`)
     return res.json()
   },
-  import: (goaId: string, opts: { importMail?: boolean, importDav?: boolean } = {}) =>
+  import: (goaId: string, opts: { importMail?: boolean, importDav?: boolean, targetEmail?: string } = {}): Promise<{ success: boolean, id: string, email?: string }> =>
     api('/goa/import', { method: 'POST', body: JSON.stringify({ goaId, ...opts }) }),
 }
 
 export const ContactsAPI = {
+  /** `configured: false` when the account has no CardDAV URL (not an error). */
   addressBooks: () => api('/contacts/calendars').then((r: any) => ({
+    configured: r.configured !== false,
     addressBooks: (r.addressBooks || r.calendars || []).map(toCal)
   })),
   contacts: (book: string, q?: string) =>
     api(`/contacts?book=${encodeURIComponent(book)}${q ? `&q=${encodeURIComponent(q)}` : ''}`),
-  saveContact: (book: string, vcf: string) =>
-    api('/contact', { method: 'PUT', body: JSON.stringify({ book, vcf }) }),
-  deleteContact: (book: string, uid: string) =>
-    api(`/contact?book=${encodeURIComponent(book)}&uid=${encodeURIComponent(uid)}`, { method: 'DELETE' }),
-  importVCF: (book: string, vcf: string) =>
+  saveContact: (book: string, vcf: string, href?: string) =>
+    api('/contact', { method: 'PUT', body: JSON.stringify({ book, vcf, href }) }),
+  deleteContact: (book: string, uid: string, href?: string) =>
+    api(`/contact?book=${encodeURIComponent(book)}&uid=${encodeURIComponent(uid)}${href ? `&href=${encodeURIComponent(href)}` : ''}`, { method: 'DELETE' }),
+  importVCF: (book: string, vcf: string): Promise<{ imported: number, total: number, failed?: { uid: string, error: string }[] }> =>
     api('/contacts/import', { method: 'POST', body: JSON.stringify({ book, vcf }) }),
 }

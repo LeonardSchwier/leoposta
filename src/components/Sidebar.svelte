@@ -1,6 +1,16 @@
 <script lang="ts">
   import { store } from '../store'
   import ContextMenu from './ContextMenu.svelte'
+  import AccountSwitcher from './AccountSwitcher.svelte'
+  import { specialFolderPath } from '../lib/specialFolders'
+  import {
+    buildFolderTree,
+    loadExpanded,
+    saveExpanded,
+    toggleExpanded,
+    renameExpanded,
+    type FolderNode
+  } from '../lib/folderTree'
 
   let {
     onFolderSelect,
@@ -16,38 +26,61 @@
 
   type MenuItem = { label: string; icon?: string; action?: () => void; danger?: boolean; divider?: boolean }
   let menuPos = $state({ x: 0, y: 0 })
-  let menuFolder = $state<any>(null)
-  function showFolderMenu(e: MouseEvent, folder: any) {
+  let menuItems = $state<MenuItem[] | null>(null)
+  function showMenu(e: MouseEvent, items: MenuItem[]) {
     e.preventDefault()
     e.stopPropagation()
     menuPos = { x: e.clientX, y: e.clientY }
-    menuFolder = folder
+    menuItems = items
   }
-  function closeMenu() { menuFolder = null }
+  function closeMenu() { menuItems = null }
+
+  const newFolderItem: MenuItem = { label: 'New Folder', icon: '📁', action: () => onNewFolder?.() }
 
   function folderItems(folder: any): MenuItem[] {
     return [
-      { label: 'New Subfolder', icon: '➕', action: () => onNewSubFolder?.(folder.id) },
-      { label: 'Rename', icon: '✎', action: () => onRenameFolder?.(folder) },
+      newFolderItem,
+      { label: 'New Subfolder', icon: '➕', action: () => newSubFolder(folder) },
+      { label: 'Rename', icon: '✎', action: () => renameFolder(folder) },
       { divider: true, label: '', action: undefined },
       { label: 'Delete Folder', icon: '🗑', danger: true, action: () => onDeleteFolder?.(folder) },
     ]
   }
+
+  // The parent is expanded so the new subfolder is visible once the list reloads.
+  function newSubFolder(folder: any) {
+    if (!expandedFolders.has(folder.id)) toggleFolder(folder.id)
+    onNewSubFolder?.(folder.id)
+  }
+
+  // onRenameFolder resolves to the folder's new path (or null when cancelled);
+  // the folder and its children keep their expanded state under the new path.
+  async function renameFolder(folder: any) {
+    const to = await onRenameFolder?.(folder)
+    if (typeof to === 'string' && to && to !== folder.id) {
+      expandedFolders = renameExpanded(expandedFolders, folder.id, to, folder.delimiter)
+      saveExpanded(expandedFolders)
+    }
+  }
   
   const activeFolder = $derived($store.activeFolder)
-  function isUnread(m: any) {
-    return !m.flags?.includes('\\Seen') && !m.flags?.includes('Seen')
+  // Each mailbox's unread count from the server (STATUS UNSEEN via
+  // /api/folders), not a count of whatever list happens to be open.
+  function unseenOf(path: string): number {
+    const f = (apiFolders || []).find((x: any) => x.id === path)
+    return typeof f?.unseen === 'number' ? f.unseen : 0
   }
-  const unreadCount = $derived($store.messages.filter(m => isUnread(m)).length)
   
   // Build folder tree
   const specialFolders = $derived([
+    // Special-use mailboxes open the server's real path (e.g. INBOX.Drafts,
+    // [Gmail]/Drafts, a localized name); they are hidden from the custom list.
     { id: 'INBOX', name: 'Inbox', icon: '📥' },
-    { id: 'Sent', name: 'Sent', icon: '📤' },
-    { id: 'Drafts', name: 'Drafts', icon: '📝' },
-    { id: 'Archive', name: 'Archive', icon: '📦' },
-    { id: 'Junk', name: 'Junk', icon: '🚫' },
-    { id: 'Trash', name: 'Trash', icon: '🗑️' },
+    { id: specialFolderPath(apiFolders, '\\Sent', 'Sent'), name: 'Sent', icon: '📤' },
+    { id: specialFolderPath(apiFolders, '\\Drafts', 'Drafts'), name: 'Drafts', icon: '📝' },
+    { id: specialFolderPath(apiFolders, '\\Archive', 'Archive'), name: 'Archive', icon: '📦' },
+    { id: specialFolderPath(apiFolders, '\\Junk', 'Junk'), name: 'Junk', icon: '🚫' },
+    { id: specialFolderPath(apiFolders, '\\Trash', 'Trash'), name: 'Trash', icon: '🗑️' },
   ])
 
   const appItems = $derived([
@@ -57,49 +90,101 @@
   const activeId = $derived((activeViewProp as string) || '')
   function isAppActive(id: string) { return activeId === id }
   
-  // Custom folders with hierarchy
+  // Custom folders with hierarchy (lib/folderTree handles "/" and "." delimiters
+  // and lifts children of INBOX, which is listed above as a mailbox, to roots).
   const customFolders = $derived((apiFolders || []).filter((f: any) => !f.specialUse))
-  
-  const topLevelFolders = $derived(
-    customFolders.filter((f: any) => !f.parentId)
-  )
-  
-  function getChildren(parentId: string) {
-    return customFolders.filter((f: any) => f.parentId === parentId)
-  }
-  
-  // Check if folder or any descendant is active
-  function isFolderOrChildActive(folderId: string): boolean {
-    if (activeFolder === folderId) return true
-    const children = getChildren(folderId)
-    return children.some(c => isFolderOrChildActive(c.id))
-  }
-  
-  // Expand/collapse state
-  const expandedFolders = $state(new Set<string>())
-  
+  const folderTree = $derived(buildFolderTree<any>(customFolders))
+
+  // Expand/collapse state. A Set inside $state is not deeply reactive in
+  // Svelte 5 (only plain objects and arrays are proxied), so mutating it in
+  // place never re-rendered the tree. Reassign a fresh Set, and persist it.
+  let expandedFolders = $state<Set<string>>(loadExpanded())
+
   function toggleFolder(folderId: string) {
-    if (expandedFolders.has(folderId)) {
-      expandedFolders.delete(folderId)
-    } else {
-      expandedFolders.add(folderId)
-    }
-    // Force reactivity
-    expandedFolders.set = expandedFolders
+    expandedFolders = toggleExpanded(expandedFolders, folderId)
+    saveExpanded(expandedFolders)
   }
-  
-  function handleFolderClick(folderId: string, hasChildren: boolean) {
-    if (hasChildren && !expandedFolders.has(folderId)) {
-      toggleFolder(folderId)
-    }
-    onFolderSelect(folderId)
+
+  function displayName(node: FolderNode<any>): string {
+    const n: string = node.folder.name || node.id
+    return node.depth === 0 ? n.replace(/^[0-9#]+\s+/, '') : n
   }
-  
+
+  function isAncestorOfActive(node: FolderNode<any>): boolean {
+    return node.children.some((c) => c.id === activeFolder || isAncestorOfActive(c))
+  }
+
+  function openFolder(node: FolderNode<any>) {
+    // \Noselect parents hold no messages and cannot be SELECTed: they only
+    // expand/collapse.
+    if (node.folder.noselect) {
+      if (node.children.length > 0) toggleFolder(node.id)
+      return
+    }
+    onFolderSelect(node.id)
+  }
 </script>
+
+{#snippet folderNode(node: FolderNode<any>)}
+  {@const hasChildren = node.children.length > 0}
+  {@const isExpanded = hasChildren && expandedFolders.has(node.id)}
+  <li
+    class="folder-node"
+    role="treeitem"
+    aria-selected={activeFolder === node.id}
+    aria-expanded={hasChildren ? isExpanded : undefined}
+  >
+    <div
+      class="folder-row"
+      class:active={activeFolder === node.id}
+      class:ancestor-active={!isExpanded && isAncestorOfActive(node)}
+      style:padding-left="{4 + node.depth * 14}px"
+      oncontextmenu={(e) => showMenu(e, folderItems(node.folder))}
+      role="presentation"
+    >
+      {#if hasChildren}
+        <button
+          type="button"
+          class="folder-toggle"
+          aria-expanded={isExpanded}
+          aria-label="{isExpanded ? 'Collapse' : 'Expand'} {displayName(node)}"
+          onclick={(e) => { e.stopPropagation(); toggleFolder(node.id) }}
+        >
+          <svg class="chevron" class:open={isExpanded} viewBox="0 0 16 16" width="12" height="12" aria-hidden="true">
+            <path d="M6 3.5 10.5 8 6 12.5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          </svg>
+        </button>
+      {:else}
+        <span class="chevron-placeholder"></span>
+      {/if}
+      <button
+        type="button"
+        class="folder-open"
+        class:noselect={node.folder.noselect}
+        title={node.id}
+        onclick={() => openFolder(node)}
+      >
+        <span class="folder-icon" aria-hidden="true">{isExpanded ? '📂' : '📁'}</span>
+        <span class="folder-name">{displayName(node)}</span>
+        {#if !node.folder.noselect && unseenOf(node.id) > 0}
+          <span class="badge" aria-label="{unseenOf(node.id)} unread">{unseenOf(node.id)}</span>
+        {/if}
+      </button>
+    </div>
+    {#if isExpanded}
+      <ul class="folder-children" role="group">
+        {#each node.children as child (child.id)}
+          {@render folderNode(child)}
+        {/each}
+      </ul>
+    {/if}
+  </li>
+{/snippet}
 
 <aside class="sidebar">
   <div class="sidebar-header">
     <h1 class="logo">Leoposta</h1>
+    <AccountSwitcher />
     <button class="compose-btn" onclick={onCompose}>
       <span class="compose-icon">✎</span>
       <span>Compose</span>
@@ -128,71 +213,26 @@
       >
         <span class="folder-icon">{folder.icon}</span>
         <span class="folder-name">{folder.name}</span>
-        {#if folder.id === 'INBOX' && unreadCount > 0}
-          <span class="badge">{unreadCount}</span>
+        {#if unseenOf(folder.id) > 0}
+          <span class="badge" aria-label="{unseenOf(folder.id)} unread">{unseenOf(folder.id)}</span>
         {/if}
       </button>
     {/each}
     
-    {#if topLevelFolders.length > 0}
-      <div class="section-label" oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); onNewFolder?.() }}>Folders</div>
-      {#each topLevelFolders as folder (folder.id)}
-        {@const children = getChildren(folder.id)}
-        {@const hasChildren = children.length > 0}
-        {@const isExpanded = expandedFolders.has(folder.id)}
-        {@const isParentActive = isFolderOrChildActive(folder.id)}
-        
-        <div class="folder-group" class:expanded={isExpanded}>
-          <div
-            class="folder-row"
-            class:active={activeFolder === folder.id}
-            onclick={() => handleFolderClick(folder.id, hasChildren)}
-            oncontextmenu={(e) => showFolderMenu(e, folder)}
-          >
-            {#if hasChildren}
-              <span class="chevron">{isExpanded ? '▾' : '▸'}</span>
-            {:else}
-              <span class="chevron-placeholder"></span>
-            {/if}
-            <span class="folder-icon">📁</span>
-            <span class="folder-name">{folder.name.replace(/^[0-9#]+\s+/, '')}</span>
-          </div>
-          
-          {#if hasChildren && isExpanded}
-            <div class="folder-children">
-              {#each children as child (child.id)}
-                {@const childChildren = getChildren(child.id)}
-                <div
-                  class="folder-row child"
-                  class:active={activeFolder === child.id}
-                  onclick={() => handleFolderClick(child.id, childChildren.length > 0)}
-                  oncontextmenu={(e) => showFolderMenu(e, child)}
-                >
-                  <span class="chevron-placeholder"></span>
-                  <span class="folder-icon">{childChildren.length > 0 ? (expandedFolders.has(child.id) ? '▾' : '▸') : ''}</span>
-                  <span class="folder-name">{child.name}</span>
-                </div>
-                {#if childChildren.length > 0 && expandedFolders.has(child.id)}
-                  <div class="folder-children">
-                    {#each childChildren as gc (gc.id)}
-                      <div
-                        class="folder-row grandchild"
-                        class:active={activeFolder === gc.id}
-                        onclick={() => onFolderSelect(gc.id)}
-                        oncontextmenu={(e) => showFolderMenu(e, gc)}
-                      >
-                        <span class="chevron-placeholder"></span>
-                        <span class="folder-icon"></span>
-                        <span class="folder-name">{gc.name}</span>
-                      </div>
-                    {/each}
-                  </div>
-                {/if}
-              {/each}
-            </div>
-          {/if}
-        </div>
-      {/each}
+    <!-- Always shown, with a real button: "New folder" used to be only a
+         right-click on this label, which keyboard users could not reach and
+         which did not exist at all until the account had a custom folder.
+         The right-click menu stays as a shortcut. -->
+    <div class="section-label section-label-row" role="presentation" oncontextmenu={(e) => showMenu(e, [newFolderItem])}>
+      <span>Folders</span>
+      <button type="button" class="section-add" title="New folder" aria-label="New folder" onclick={() => onNewFolder?.()}>+</button>
+    </div>
+    {#if folderTree.length > 0}
+      <ul class="folder-tree" role="tree" aria-label="Folders">
+        {#each folderTree as node (node.id)}
+          {@render folderNode(node)}
+        {/each}
+      </ul>
     {/if}
   </nav>
   
@@ -203,11 +243,11 @@
     </button>
   </div>
 
-  {#if menuFolder}
+  {#if menuItems}
     <ContextMenu
       x={menuPos.x}
       y={menuPos.y}
-      items={folderItems(menuFolder)}
+      items={menuItems}
       onClose={closeMenu}
     />
   {/if}
@@ -245,7 +285,7 @@
     width: 100%;
     padding: 8px 12px;
     background: var(--color-accent);
-    color: white;
+    color: var(--color-on-accent);
     border: none;
     border-radius: var(--radius-md);
     font-size: 13px;
@@ -273,6 +313,30 @@
     padding: 10px 8px 3px;
   }
   
+  .section-label-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .section-add {
+    width: 20px;
+    height: 20px;
+    padding: 0;
+    border: none;
+    border-radius: 4px;
+    background: transparent;
+    color: var(--color-text-secondary);
+    font-size: 14px;
+    line-height: 1;
+    cursor: pointer;
+  }
+
+  .section-add:hover {
+    background: var(--color-hover);
+    color: var(--color-text);
+  }
+
   .folder-item {
     display: flex;
     align-items: center;
@@ -315,7 +379,7 @@
   
   .badge {
     background: var(--color-accent);
-    color: white;
+    color: var(--color-on-accent);
     font-size: 10px;
     font-weight: 600;
     min-width: 18px;
@@ -329,59 +393,100 @@
   }
   
   /* Custom folder tree */
-  .folder-group {
+  .folder-tree,
+  .folder-children {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  .folder-node {
     margin-bottom: 1px;
   }
-  
+
   .folder-row {
     display: flex;
     align-items: center;
-    gap: 4px;
+    gap: 2px;
     width: 100%;
-    padding: 5px 8px;
-    background: transparent;
-    border: none;
+    padding: 0 8px 0 4px;
     border-radius: 6px;
     font-size: 13px;
     color: var(--color-text);
-    cursor: pointer;
     transition: background 0.1s;
-    text-align: left;
   }
-  
+
   .folder-row:hover {
     background: var(--color-hover);
   }
-  
+
   .folder-row.active {
     background: var(--color-selected);
     font-weight: 500;
   }
-  
-  .folder-row.child {
-    padding-left: 22px;
+
+  .folder-row.ancestor-active .folder-name {
+    font-weight: 500;
   }
-  
-  .folder-row.grandchild {
-    padding-left: 36px;
-  }
-  
-  .chevron {
-    font-size: 10px;
-    width: 12px;
+
+  .folder-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: 20px;
     flex-shrink: 0;
+    padding: 0;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
     color: var(--color-text-secondary);
+    cursor: pointer;
   }
-  
+
+  .folder-toggle:hover {
+    background: var(--color-border);
+    color: var(--color-text);
+  }
+
+  .folder-toggle:focus-visible,
+  .folder-open:focus-visible {
+    outline: 2px solid var(--color-accent);
+    outline-offset: -2px;
+  }
+
+  .chevron {
+    transition: transform 150ms ease-in-out;
+  }
+
+  .chevron.open {
+    transform: rotate(90deg);
+  }
+
   .chevron-placeholder {
-    width: 12px;
+    width: 20px;
     flex-shrink: 0;
   }
-  
-  .folder-children {
-    margin-left: 8px;
-    border-left: 1px solid var(--color-border);
-    padding-left: 2px;
+
+  .folder-open .badge { margin-left: auto; margin-right: 6px; }
+  .folder-open {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1;
+    min-width: 0;
+    padding: 5px 0;
+    background: transparent;
+    border: none;
+    border-radius: 4px;
+    font: inherit;
+    color: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .folder-open.noselect {
+    color: var(--color-text-secondary);
   }
   
   .sidebar-footer {
@@ -431,7 +536,11 @@
     }
     .folder-row {
       justify-content: center;
-      padding: 8px;
+      /* beats the inline per-depth indent */
+      padding: 4px !important;
+    }
+    .folder-open {
+      flex: 0 0 auto;
     }
     .badge {
       position: absolute;

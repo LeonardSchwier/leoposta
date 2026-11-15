@@ -4,17 +4,27 @@ import { setActiveAccountEmail } from '../api'
 import { loadPersistedRefreshMode, saveRefreshMode } from '../refresh'
 import type { Signature } from '../lib/signature'
 import type { RefreshMode } from '../refresh'
+import type { OutboundAttachment } from '../lib/attachments'
 
 export interface MailMessage {
   id: string
   threadId?: string
   from: string
+  /** Bare sender address; server sends this alongside the display-name `from`. */
+  fromAddress?: string
   to: string[]
   cc?: string[]
   bcc?: string[]
   subject: string
   body: string
   bodyHtml?: string
+  /** List preview text (server: lib/snippet.js); the full body comes on open. */
+  snippet?: string
+  hasAttachment?: boolean
+  /** Set once the full message has been fetched (lib/openMessage.ts). */
+  bodyLoaded?: boolean
+  /** Why the full message could not be shown (deleted on the server, ...). */
+  loadError?: string
   pgp?: {
     encrypted?: boolean
     decrypted?: boolean
@@ -30,6 +40,11 @@ export interface MailMessage {
   attachments?: Attachment[]
   folder: string
   headers: Record<string, string>
+  /** Message-ID and References of the opened message (for reply threading). */
+  messageId?: string
+  references?: string[]
+  /** Reply-To addresses ("Name <addr>"), when the message has that header. */
+  replyTo?: string[]
 }
 
 export interface Attachment {
@@ -41,6 +56,8 @@ export interface Attachment {
   contentType: string
   size: number
   contentId?: string
+  /** An image embedded in the HTML body; shown there, not as a download. */
+  inline?: boolean
 }
 
 export interface MailAccount {
@@ -66,8 +83,20 @@ export interface MailAccount {
 export interface Folder {
   id: string
   name: string
-  parentId?: string
+  parentId?: string | null
   specialUse?: string
+  delimiter?: string | null
+  noselect?: boolean
+  /** Unread / total messages, from the server's STATUS (absent when unknown). */
+  unseen?: number
+  exists?: number
+}
+
+/** A draft reopened from the Drafts mailbox: saving or sending it replaces /
+ * removes that server copy. */
+export interface ComposeDraft {
+  uid: string
+  attachments: OutboundAttachment[]
 }
 
 export interface State {
@@ -90,9 +119,9 @@ export interface State {
   composeReplyTo: string | null
   composeForward: boolean
   composeOriginalMessage: MailMessage | null
+  composeDraft: ComposeDraft | null
   isLoading: boolean
   error: string | null
-  threadGrouping: boolean
   refreshInterval: RefreshMode
 }
 
@@ -116,9 +145,9 @@ const initialState: State = {
   composeReplyTo: null,
   composeForward: false,
   composeOriginalMessage: null,
+  composeDraft: null,
   isLoading: false,
   error: null,
-  threadGrouping: true,
   refreshInterval: 'instant',
 }
 
@@ -139,13 +168,17 @@ export function addAccount(account: MailAccount) {
   store.update(s => ({ ...s, accounts: [...s.accounts, account], activeAccountId: account.id }))
   syncActiveHeader()
 }
-export function setAccounts(accounts: MailAccount[]) {
+/** Replace the account list. The active account stays if it is still in the
+ * list; otherwise `preferredId` (the remembered one, lib/activeAccountMemory)
+ * if it is, else the first account. */
+export function setAccounts(accounts: MailAccount[], preferredId: string | null = null) {
+  const has = (id: string | null) => !!id && accounts.some(a => a.id === id)
   store.update(s => ({
     ...s,
     accounts,
-    activeAccountId: s.activeAccountId && accounts.some(a => a.id === s.activeAccountId)
+    activeAccountId: has(s.activeAccountId)
       ? s.activeAccountId
-      : (accounts[0]?.id ?? null)
+      : has(preferredId) ? preferredId : (accounts[0]?.id ?? null)
   }))
   syncActiveHeader()
 }
@@ -172,6 +205,16 @@ export function getActiveAccount(): MailAccount | null {
 }
 export function setFolders(folders: Folder[]) {
   store.update(s => ({ ...s, folders }))
+}
+/** Change a folder's unread count right away (e.g. a message was just read);
+ * the next folder list from the server replaces it with the real number. */
+export function adjustUnseen(folderId: string, delta: number) {
+  store.update(s => ({
+    ...s,
+    folders: s.folders.map(f => (f.id === folderId && typeof f.unseen === 'number'
+      ? { ...f, unseen: Math.max(0, f.unseen + delta) }
+      : f))
+  }))
 }
 export function setActiveFolder(folder: string) {
   store.update(s => ({ ...s, activeFolder: folder, messages: [], selectedMessageId: null }))
@@ -237,6 +280,18 @@ export function bootstrapRefreshMode() {
 export function setComposeOriginalMessage(message: MailMessage | null) {
   store.update(s => ({ ...s, composeOriginalMessage: message }))
 }
+export function setComposeDraft(draft: ComposeDraft | null) {
+  store.update(s => ({ ...s, composeDraft: draft }))
+}
+/** Put a message back into the list at `index` (an action on it failed). */
+export function restoreMessage(message: MailMessage, index: number) {
+  store.update(s => {
+    if (s.messages.some(m => m.id === message.id)) return s
+    const messages = [...s.messages]
+    messages.splice(Math.min(Math.max(0, index), messages.length), 0, message)
+    return { ...s, messages }
+  })
+}
 export function setUnreadCount(count: number) {
   store.update(s => ({ ...s, unreadCount: count }))
 }
@@ -258,11 +313,9 @@ export function clearCompose() {
     composeScheduled: null,
     composeReplyTo: null,
     composeForward: false,
-    composeOriginalMessage: null
+    composeOriginalMessage: null,
+    composeDraft: null
   }))
-}
-export function setThreadGrouping(enabled: boolean) {
-  store.update(s => ({ ...s, threadGrouping: enabled }))
 }
 // Non-reactive getter for use in event handlers
 export function getState(): State {

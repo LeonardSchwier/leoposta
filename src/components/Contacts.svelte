@@ -7,6 +7,8 @@
 
   interface Book { uri: string; name: string; canWrite?: boolean }
   let books = $state<Book[]>([])
+  let configured = $state(true)
+  let editingContact = $state<any | null>(null)
   let currentBook = $state<Book | null>(null)
   let contacts = $state<any[]>([])
   let loading = $state(false)
@@ -31,10 +33,18 @@
   async function loadBooks() {
     try {
       const data = await ContactsAPI.addressBooks()
-      books = data.addressBooks || data.calendars || []
+      configured = data.configured
+      books = data.addressBooks || []
+      err = ''
       if (books.length && !currentBook) currentBook = books[0]
       if (currentBook && !books.find(b => b.uri === currentBook!.uri)) currentBook = books[0] || null
-    } catch (e: any) { err = e.message }
+    } catch (e: any) { err = e.message; books = []; currentBook = null; contacts = [] }
+  }
+
+  // Retry: address books first (they failed too when the server was down).
+  async function reload() {
+    await loadBooks()
+    if (!err) await loadContacts(q)
   }
 
   async function loadContacts(search?: string) {
@@ -43,11 +53,13 @@
       loading = true
       const data = await ContactsAPI.contacts(currentBook.uri, search)
       contacts = data.contacts || []
+      err = ''
     } catch (e: any) { err = e.message } finally { loading = false }
   }
 
   function openCreate() {
     editingUid = null
+    editingContact = null
     fName = ''; fEmail = ''; fPhone = ''; fOrg = ''
     fNotes = ''; fWebsite = ''
     fStreet = ''; fCity = ''; fRegion = ''; fZip = ''
@@ -58,6 +70,7 @@
   function openEdit(c: any) {
     selectedUid = c.uid
     editingUid = c.uid
+    editingContact = c
     fBookUri = c.bookUri || currentBook?.uri || ''
     fEmail = (c.emails && c.emails[0]) || c.email || ''
     fPhone = (c.phones && c.phones[0]) || c.phone || ''
@@ -65,11 +78,10 @@
     fName = c.name || c.displayName || ''
     fNotes = c.notes || ''
     fWebsite = c.website || ''
-    const addrParts = (c.address || '').split(',').map((s: string) => s.trim()).filter(Boolean)
-    fStreet = addrParts[0] || ''
-    fCity = addrParts[1] || ''
-    fRegion = addrParts[2] || ''
-    fZip = addrParts[3] || ''
+    fStreet = c.adr?.street || ''
+    fCity = c.adr?.locality || ''
+    fRegion = c.adr?.region || ''
+    fZip = c.adr?.postalCode || ''
     showEditor = true
   }
 
@@ -79,27 +91,31 @@
     if (!targetUri) { showToast('No address book available'); return }
     try {
       busy = true
-      const uid = editingUid || (fEmail.trim() || fName.trim().toLowerCase().replace(/\s+/g, '_'))
+      // New contacts get a fresh UID: deriving it from the name/e-mail made a
+      // second "John" overwrite the first one.
+      const orig = editingUid ? editingContact : null
+      const uid = editingUid || ('leoposta-' + crypto.randomUUID())
       const vcf = contactToVCFObj({
         name: fName, email: fEmail, phone: fPhone, org: fOrg,
         notes: fNotes, website: fWebsite,
-        addressComponents: { street: fStreet, locality: fCity, region: fRegion, postalCode: fZip },
+        addressComponents: { street: fStreet, locality: fCity, region: fRegion, postalCode: fZip, country: orig?.adr?.country || '' },
         uid,
-      })
-      await ContactsAPI.saveContact(targetUri, vcf)
+      }, orig?.vcf)
+      // An edit is written back to the resource it was listed under.
+      await ContactsAPI.saveContact(targetUri, vcf, orig?.href)
       showEditor = false
       await loadContacts(q)
       showToast(editingUid ? 'Contact updated' : 'Contact created')
     } catch (e: any) { showToast(e.message, 5000) } finally { busy = false }
   }
 
-  async function deleteContact(uid: string) {
+  async function deleteContact(c: { uid: string, href?: string }) {
     const bookUri = currentBook?.uri || fBookUri || books[0]?.uri || ''
     if (!bookUri) return
     if (!confirm('Delete this contact?')) return
     try {
       busy = true
-      await ContactsAPI.deleteContact(bookUri, uid)
+      await ContactsAPI.deleteContact(bookUri, c.uid, c.href)
       selectedUid = null
       await loadContacts(q)
       showToast('Contact deleted')
@@ -113,11 +129,13 @@
       if (!currentBook) return
       try {
         busy = true
-        await ContactsAPI.importVCF(currentBook.uri, vcf)
+        const r = await ContactsAPI.importVCF(currentBook.uri, vcf)
         await loadContacts(q)
-        showToast('Contacts imported')
+        const failed = r.failed?.length ? `, ${r.failed.length} rejected` : ''
+        showToast(`Imported ${r.imported} of ${r.total} contact(s)${failed}`, failed ? 6000 : 3000)
       } catch (e: any) { showToast(e.message, 5000) } finally { busy = false }
     }
+    reader.onerror = () => showToast('Could not read the file', 5000)
     reader.readAsText(file)
   }
 
@@ -144,11 +162,15 @@
   }
 </script>
 
+<!-- Escape closes the editor dialog (unless an inner control, e.g. the
+     autocomplete list, already used that Escape). -->
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && showEditor && !e.defaultPrevented) { e.preventDefault(); showEditor = false } }} />
+
 <section class="contacts">
   <aside class="c-side">
     <div class="c-side-head">
       <h2>Address Books</h2>
-      <button class="add-c" onclick={openCreate}>+ New contact</button>
+      <button class="add-c" onclick={openCreate} disabled={!books.length}>+ New contact</button>
     </div>
     <div class="c-list">
       {#each books as book (book.uri)}
@@ -157,23 +179,29 @@
           <span class="c-name">{book.name}</span>
         </button>
       {/each}
-      {#if books.length === 0}<p class="empty">No address books found.</p>{/if}
+      {#if books.length === 0 && configured && !err}<p class="empty">No address books found on the server.</p>{/if}
     </div>
     <div class="c-import">
       <label class="import-btn">
         Import .vcf
-        <input type="file" accept=".vcf,text/vcard" onchange={importVcf} disabled={busy} />
+        <input type="file" accept=".vcf,text/vcard" onchange={importVcf} disabled={busy || !currentBook} />
       </label>
     </div>
   </aside>
 
   <div class="c-main">
+    {#if !configured}
+      <div class="not-configured" data-testid="dav-not-configured">
+        <h3>Contacts are not set up</h3>
+        <p>This account has no CardDAV server. Add a CalDAV/CardDAV URL to the account in <b>Settings → Account</b> to see and edit your contacts here.</p>
+      </div>
+    {:else}
     <header class="c-top">
       <input class="search" type="search" placeholder="Search contacts" bind:value={q} oninput={onSearch} data-search-input />
     </header>
 
     {#if err}
-      <div class="c-err"><span>{err}</span><button onclick={loadContacts}>Retry</button></div>
+      <div class="c-err" role="alert"><span>{err}</span><button onclick={reload} disabled={loading}>Retry</button></div>
     {/if}
 
     <div class="c-body">
@@ -184,7 +212,8 @@
       {:else}
         {#each contacts as c (c.uid)}
           {@const name = c.name || c.displayName || (c.emails && c.emails[0]) || '(unnamed)'}
-          <div class="row" class:sel={selectedUid === c.uid} onclick={() => openEdit(c)}>
+          <div class="row" class:sel={selectedUid === c.uid}>
+            <button type="button" class="row-open" onclick={() => openEdit(c)} aria-label={`Edit contact ${name}`}>
             <span class="av" class:unknown={!(c.emails || c.email)}>{initial(name) || '?'}</span>
             <div class="meta">
               <div class="nm">{name}</div>
@@ -194,20 +223,23 @@
               {#if c.address}<div class="d3">{c.address}</div>{/if}
               {#if c.notes}<div class="d3 d-notes" title={c.notes}>{c.notes}</div>{/if}
             </div>
-            <button class="del" onclick={(e) => { e.stopPropagation(); deleteContact(c.uid) }} title="Delete contact" aria-label={`Delete contact ${c.name || c.uid}`}>🗑</button>
+            </button>
+            <button class="del" onclick={(e) => { e.stopPropagation(); deleteContact(c) }} title="Delete contact" aria-label={`Delete contact ${c.name || c.uid}`}>🗑</button>
           </div>
         {/each}
       {/if}
     </div>
+    {/if}
   </div>
 
   {#if showEditor}
-    <div class="modal-back" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }} role="dialog">
-      <div class="modal">
+    <!-- Backdrop click is a mouse shortcut; Escape closes for keyboard users (svelte:window below). -->
+    <div class="modal-back" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) showEditor = false }}>
+      <div class="modal" role="dialog" aria-modal="true" aria-label={editingUid ? 'Edit contact' : 'New contact'} tabindex="-1">
         <h4>{editingUid ? 'Edit contact' : 'New contact'}</h4>
         <label>
           <span>{editingUid ? 'Address book' : 'Create in'}</span>
-          <select bind:value={fBookUri} disabled={editingUid}>
+          <select bind:value={fBookUri} disabled={editingUid !== null}>
             {#each books as b (b.uri)}
               <option value={b.uri}>{b.name}</option>
             {/each}
@@ -224,7 +256,7 @@
         <label><span>State</span><input type="text" bind:value={fRegion} placeholder="State/Province" /></label>
         <label><span>ZIP / Postal code</span><input type="text" bind:value={fZip} placeholder="12345" /></label>
         <div class="actions">
-          {#if editingUid}<button class="danger" onclick={() => { showEditor = false; deleteContact(editingUid!) }}>Delete</button>{/if}
+          {#if editingUid}<button class="danger" onclick={() => { showEditor = false; if (editingContact) deleteContact(editingContact) }}>Delete</button>{/if}
           <span class="spacer"></span>
           <button class="ghost" onclick={() => showEditor = false}>Cancel</button>
           <button class="primary" onclick={saveContact} disabled={busy}>{editingUid ? 'Save changes' : 'Create'}</button>
@@ -239,7 +271,7 @@
   .c-side { width: 220px; background: var(--color-sidebar); border-right: 1px solid var(--color-border); display: flex; flex-direction: column; }
   .c-side-head { padding: 12px 12px 8px; display: flex; flex-direction: column; gap: 8px; }
   .c-side-head h2 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--color-text-secondary); margin: 0 0 4px; font-weight: 700; }
-  .add-c { background: var(--color-accent); color: #fff; border: none; padding: 7px 12px; border-radius: var(--radius-sm); font-weight: 600; font-size: 12px; cursor: pointer; }
+  .add-c { background: var(--color-accent); color: var(--color-on-accent); border: none; padding: 7px 12px; border-radius: var(--radius-sm); font-weight: 600; font-size: 12px; cursor: pointer; }
   .add-c:hover { background: var(--color-accent-hover); }
   .c-list { flex: 1; overflow-y: auto; padding: 4px 8px; }
   .c-item { display: flex; align-items: center; gap: 8px; width: 100%; padding: 7px 8px; border: none; background: transparent; color: var(--color-text); border-radius: 6px; font-size: 13px; cursor: pointer; text-align: left; margin-bottom: 2px; }
@@ -257,13 +289,14 @@
   .search { width: 100%; max-width: 420px; padding: 8px 14px; border: 1px solid var(--color-border); border-radius: 999px; font-size: 13px; background: var(--color-bg-secondary); color: var(--color-text); }
   .search:focus { outline: none; border-color: var(--color-accent); }
   .c-err { background: var(--danger-bg); color: var(--color-danger); padding: 10px 18px; font-size: 13px; display: flex; gap: 12px; align-items: center; justify-content: space-between; }
-  .c-err button { background: var(--color-danger); color: #fff; border: none; padding: 5px 10px; border-radius: 4px; font-size: 12px; }
+  .c-err button { background: var(--color-danger); color: var(--color-on-danger); border: none; padding: 5px 10px; border-radius: 4px; font-size: 12px; }
   .c-body { flex: 1; overflow-y: auto; padding: 6px; }
   .hint { text-align: center; color: var(--color-text-secondary); font-size: 13px; padding: 40px 16px; }
   .row { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 8px; cursor: pointer; }
   .row:hover { background: var(--color-hover); }
   .row.sel { background: var(--color-selected); }
-  .av { width: 38px; height: 38px; border-radius: 50%; background: var(--color-accent); color: #fff; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex: 0 0 auto; }
+  .row-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 0; border: none; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  .av { width: 38px; height: 38px; border-radius: 50%; background: var(--color-accent); color: var(--color-on-accent); display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex: 0 0 auto; }
   .av.unknown { background: var(--color-border); color: var(--color-text-secondary); }
   .meta { flex: 1; min-width: 0; }
   .nm { font-size: 14px; font-weight: 500; color: var(--color-text); }
@@ -284,7 +317,7 @@
   .actions { display: flex; gap: 8px; margin-top: 6px; }
   .actions .spacer { flex: 1; }
   .actions button { padding: 8px 14px; border-radius: 6px; font-size: 13px; font-weight: 500; cursor: pointer; border: 1px solid var(--color-border); background: var(--color-bg-secondary); color: var(--color-text); }
-  .actions .primary { background: var(--color-accent); color: #fff; border-color: var(--color-accent); }
+  .actions .primary { background: var(--color-accent); color: var(--color-on-accent); border-color: var(--color-accent); }
   .actions .primary:hover { background: var(--color-accent-hover); }
   .actions .danger { background: transparent; color: var(--color-danger); border-color: var(--color-danger); }
   .actions .ghost { background: transparent; }

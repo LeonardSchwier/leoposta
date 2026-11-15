@@ -4,6 +4,12 @@ All notable changes. No tagged release has been published yet.
 
 ## Unreleased
 
+### Added
+- Calendar: repeating events from the event editor. A "Repeat" control (Never / Daily / Weekly on chosen weekdays / Monthly on the start's day / Yearly; every N; ends never, after N times or on a date) writes an RFC 5545 RRULE. A new timed series is stored as `DTSTART;TZID=<your zone>` with a VTIMEZONE, so it stays at the same local time across summer time and BYDAY means your weekday; UNTIL is UTC for timed events and a DATE for all-day ones. Editing a series shows its rule; changing it replaces only RRULE (EXDATE, changed occurrences, alarms stay); "Never" turns the series into one event and drops its EXDATEs and changed occurrences. A rule the control cannot express (BYSETPOS, "2nd Tuesday", several BY* values, ...) is shown read-only as "Custom repeat" and kept as it is.
+
+### Removed
+- Settings: the "Group messages by thread" checkbox. There is no conversation view, so it did nothing.
+
 ### Fixed
 - A filter rule with the `regex` operator could freeze the whole server: a backtracking pattern such as `(a+)+$` takes seconds to minutes on a 31-character subject, the tested text is the incoming mail's subject, sender or body, and the server is a single process. Rule regexes now run with a 25 ms limit per match; a message that spends it is skipped for that rule for 5 minutes, regex conditions share a 250 ms budget per 2 s, patterns are limited to 256 characters and only the first 100 000 characters of the text are searched (a match beyond that is not found).
 - `PUT /api/rules` stored any array, so a `null` rule or a numeric value made every later message list answer 500. It now accepts only the shape the Rules tab sends (at most 200 rules and 20 conditions per rule, values up to 500 characters, a regex that compiles) and answers 400 with a readable message otherwise; unknown properties are dropped.

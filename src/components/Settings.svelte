@@ -5,7 +5,10 @@
   } from '../store'
   import type { MailAccount } from '../store'
   import type { RefreshMode } from '../refresh'
-  import { RULE_FIELDS, RULE_OPERATORS, RULE_ACTIONS } from '../lib/rules'
+  import { pgpUnlock, pgpLock, pgpStatus, pgpPublicKeys, pgpRemovePublicKey, type PgpStatus, type PgpPublicKey } from '../lib/pgp'
+  import { accountSavePayload } from '../lib/accountForm'
+  import { RULE_FIELDS, RULE_OPERATORS, RULE_ACTIONS, ruleProblem } from '../lib/rules'
+  import { moveTargets } from '../lib/moveTargets'
   import type { Rule } from '../lib/rules'
 
   let { onClose } = $props()
@@ -92,9 +95,11 @@
   }
 
   async function saveRules() {
-    rulesLoading = true
     rulesMsg = ''
     rulesErr = ''
+    const problem = rules.map((r, i) => ruleProblem(r, i)).find(Boolean)
+    if (problem) { rulesErr = problem; return }
+    rulesLoading = true
     try {
       const r = await apiFetch('/api/rules', {
         method: 'PUT',
@@ -130,6 +135,7 @@
   let goaAccounts = $state<any[]>([])
   let goaImporting = $state<string | null>(null)
   let goaError = $state('')
+  let goaMsg = $state('')
 
   async function loadGoaAccounts() {
     try {
@@ -141,51 +147,102 @@
   $effect(() => { if (activeTab === 'account') loadGoaAccounts().catch(() => {}) })
 
   async function handleGoaImport(goaId: string) {
-    goaImporting = goaId; goaError = ''
+    goaImporting = goaId; goaError = ''; goaMsg = ''
     try {
-      await GoaAPI.import(goaId)
+      // A Calendar/Contacts-only GNOME account is added to the active mail account.
+      const active = $store.accounts.find(a => a.id === $store.activeAccountId)
+      const r = await GoaAPI.import(goaId, { targetEmail: active?.email })
       const saved = await AccountAPI.list()
       setAccounts(Array.isArray(saved) ? saved : [])
+      goaMsg = `Imported into ${r.email || 'your account'}`
     } catch (e: any) {
       goaError = e.message
     }
     goaImporting = null
   }
 
-  async function pgpStatus() {
-    const r = await apiFetch('/api/pgp/status')
-    return r.json()
+  let pgpState = $state<PgpStatus | null>(null)
+  let pgpUnlockPass = $state('')
+  let pgpPublics = $state<PgpPublicKey[]>([])
+  // Whose private key the PGP section shows: picked here, else the account
+  // being edited, else the active one. Keys belong to accounts.
+  let pgpPicked = $state<string | null>(null)
+  const pgpAccount = $derived.by(() => {
+    const list = $store.accounts
+    if (pgpPicked && list.some(a => a.email === pgpPicked)) return pgpPicked
+    const editing = editingId ? list.find(a => a.id === editingId) : null
+    if (editing) return editing.email
+    return (list.find(a => a.id === $store.activeAccountId) || list[0])?.email || null
+  })
+
+  async function refreshPgpState() {
+    const account = pgpAccount
+    try {
+      const st = await pgpStatus(account)
+      if (account === pgpAccount) pgpState = st
+    } catch { /* backend unreachable: section shows no status */ }
+    try { pgpPublics = await pgpPublicKeys() } catch { /* as above */ }
+  }
+
+  async function handlePgpUnlock() {
+    pgpErr = ''; pgpMsg = ''; pgpLoading = true
+    try {
+      await pgpUnlock(pgpUnlockPass, pgpAccount)
+      pgpUnlockPass = ''
+      pgpMsg = 'Key unlocked (until you lock it, the server restarts, or 15 minutes pass unused)'
+    } catch (e) { pgpErr = e instanceof Error ? e.message : String(e) }
+    pgpLoading = false
+    await refreshPgpState()
+  }
+
+  async function handlePgpLock() {
+    pgpErr = ''; pgpMsg = ''
+    try { await pgpLock(pgpAccount); pgpMsg = 'Key locked' } catch (e) { pgpErr = e instanceof Error ? e.message : String(e) }
+    await refreshPgpState()
   }
 
   async function handlePgpSave() {
     if (!pgpPrivate && !pgpPublic) { pgpErr = 'Paste a private key (or at least a public key)'; return }
+    if (pgpPrivate && !pgpAccount) { pgpErr = 'Add an account first: the private key belongs to an account'; return }
     pgpLoading = true; pgpErr = ''; pgpMsg = ''
     try {
       const r = await apiFetch('/api/pgp', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 'Content-Type': 'application/json', ...(pgpAccount ? { 'x-account': pgpAccount } : {}) },
         body: JSON.stringify({ privateAsc: pgpPrivate, publicAsc: pgpPublic, passphrase: pgpPassphrase })
       })
-      const d = await r.json()
-      if (d.success) { pgpMsg = 'PGP key saved'; pgpPrivate = ''; pgpPublic = ''; pgpPassphrase = '' }
-      else pgpErr = d.error || 'failed'
-    } catch (e) { pgpErr = e.message }
+      const d = await r.json().catch(() => ({}))
+      if (r.ok && d.success) {
+        if (!pgpPrivate) pgpMsg = 'Public key added'
+        else pgpMsg = d.state?.unlocked ? 'PGP key saved and unlocked' : (d.state?.hasPassphrase ? 'PGP key saved (locked: unlock it to read encrypted mail)' : 'PGP key saved')
+        pgpPrivate = ''; pgpPublic = ''; pgpPassphrase = ''
+      }
+      else pgpErr = d.error || `Saving the key failed (${r.status})`
+    } catch (e) { pgpErr = e instanceof Error ? e.message : String(e) }
     pgpLoading = false
+    await refreshPgpState()
   }
 
   async function handlePgpDelete() {
-    if (!confirm('Remove stored PGP keys?')) return
-    await apiFetch('/api/pgp', { method: 'DELETE' })
-    pgpPrivate = ''; pgpPublic = ''; pgpPassphrase = ''; pgpErr = ''; pgpMsg = 'PGP keys removed'
+    if (!confirm(`Remove the PGP private key of ${pgpAccount}?`)) return
+    pgpErr = ''; pgpMsg = ''
+    try {
+      const r = await apiFetch('/api/pgp', { method: 'DELETE', headers: pgpAccount ? { 'x-account': pgpAccount } : {} })
+      if (!r.ok) throw new Error(`Removing the key failed (${r.status})`)
+      pgpPrivate = ''; pgpPublic = ''; pgpPassphrase = ''; pgpMsg = 'PGP private key removed'
+    } catch (e) { pgpErr = e instanceof Error ? e.message : String(e) }
+    await refreshPgpState()
   }
 
-  $effect(() => {
-    apiFetch('/api/pgp/status').then(r => r.json()).then(s => {
-      if (s && (s.hasPrivateKey || s.hasPublicKey || s.hasPassphrase)) {
-        pgpMsg = `PGP ready: private=${!!s.hasPrivateKey}, public=${!!s.hasPublicKey}, passphrase=${!!s.hasPassphrase}`
-      }
-    }).catch(() => {})
-  })
+  async function handlePublicRemove(k: PgpPublicKey) {
+    if (!confirm(`Remove the public key of ${k.userIds.map(u => u.email || u.name).join(', ') || k.fingerprint}?`)) return
+    pgpErr = ''; pgpMsg = ''
+    try { await pgpRemovePublicKey(k.fingerprint); pgpMsg = 'Public key removed' } catch (e) { pgpErr = e instanceof Error ? e.message : String(e) }
+    await refreshPgpState()
+  }
+
+  // Again whenever the section switches to another account.
+  $effect(() => { void pgpAccount; refreshPgpState() })
 
   function handleSave() {
     if (!email) { error = 'Email is required'; return }
@@ -194,23 +251,12 @@
     isLoading = true
     error = ''
 
-    const payload: Record<string, unknown> = {
-      name: accountName || email.split('@')[0],
-      email,
-      imapHost,
-      imapPort: parseInt(imapPort) || 993,
-      imapTls,
-      smtpHost,
-      smtpPort: parseInt(smtpPort) || 465,
-      smtpTls,
-      davUrl: davUrl.trim() || undefined,
-      davUser: davUser.trim() || undefined,
-      davPass: davPass || undefined,
-      imapUser: email,
-      smtpUser: email,
+    const payload = accountSavePayload({
+      editing: !!editingId, name: accountName, email,
+      imapHost, imapPort, imapTls, smtpHost, smtpPort, smtpTls,
+      davUrl, davUser, davPass, password,
       signature: { enabled: sigEnabled, text: sigText, position: sigPosition }
-    }
-    if (password) { payload.imapPass = password; payload.smtpPass = password }
+    })
 
     const op = editingId ? AccountAPI.update(email, payload) : AccountAPI.add(payload)
 
@@ -250,8 +296,11 @@
   }
 </script>
 
-<div class="settings-overlay" onclick={onClose}>
-  <div class="settings-modal" onclick={(e) => e.stopPropagation()}>
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); onClose() } }} />
+
+<!-- Backdrop click is a mouse shortcut; Escape closes for keyboard users. -->
+<div class="settings-overlay" role="presentation" onclick={(e) => { if (e.target === e.currentTarget) onClose() }}>
+  <div class="settings-modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1">
     <div class="modal-header">
       <h2>Settings</h2>
       <button class="close-btn" aria-label="Close settings" onclick={onClose}>✕</button>
@@ -263,12 +312,8 @@
     </div>
     
     <div class="modal-body">
-      {#if error}
-        <div class="error-banner">{error}</div>
-      {/if}
-
       {#if activeTab === 'rules'}
-        <p class="hint">Rules run on every message fetch. The first matching rule wins.</p>
+        <p class="hint">Rules run on the server for new mail arriving in the Inbox. The first matching rule wins.</p>
         {#if rulesMsg}<div class="error-banner" style="background:rgba(52,199,89,0.1);border-color:var(--color-success);color:var(--color-success)">{rulesMsg}</div>{/if}
         {#if rulesErr}<div class="error-banner">{rulesErr}</div>{/if}
 
@@ -283,24 +328,34 @@
             </div>
             {#each rule.conditions as cond, ci (ci)}
               <div class="rule-cond">
-                <select bind:value={cond.field}>
+                <select bind:value={cond.field} aria-label="Condition field">
                   {#each RULE_FIELDS as f (f.value)}<option value={f.value}>{f.label}</option>{/each}
                 </select>
-                <select bind:value={cond.operator}>
+                <select bind:value={cond.operator} aria-label="Condition operator">
                   {#each RULE_OPERATORS as o (o.value)}<option value={o.value}>{o.label}</option>{/each}
                 </select>
-                <input type="text" bind:value={cond.value} placeholder="value" />
+                <input type="text" bind:value={cond.value} placeholder="value" aria-label="Condition value" />
                 <button class="btn-tiny" onclick={() => rule.conditions = rule.conditions.filter((_, j) => j !== ci)} title="Remove condition" aria-label="Remove condition">✕</button>
               </div>
             {/each}
             <button class="btn-secondary btn-tiny" onclick={() => rule.conditions = [...rule.conditions, { field: 'subject', operator: 'contains', value: '' }]}>+ Add condition</button>
             <div class="rule-action">
               <span class="rule-arrow">→</span>
-              <select bind:value={rule.action.type}>
+              <select bind:value={rule.action.type} aria-label="Rule action">
                 {#each RULE_ACTIONS as a (a.value)}<option value={a.value}>{a.label}</option>{/each}
               </select>
-              {#if rule.action.type !== 'flag'}
-                <input type="text" bind:value={rule.action.value} placeholder={rule.action.type === 'move' ? 'folder path' : 'label name'} />
+              {#if rule.action.type === 'move'}
+                <select bind:value={rule.action.value} aria-label="Move to folder">
+                  <option value={undefined} disabled>Choose a folder…</option>
+                  {#if rule.action.value && !moveTargets($store.folders, '').some(t => t.path === rule.action.value)}
+                    <option value={rule.action.value}>{rule.action.value}</option>
+                  {/if}
+                  {#each moveTargets($store.folders, 'INBOX') as t (t.path)}
+                    <option value={t.path}>{'\u00a0\u00a0'.repeat(t.depth)}{t.label}</option>
+                  {/each}
+                </select>
+              {:else if rule.action.type === 'label'}
+                <input type="text" bind:value={rule.action.value} placeholder="label (one word)" aria-label="Label" />
               {/if}
             </div>
           </div>
@@ -324,8 +379,9 @@
                    <div class="acct-email">{a.email}</div>
                  </div>
                  <div class="acct-actions">
-                   <button class="btn-tiny" onclick={() => startEdit(a)}>Edit</button>
-                   <button class="btn-tiny btn-tiny-danger" onclick={() => handleRemove(a.id)}>Remove</button>
+                   {#if a.id !== $store.activeAccountId}<button class="btn-tiny" onclick={() => setActiveAccount(a.id)} aria-label={`Use ${a.email}`}>Use</button>{/if}
+                   <button class="btn-tiny" onclick={() => startEdit(a)} aria-label={`Edit ${a.email}`}>Edit</button>
+                   <button class="btn-tiny btn-tiny-danger" onclick={() => handleRemove(a.id)} aria-label={`Remove ${a.email}`}>Remove</button>
                  </div>
                </div>
              {/each}
@@ -356,7 +412,8 @@
                </div>
              {/each}
            </div>
-           {#if goaError}<div class="error-banner">{goaError}</div>{/if}
+           {#if goaError}<div class="error-banner" role="alert">{goaError}</div>{/if}
+           {#if goaMsg}<p class="hint" role="status">{goaMsg}</p>{/if}
          </div>
        {/if}
 
@@ -364,30 +421,30 @@
          <h3>{editingId ? 'Edit account' : 'Add account'}</h3>
        </div>
        <div class="form-group">
-         <label>Account Name</label>
-         <input type="text" bind:value={accountName} placeholder="My Mail" />
+         <label for="acct-name">Account Name</label>
+         <input id="acct-name" type="text" bind:value={accountName} placeholder="My Mail" />
        </div>
        <div class="form-group">
-         <label>Email Address</label>
-          <input type="email" bind:value={email} placeholder="you@example.com" disabled={!!editingId} />
+         <label for="acct-email">Email Address</label>
+          <input id="acct-email" type="email" bind:value={email} placeholder="you@example.com" disabled={!!editingId} />
        </div>
       
       <div class="form-section">
         <h3>IMAP (Incoming)</h3>
         <div class="form-row">
           <div class="form-group">
-            <label>Server</label>
-            <input type="text" bind:value={imapHost} />
+            <label for="imap-host">IMAP server</label>
+            <input id="imap-host" type="text" bind:value={imapHost} />
           </div>
           <div class="form-group">
-            <label>Port</label>
-            <input type="number" bind:value={imapPort} />
+            <label for="imap-port">IMAP port</label>
+            <input id="imap-port" type="number" bind:value={imapPort} />
           </div>
         </div>
         <div class="form-row">
           <div class="form-group checkbox">
             <label>
-              <input type="checkbox" bind:checked={imapTls} />
+              <input type="checkbox" bind:checked={imapTls} aria-label="IMAP SSL/TLS" />
               <span>Use SSL/TLS</span>
             </label>
           </div>
@@ -398,18 +455,18 @@
         <h3>SMTP (Outgoing)</h3>
         <div class="form-row">
           <div class="form-group">
-            <label>Server</label>
-            <input type="text" bind:value={smtpHost} />
+            <label for="smtp-host">SMTP server</label>
+            <input id="smtp-host" type="text" bind:value={smtpHost} />
           </div>
           <div class="form-group">
-            <label>Port</label>
-            <input type="number" bind:value={smtpPort} />
+            <label for="smtp-port">SMTP port</label>
+            <input id="smtp-port" type="number" bind:value={smtpPort} />
           </div>
         </div>
         <div class="form-row">
            <div class="form-group checkbox">
              <label>
-               <input type="checkbox" bind:checked={smtpTls} />
+               <input type="checkbox" bind:checked={smtpTls} aria-label="SMTP SSL/TLS" />
                <span>Use SSL/TLS</span>
              </label>
            </div>
@@ -418,39 +475,29 @@
 
        <div class="mt-3 pt-3 border-t border-neutral-200 dark:border-neutral-700">
          <p class="text-xs text-neutral-500 mb-1.5 uppercase tracking-wide font-medium">CardDAV / CalDAV</p>
-         <p class="text-xs text-neutral-400 mb-2">Optional — leave blank to use global DAV_HOST env config.</p>
-         <label class="block text-xs font-medium text-neutral-600 dark:text-neutral-300 mb-1">Base URL</label>
-         <input type="url" placeholder="https://dav.example.com/dav/you" bind:value={davUrl}
+         <p class="text-xs text-neutral-400 mb-2">Optional. Calendar and Contacts use this server; leave it empty if you have none. The server address alone (e.g. https://dav.example.com/) is enough: the calendars and address books are found automatically. Clear it to switch Calendar/Contacts off.</p>
+         <label for="dav-url" class="block text-xs font-medium text-neutral-600 dark:text-neutral-300 mb-1">CalDAV/CardDAV URL</label>
+         <input id="dav-url" type="url" placeholder="https://dav.example.com/" bind:value={davUrl}
                 class="w-full px-3 py-2 text-sm rounded-lg border border-neutral-300 dark:border-neutral-600 bg-transparent focus:outline-none focus:ring-2 focus:ring-blue-500" />
          <div class="grid grid-cols-2 gap-2 mt-2">
            <div>
-             <label class="block text-xs font-medium text-neutral-600 dark:text-neutral-300 mb-1">User</label>
-             <input type="text" placeholder="leave blank for IMAP user" bind:value={davUser}
+             <label for="dav-user" class="block text-xs font-medium text-neutral-600 dark:text-neutral-300 mb-1">DAV user</label>
+             <input id="dav-user" type="text" placeholder="leave blank for IMAP user" bind:value={davUser}
                     class="w-full px-3 py-2 text-sm rounded-lg border border-neutral-300 dark:border-neutral-600 bg-transparent focus:outline-none focus:ring-2 focus:ring-blue-500" />
            </div>
            <div>
-             <label class="block text-xs font-medium text-neutral-600 dark:text-neutral-300 mb-1">Password</label>
-             <input type="password" placeholder="leave blank for IMAP pass" bind:value={davPass}
+             <label for="dav-pass" class="block text-xs font-medium text-neutral-600 dark:text-neutral-300 mb-1">DAV password</label>
+             <input id="dav-pass" type="password" placeholder={editingId ? 'leave blank to keep' : 'leave blank for IMAP pass'} bind:value={davPass}
                     class="w-full px-3 py-2 text-sm rounded-lg border border-neutral-300 dark:border-neutral-600 bg-transparent focus:outline-none focus:ring-2 focus:ring-blue-500" />
            </div>
-         </div>
-       </div>
-
-        <div class="form-section">
-          <h3>Preferences</h3>
-         <div class="form-group checkbox">
-           <label>
-             <input type="checkbox" bind:checked={$store.threadGrouping} />
-             <span>Group messages by thread</span>
-           </label>
          </div>
        </div>
 
        <div class="form-section">
          <h3>Inbox sync</h3>
          <div class="form-group">
-           <label>Inbox auto-refresh</label>
-           <select value={$store.refreshInterval}
+           <label for="set-inbox-auto-refresh">Inbox auto-refresh</label>
+           <select id="set-inbox-auto-refresh" value={$store.refreshInterval}
                    onchange={onRefreshIntervalChange}>
              <option value="instant">Instant (push)</option>
              <option value="5m">Every 5 minutes</option>
@@ -466,25 +513,25 @@
        </div>
       
       <div class="form-group">
-        <label>Password</label>
-        <input type="password" bind:value={password} placeholder="••••••••" />
+        <label for="acct-pass">Password</label>
+        <input id="acct-pass" type="password" bind:value={password} placeholder={editingId ? 'leave blank to keep the current password' : '••••••••'} />
       </div>
 
       <div class="form-section">
         <h3>Signature</h3>
         <div class="form-group checkbox">
           <label>
-            <input type="checkbox" bind:checked={sigEnabled} />
+            <input type="checkbox" bind:checked={sigEnabled} aria-label="Append signature" />
             <span>Append signature to new mail</span>
           </label>
         </div>
         <div class="form-group">
-          <label>Signature text</label>
-          <textarea rows="3" bind:value={sigText} placeholder="Best regards&#10;Leo" spellcheck="true"></textarea>
+          <label for="sig-text">Signature text</label>
+          <textarea id="sig-text" rows="3" bind:value={sigText} placeholder="Best regards&#10;Leo" spellcheck="true"></textarea>
         </div>
         <div class="form-group">
-          <label>Position in replies</label>
-          <select bind:value={sigPosition}>
+          <label for="sig-pos">Position in replies</label>
+          <select id="sig-pos" bind:value={sigPosition}>
             <option value="standard">Above the quoted message</option>
             <option value="after_quote">Below the quoted message</option>
           </select>
@@ -492,20 +539,63 @@
       </div>
 
       <div class="divider"></div>
-      <h3 class="section-title">🔐 PGP / S/MIME — import your private key to decrypt encrypted mail</h3>
-      <p class="hint">Paste your OpenPGP <b>private</b> key (armored, <code>-----BEGIN PGP PRIVATE KEY-----</code>). Optionally paste a public key and a passphrase if the private key is protected.</p>
+      <h3 class="section-title">🔐 PGP — your key for this account, and other people's public keys</h3>
+      {#if accounts.length > 1}
+        <div class="form-group">
+          <label for="pgp-account">PGP key of account</label>
+          <select id="pgp-account" value={pgpAccount} onchange={(e) => { pgpPicked = (e.currentTarget as HTMLSelectElement).value; pgpErr = ''; pgpMsg = '' }}>
+            {#each accounts as a (a.id)}<option value={a.email}>{a.email}</option>{/each}
+          </select>
+        </div>
+      {:else if pgpAccount}
+        <p class="hint">Key for <b>{pgpAccount}</b>.</p>
+      {/if}
+      <p class="hint">Paste the OpenPGP <b>private</b> key of this account (armored, <code>-----BEGIN PGP PRIVATE KEY-----</code>): it decrypts the mail of this account and signs what you send from it. Public keys of other people let you verify their signatures and encrypt to them.</p>
       <div class="form-group">
-        <label>Private key (armored)</label>
-        <textarea rows="6" bind:value={pgpPrivate} placeholder="-----BEGIN PGP PRIVATE KEY----- ... -----END PGP PRIVATE KEY-----" spellcheck="false"></textarea>
+        <label for="pgp-private">Private key (armored)</label>
+        <textarea id="pgp-private" rows="6" bind:value={pgpPrivate} placeholder="-----BEGIN PGP PRIVATE KEY----- ... -----END PGP PRIVATE KEY-----" spellcheck="false"></textarea>
       </div>
       <div class="form-group">
-        <label>Public key (optional)</label>
-        <textarea rows="4" bind:value={pgpPublic} placeholder="-----BEGIN PGP PUBLIC KEY----- ... -----END PGP PUBLIC KEY-----" spellcheck="false"></textarea>
+        <label for="pgp-public">Public keys of other people (optional)</label>
+        <textarea id="pgp-public" rows="4" bind:value={pgpPublic} placeholder="-----BEGIN PGP PUBLIC KEY BLOCK----- ... -----END PGP PUBLIC KEY BLOCK-----" spellcheck="false"></textarea>
       </div>
       <div class="form-group">
-        <label>Passphrase (optional)</label>
-        <input type="password" bind:value={pgpPassphrase} placeholder="Used to unlock your private key" />
+        <label for="pgp-passphrase">Passphrase (optional)</label>
+        <input id="pgp-passphrase" type="password" bind:value={pgpPassphrase} placeholder="Unlocks the key now; never stored" />
       </div>
+      {#if pgpState?.hasPrivateKey}
+        <div class="pgp-keystate" data-testid="pgp-state">
+          <div class="pgp-keyid">
+            {#if pgpState.userIds?.length}{pgpState.userIds.map(u => u.email || u.name).join(', ')} · {/if}<code>{pgpState.fingerprint}</code>
+          </div>
+          {#if !pgpState.hasPassphrase}
+            Key stored (not passphrase-protected): encrypted mail is decrypted automatically.
+          {:else if pgpState.unlocked}
+            Key stored and <b>unlocked</b>.
+            <button class="btn-secondary btn-tiny" onclick={handlePgpLock}>Lock key</button>
+          {:else}
+            Key stored and <b>locked</b>. Enter its passphrase to read encrypted mail:
+            <div class="pgp-unlock-row">
+              <input type="password" aria-label="PGP key passphrase" bind:value={pgpUnlockPass} placeholder="Key passphrase" onkeydown={(e) => { if (e.key === 'Enter') handlePgpUnlock() }} />
+              <button class="btn-secondary btn-tiny" onclick={handlePgpUnlock} disabled={pgpLoading || !pgpUnlockPass}>Unlock</button>
+            </div>
+          {/if}
+        </div>
+      {:else if pgpState}
+        <p class="hint" data-testid="pgp-state">No private key for this account yet.</p>
+      {/if}
+      {#if pgpPublics.length}
+        <div class="pgp-publics" data-testid="pgp-publics">
+          <div class="pgp-publics-title">Public keys ({pgpPublics.length})</div>
+          {#each pgpPublics as k (k.fingerprint)}
+            <div class="pgp-public-row">
+              <span class="pgp-public-who">{k.userIds.map(u => u.email || u.name).join(', ') || '(no user ID)'}{k.canEncrypt ? '' : ' · cannot encrypt (expired or revoked)'}</span>
+              <code class="pgp-public-fp">{k.fingerprint.slice(-16)}</code>
+              <button class="btn-tiny btn-tiny-danger" onclick={() => handlePublicRemove(k)} aria-label={`Remove public key ${k.fingerprint}`}>Remove</button>
+            </div>
+          {/each}
+        </div>
+      {/if}
       <div class="pgp-status" role="status">
         {#if pgpErr}<span class="pgp-err">{pgpErr}</span>{/if}
         {#if pgpMsg}<span class="pgp-ok">{pgpMsg}</span>{/if}
@@ -514,13 +604,14 @@
         <button class="btn-primary" onclick={handlePgpSave} disabled={pgpLoading}>
           {#if pgpLoading}Saving...{:else}Save PGP key{/if}
         </button>
-        <button class="btn-secondary" onclick={handlePgpDelete}>Remove</button>
+        {#if pgpState?.hasPrivateKey}<button class="btn-secondary" onclick={handlePgpDelete}>Remove private key</button>{/if}
       </div>
       {/if}
     </div>
 
     <div class="modal-footer">
       {#if activeTab === 'account'}
+        {#if error}<div class="footer-error" role="alert">{error}</div>{/if}
         <div class="footer-right">
           <button class="btn-secondary" onclick={onClose}>Done</button>
           <button class="btn-primary" onclick={handleSave} disabled={isLoading}>
@@ -537,6 +628,16 @@
 </div>
 
 <style>
+  .footer-error { flex: 1; min-width: 0; margin-right: 12px; color: var(--color-danger); font-size: 13px; }
+  .pgp-keystate { font-size: 13px; margin: 8px 0 12px; color: var(--color-text); }
+  .pgp-keyid { font-size: 12px; color: var(--color-text-secondary); margin-bottom: 4px; word-break: break-all; }
+  .pgp-publics { margin: 8px 0 12px; font-size: 13px; }
+  .pgp-publics-title { font-weight: 600; margin-bottom: 4px; }
+  .pgp-public-row { display: flex; gap: 8px; align-items: center; padding: 3px 0; }
+  .pgp-public-who { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .pgp-public-fp { font-size: 11px; color: var(--color-text-secondary); }
+  .pgp-unlock-row { display: flex; gap: 8px; margin-top: 6px; }
+  .pgp-unlock-row input { flex: 1; padding: 6px 10px; border: 1px solid var(--color-border); border-radius: var(--radius-sm); background: var(--color-bg); color: var(--color-text); }
   .settings-overlay {
     position: fixed;
     top: 0;
@@ -685,21 +786,6 @@
     background: var(--color-bg-secondary);
   }
   
-  .btn-danger {
-    padding: 8px 16px;
-    background: transparent;
-    border: 1px solid var(--color-danger);
-    border-radius: var(--radius-sm);
-    font-size: 14px;
-    color: var(--color-danger);
-    cursor: pointer;
-    transition: all var(--transition);
-  }
-  
-  .btn-danger:hover {
-    background: rgba(255, 59, 48, 0.1);
-  }
-  
   .footer-right {
     display: flex;
     gap: 8px;
@@ -727,7 +813,7 @@
     border-radius: var(--radius-sm);
     font-size: 14px;
     font-weight: 500;
-    color: white;
+    color: var(--color-on-accent);
     cursor: pointer;
     transition: background var(--transition);
   }

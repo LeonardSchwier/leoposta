@@ -10,11 +10,21 @@
   import Settings from './components/Settings.svelte'
   import Calendar from './components/Calendar.svelte'
   import Contacts from './components/Contacts.svelte'
-  import { store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposeForward, bootstrapRefreshMode } from './store'
+  import { type Folder, store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, adjustUnseen, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setComposeDraft, bootstrapRefreshMode } from './store'
+  import { startReply } from './lib/reply'
   import { startRefresh, stopRefresh } from './refresh'
-  import { MailAPI } from './api'
-  import { flushQueue, queueCount, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
+  import { loadAccounts, rememberActiveAccount } from './lib/accountsBootstrap'
+  import { globalShortcut, KEYBOARD_HELP } from './lib/shortcuts'
+  import { loadMessageBody, keepLoadedBodies } from './lib/openMessage'
+  import { ApiError, MailAPI } from './api'
+  import MovePicker from './components/MovePicker.svelte'
+  import { runMessageAction, hasFlag, type MessageAction } from './lib/messageActions'
+  import { encodeBase64, type OutboundAttachment } from './lib/attachments'
+  import { flushQueue, queueCount, QUEUE_CHANGED, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
   import { beginSplitDrag } from './lib/splitHandle'
+  import { specialFolderPath } from './lib/specialFolders'
+  import { isSameOrBelow, movedPath } from './lib/folderTree'
+  import { appendPage, createLatest, keepOlderPages, mergeRefreshed } from './lib/listSync'
 
   let activeView = $state('inbox')
   let appMode = $state<'mail' | 'calendar' | 'contacts'>('mail')
@@ -70,26 +80,6 @@
     showPalette = !showPalette
   }
 
-  // Open the palette in "search" mode (prefilled with 'go to').
-  function openPaletteSearch() {
-    if (showPalette) { showPalette = false; return }
-    showPalette = true
-    // Pre-fill the search after the palette input mounts.
-    requestAnimationFrame(() => {
-      setTimeout(() => {
-        const input = document.querySelector<HTMLInputElement>('.palette .palette-input')
-        if (input) {
-          input.value = 'go to '
-          input.dispatchEvent(new Event('input', { bubbles: true }))
-          input.focus()
-          // move caret to end
-          const len = input.value.length
-          input.setSelectionRange(len, len)
-        }
-      }, 0)
-    })
-  }
-
   function viewLabel(view: string): string {
     const map: Record<string, string> = {
       inbox: 'Inbox', sent: 'Sent', drafts: 'Drafts',
@@ -137,6 +127,15 @@
   }
 
   async function handleOnline() {
+    // Started offline: learn the accounts now (the refresh controller and
+    // x-account need them; adopting one reloads the folder like a switch).
+    if (!accountsReachable) {
+      const { reachable } = await loadAccounts()
+      accountsReachable = reachable
+    }
+    // Ask the outbox itself: the cached count may predate a message queued
+    // while offline.
+    queuedCount = await queueCount().catch(() => queuedCount)
     if (queuedCount > 0) {
       const { sent, failed } = await flushQueue()
       refreshQueueCount()
@@ -151,23 +150,73 @@
     }
   }
 
+  // The sidebar opens a special mailbox by a fallback path ('Drafts', 'Sent',
+  // ...) while the folder list is not there yet (cold start, slow LIST). Once
+  // it is, a view still on such a path that does not exist moves to the
+  // server's real one (e.g. INBOX.Drafts), instead of staying empty.
+  const SPECIAL_FALLBACKS: Record<string, string> = {
+    Sent: '\\Sent', Drafts: '\\Drafts', Archive: '\\Archive', Junk: '\\Junk', Trash: '\\Trash'
+  }
+  function followRealSpecialFolder(folders: Folder[]) {
+    const active = getState().activeFolder
+    const use = SPECIAL_FALLBACKS[active]
+    if (!use || folders.some((f) => f.id === active)) return
+    const real = specialFolderPath(folders, use, active)
+    if (real === active) return
+    setActiveFolder(real)
+    loadMessages(real)
+  }
+
   async function loadFolders() {
     try {
       const data = await MailAPI.folders()
-      if (data.folders) setFolders(data.folders)
+      if (data.folders) {
+        setFolders(data.folders)
+        followRealSpecialFolder(data.folders)
+      }
     } catch (e) {
-      console.error('Failed to load folders:', e)
+      // Offline (PWA served from the SW cache) is an expected state with its
+      // own banner in the list, not an error: keep the folders we have.
+      if (navigator.onLine) console.error('Failed to load folders:', e)
     }
   }
 
   let offlineServing = $state(false)
 
-  async function loadMessages(folder: string) {
-    setIsLoading(true)
+  // Folder loads, searches and refreshes all write the message list; only the
+  // newest may apply (see lib/listSync), so a slow answer for a folder the user
+  // already left never replaces the folder on screen.
+  const listLoads = createLatest()
+
+  const PAGE = 50
+  /** Messages in the folder on screen (server EXISTS); more than shown → "load more". */
+  let listTotal = $state(0)
+  let loadingMore = $state(false)
+
+  /** `background`: a refresh of the folder on screen (no spinner, keep loaded bodies). */
+  // Bumped when a message action starts and when it ends: a background
+  // refresh that overlapped an action may carry the server state from before
+  // it (the request reached the IMAP queue first) and would undo the
+  // optimistic change on screen (a star, a removed row). Such an answer is
+  // dropped; the IDLE push for the action's own change refreshes again.
+  let actionEpoch = 0
+
+  async function loadMessages(folder: string, { background = false } = {}) {
+    const current = listLoads.begin()
+    const epoch = actionEpoch
+    if (!background) setIsLoading(true)
     try {
-      const data = await MailAPI.messages(folder)
+      const data = await MailAPI.messages(folder, PAGE)
+      if (!current() || getState().activeFolder !== folder) return
+      if (background && epoch !== actionEpoch) return
       if (data.messages) {
-        setMessages(data.messages)
+        // Rules moved or flagged new mail on the server: other folders' counts changed.
+        if (data.ruleActions > 0) loadFolders()
+        const total = typeof data.total === 'number' ? data.total : data.messages.length
+        const prev = getState().messages
+        // Bodies already opened are kept either way: the list response has none.
+        setMessages(background ? mergeRefreshed(prev, keepOlderPages(prev, data.messages, total)) : keepLoadedBodies(prev, data.messages))
+        listTotal = total
         setUnreadCount(data.messages.filter((m: any) =>
           !m.flags?.includes('\\Seen') && !m.flags?.includes('Seen')
         ).length)
@@ -176,8 +225,11 @@
       offlineServing = false
       setError(null)
     } catch (e: any) {
+      if (!current()) return
       // Offline / server down: fall back to the local cache for this folder.
       const cached = await cachedMessagesForFolder(folder).catch(() => [] as any[])
+      if (!current()) return
+      listTotal = 0
       if (cached.length) {
         setMessages(cached)
         setUnreadCount(0)
@@ -188,61 +240,129 @@
         offlineServing = false
       }
     } finally {
-      setIsLoading(false)
+      if (current()) setIsLoading(false)
     }
   }
 
-  async function handleSearch(query: string) {
+  /** "Load more": append the next older page of the folder on screen. */
+  async function loadMore() {
+    if (loadingMore || searchQuery) return
+    const folder = getState().activeFolder
+    const current = listLoads.begin()
+    loadingMore = true
+    try {
+      const data = await MailAPI.messages(folder, PAGE, getState().messages.length)
+      if (!current() || !data.messages) return
+      setMessages(appendPage(getState().messages, data.messages))
+      // An empty page means everything is shown (e.g. messages were removed meanwhile).
+      listTotal = data.messages.length === 0 ? getState().messages.length
+        : typeof data.total === 'number' ? data.total : listTotal
+    } catch (e) {
+      if (current()) setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      loadingMore = false
+    }
+  }
+
+  let searchTimer: ReturnType<typeof setTimeout> | undefined
+
+  function handleSearch(query: string) {
+    clearTimeout(searchTimer)
     if (!query.trim()) {
-      searchQuery = ''
+      // Clearing the search goes back to the folder's own list.
+      if (searchQuery) {
+        searchQuery = ''
+        loadMessages(getState().activeFolder)
+      }
       return
     }
     searchQuery = query
+    // One request once the user pauses typing, not one per keystroke.
+    searchTimer = setTimeout(() => runSearch(query), 250)
+  }
+
+  async function runSearch(query: string) {
+    const current = listLoads.begin()
     try {
       const data = await MailAPI.search(query, getState().activeFolder)
-      if (data.messages) setMessages(data.messages)
+      if (!current() || searchQuery !== query) return
+      if (data.messages) {
+        setMessages(data.messages)
+        if (getState().selectedMessageId && !data.messages.some((m: any) => m.id === getState().selectedMessageId)) selectMessage(null)
+      }
+      setError(null)
     } catch (e) {
-      setError(e.message)
+      if (current()) setError(e instanceof Error ? e.message : String(e))
     }
   }
 
+  /** New mail / periodic tick: refresh what is on screen and the unread counts. */
+  function refreshNow() {
+    loadFolders()
+    if (searchQuery) runSearch(searchQuery)
+    else loadMessages(getState().activeFolder, { background: true })
+  }
+
   function handleNewFolder() {
-    const name = prompt('Folder name:')
+    const name = prompt('New folder name:')
     if (name?.trim()) {
       MailAPI.addFolder(name.trim()).then(() => loadFolders()).catch(e => setError(e.message))
     }
   }
 
   function handleNewSubFolder(parentId: string) {
-    const name = prompt(`New subfolder under "${parentId}":`)
+    const parent = getState().folders.find(f => f.id === parentId)
+    const name = prompt(`New subfolder in "${parent?.name || parentId}":`)
     if (name?.trim()) {
       MailAPI.addFolder(name.trim(), parentId).then(() => loadFolders()).catch(e => setError(e.message))
     }
   }
 
-  function handleRenameFolder(folder: any) {
-    const newPath = prompt(`Rename folder "${folder.name || folder.id}" (new full IMAP path):`, folder.id)
-    if (!newPath?.trim() || newPath.trim() === folder.id) return
-    MailAPI.renameFolder(folder.id, newPath.trim()).then(() => loadFolders()).catch(e => setError(e.message))
+  /** Resolves to the folder's new path, or null when cancelled or refused. */
+  async function handleRenameFolder(folder: Folder): Promise<string | null> {
+    const current = folder.name || folder.id
+    const name = prompt(`Rename folder "${current}" to:`, current)
+    if (!name?.trim() || name.trim() === current) return null
+    try {
+      const { path } = await MailAPI.renameFolder(folder.id, name.trim())
+      // The open folder (or one inside the renamed one) moved with it.
+      const active = getState().activeFolder
+      if (isSameOrBelow(active, folder.id, folder.delimiter)) {
+        handleFolderSelect(movedPath(active, folder.id, path, folder.delimiter))
+      }
+      await loadFolders()
+      return path
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      return null
+    }
   }
 
-  function handleDeleteFolder(folder: any) {
-    if (!confirm(`Delete folder "${folder.name || folder.id}" and all its messages?`)) return
-    MailAPI.deleteFolder(folder.id).then(() => loadFolders()).catch(e => setError(e.message))
+  function handleDeleteFolder(folder: Folder) {
+    const hasChildren = getState().folders.some(f => f.id !== folder.id && isSameOrBelow(f.id, folder.id, folder.delimiter))
+    const what = hasChildren ? 'its subfolders and all their messages' : 'all its messages'
+    if (!confirm(`Delete folder "${folder.name || folder.id}" with ${what}? This cannot be undone.`)) return
+    MailAPI.deleteFolder(folder.id).then(() => {
+      // The open folder no longer exists: go back to the Inbox.
+      if (isSameOrBelow(getState().activeFolder, folder.id, folder.delimiter)) handleFolderSelect('inbox')
+      return loadFolders()
+    }).catch(e => setError(e.message))
   }
 
   function handleFolderSelect(folder: string) {
     activeView = folder
+    clearTimeout(searchTimer)
     searchQuery = ''
     if (folder === 'calendar') { appMode = 'calendar'; return }
     if (folder === 'contacts') { appMode = 'contacts'; return }
     appMode = 'mail'
+    const folders = getState().folders
     const mapping: Record<string, string> = {
       'inbox': 'INBOX',
-      'sent': 'Sent',
-      'drafts': 'Drafts',
-      'trash': 'Trash',
-      'archive': 'Archive',
+      'sent': specialFolderPath(folders, '\\Sent', 'Sent'),
+      'drafts': specialFolderPath(folders, '\\Drafts', 'Drafts'),
+      'trash': specialFolderPath(folders, '\\Trash', 'Trash'),
+      'archive': specialFolderPath(folders, '\\Archive', 'Archive'),
       'flagged': 'INBOX'
     }
     const imapFolder = mapping[folder] || folder
@@ -250,71 +370,116 @@
     loadMessages(imapFolder)
   }
 
-  function handleSelectMessage(id: string) {
-    selectMessage(id)
-    const folder = getState().activeFolder
-    MailAPI.message(id, folder).then(data => {
-      if (data) {
-        putMessageCache({ key: `${folder}:${id}`, folder, id, message: data, full: true }).catch(() => {})
-        updateMessage(id, {
-          body: data.body,
-          bodyHtml: data.bodyHtml,
-          pgp: data.pgp,
-          attachments: data.attachments,
-          cc: data.cc,
-          bcc: data.bcc
+  // The draft is now in `folder` on the server: confirm it, refresh the folder
+  // counts, and reload the list when that Drafts folder is the one on screen.
+  // The draft is now in `folder` on the server: confirm it, refresh the folder
+  // counts (which also moves a Drafts view off a fallback path, see
+  // followRealSpecialFolder), and reload the list when that folder is on screen.
+  async function handleDraftSaved(folder: string) {
+    showToast('Draft saved')
+    await loadFolders()
+    if (getState().activeFolder === folder) loadMessages(folder)
+  }
+
+  // A mail was sent; if it was a reopened draft, Compose removed that draft:
+  // refresh the Drafts list when it is on screen.
+  function handleSent() {
+    loadFolders()
+    if (isDraftsFolder(getState().activeFolder)) loadMessages(getState().activeFolder)
+  }
+
+  function isDraftsFolder(folder: string): boolean {
+    return folder === specialFolderPath(getState().folders, '\\Drafts', 'Drafts')
+  }
+
+  /** The user opened a message whose server copy is gone (another client deleted it). */
+  function messageGone(id: string) {
+    deleteMessage(id)
+    showToast('That message no longer exists on the server')
+    loadFolders()
+  }
+
+  // Reopen a draft from the Drafts mailbox in Compose with everything restored
+  // (recipients incl. Bcc, subject, body, attachment bytes). Saving it again
+  // replaces that server copy; sending it removes it (Compose, composeDraft).
+  async function openDraft(id: string, folder: string) {
+    selectMessage(null)
+    try {
+      const data = await MailAPI.message(id, folder)
+      const attachments: OutboundAttachment[] = []
+      for (const a of (data.attachments || []) as { id?: string, filename?: string, contentType?: string }[]) {
+        if (!a.id) continue
+        const res = await MailAPI.attachment(id, a.id, folder)
+        if (!res.ok) throw new Error(`Could not load the attachment ${a.filename || ''} (${res.status})`)
+        attachments.push({
+          filename: a.filename || 'attachment',
+          content: encodeBase64(await res.arrayBuffer()),
+          contentType: a.contentType || 'application/octet-stream'
         })
       }
-    }).catch(e => {
-      // Offline: load the full message from the local cache (if it was ever opened).
-      getMessageCache(folder, id).then(c => {
-        if (c?.full && c.message) {
-          updateMessage(id, {
-            body: c.message.body,
-            bodyHtml: c.message.bodyHtml,
-            pgp: c.message.pgp,
-            attachments: c.message.attachments,
-            cc: c.message.cc,
-            bcc: c.message.bcc
-          })
-        }
-      }).catch(() => console.error('Failed to load message:', e))
+      clearCompose()
+      setComposeTo(data.to || [])
+      setComposeCc(data.cc || [])
+      setComposeBcc(data.bcc || [])
+      setComposeSubject(data.subject === '(No Subject)' ? '' : (data.subject || ''))
+      setComposeBody(data.body || '')
+      setComposeDraft({ uid: id, attachments })
+      setComposing(true)
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 404) messageGone(id)
+      else showToast('Could not open the draft: ' + (e instanceof Error ? e.message : String(e)))
+    }
+  }
+
+  // `open`: the user clicked the message (vs. moving through the list with
+  // the keyboard). A clicked draft opens in Compose.
+  function handleSelectMessage(id: string, open = false) {
+    const folder = getState().activeFolder
+    if (open && isDraftsFolder(folder)) { void openDraft(id, folder); return }
+    selectMessage(id)
+    // Opening a message marks it read on the server (GET /message/:id), so
+    // show it read right away, however it was opened (click, j/k, palette).
+    const opened = getState().messages.find((m) => m.id === id)
+    const wasUnread = !!opened && !hasFlag(opened, '\\Seen')
+    if (opened && wasUnread) {
+      updateMessage(id, { flags: [...(opened.flags || []), '\\Seen'] })
+      adjustUnseen(folder, -1)
+    }
+    loadMessageBody(id, {
+      fetchMessage: (mid, f) => MailAPI.message(mid, f),
+      context: () => getState(),
+      update: updateMessage,
+      // Decrypted PGP plaintext must not outlive the unlocked key: it is never
+      // written to the offline cache.
+      cachePut: (f, mid, message) => message?.pgp?.decrypted
+        ? Promise.resolve()
+        : putMessageCache({ key: `${f}:${mid}`, folder: f, id: mid, message, full: true }),
+      cacheGet: (f, mid) => getMessageCache(f, mid),
+      // Deleted on the server (another client): drop the row and say so.
+      onGone: messageGone
+    }).then(() => {
+      // Opening marked it \Seen on the server: the folder's unread count changed.
+      if (wasUnread) loadFolders()
     })
   }
 
-  function handleDelete() {
+  // Message actions name the message they act on (lib/messageActions.ts); the
+  // keyboard shortcuts act on the open message.
+  function act(id: string, action: MessageAction) {
+    actionEpoch++
+    void runMessageAction(id, action, { notify: (t) => showToast(t), changed: () => { loadFolders() } }).then(() => {
+      actionEpoch++
+      // Moved/deleted (and not rolled back): one message fewer in this folder.
+      if (!getState().messages.some((m) => m.id === id)) listTotal = Math.max(0, listTotal - 1)
+    })
+  }
+  function actOnSelected(action: MessageAction) {
     const id = getState().selectedMessageId
-    if (!id) return
-    const folder = getState().activeFolder
-    MailAPI.delete(id, folder).then(() => {
-      deleteMessage(id)
-    }).catch(e => setError(e.message))
+    if (id) act(id, action)
   }
 
-  function handleArchive() {
-    const id = getState().selectedMessageId
-    if (!id) return
-    const folder = getState().activeFolder
-    MailAPI.move(id, folder, 'Archive').then(() => {
-      deleteMessage(id)
-    }).catch(e => setError(e.message))
-  }
-
-  function handleStar() {
-    const id = getState().selectedMessageId
-    if (!id) return
-    const folder = getState().activeFolder
-    const msg = getState().messages.find((m: any) => m.id === id)
-    if (!msg) return
-    const isFlagged = msg.flags?.includes('\\Flagged') || msg.flags?.includes('Flagged')
-    const base = (msg.flags || []).filter((f: string) => f !== '\\Flagged' && f !== 'Flagged')
-    const flags = isFlagged ? base : [...base, '\\Flagged']
-    const add = isFlagged ? [] : ['\\Flagged']
-    const remove = isFlagged ? ['\\Flagged'] : []
-    MailAPI.setFlags(id, folder, add, remove).then(() => {
-      updateMessage(id, { flags })
-    }).catch(e => setError(e.message))
-  }
+  let moveFor = $state<string | null>(null)
+  function requestMove(id: string) { moveFor = id }
 
   function openCompose() {
     setComposing(true)
@@ -324,12 +489,7 @@
     const s = getState()
     const msg = s.messages.find(m => m.id === s.selectedMessageId)
     if (!msg) return
-    setComposeTo([msg.fromAddress || msg.from])
-    setComposeSubject(`Re: ${msg.subject}`)
-    setComposeReplyTo(msg.id)
-    setComposeOriginalMessage(msg)
-    setComposeForward(false)
-    setComposing(true)
+    void startReply(msg, 'reply')
   }
 
   function isTyping(e: KeyboardEvent): boolean {
@@ -341,16 +501,17 @@
 
   function handleKeydown(e: KeyboardEvent) {
     const key = e.key.toLowerCase()
-    // Command palette: Ctrl/Cmd+K. Works even while typing.
-    if ((e.ctrlKey || e.metaKey) && key === 'k') {
+    // Ctrl/Cmd+K: the command palette (even while typing). '?': the keyboard
+    // help (not while typing: there '?' is a character).
+    const global = globalShortcut(e, isTyping(e))
+    if (global === 'palette') {
       e.preventDefault()
       togglePalette()
       return
     }
-    // '?' opens the palette in "go to" mode so users can discover it.
-    if (e.key === '?' && !e.ctrlKey && !e.metaKey && !(e.target as HTMLElement | null)?.closest?.('.palette')) {
+    if (global === 'help') {
       e.preventDefault()
-      openPaletteSearch()
+      showToast(KEYBOARD_HELP, 6000)
       return
     }
     const isN = key === 'n'
@@ -362,13 +523,9 @@
       return
     }
 
-    if (isTyping(e)) {
-      if (e.key === 'Escape' && getState().isComposing) {
-        setComposing(false)
-        clearCompose()
-      }
-      return
-    }
+    // Compose handles its own Escape (it asks before discarding unsaved text).
+    if (isTyping(e)) return
+    if (moveFor) return
 
     const s = getState()
     const msgs = s.messages
@@ -404,16 +561,24 @@
         break
       case 'a':
         e.preventDefault()
-        handleArchive()
+        actOnSelected('archive')
         break
       case 'd':
-      case 'delete':
+      case 'Delete':
         e.preventDefault()
-        handleDelete()
+        actOnSelected('delete')
         break
       case 's':
         e.preventDefault()
-        handleStar()
+        actOnSelected('toggleStar')
+        break
+      case 'u':
+        e.preventDefault()
+        actOnSelected('toggleRead')
+        break
+      case 'v':
+        e.preventDefault()
+        if (s.selectedMessageId) requestMove(s.selectedMessageId)
         break
       case '/': {
         e.preventDefault()
@@ -423,10 +588,6 @@
         }, 0)
         break
       }
-      case '?':
-        e.preventDefault()
-        showToast('? palette · n new · Ctrl+Enter send · r reply · a archive · d delete · s star · / search · Esc close', 6000)
-        break
       case 'Escape':
         e.preventDefault()
         if (s.selectedMessageId) selectMessage(null)
@@ -443,12 +604,27 @@
   // Skips the initial mount (tracker seeded from the same initial null),
   // so the onMount load below isn't double-fired.
   let prevAccountId = $store.activeAccountId
+  let stopRememberingAccount: () => void = () => {}
+  // false until the account list arrived: avoids flashing the first-run
+  // screen while it loads.
+  let accountsLoaded = $state(false)
+  // false while the start-up account list could not be fetched (offline).
+  let accountsReachable = $state(true)
   $effect(() => {
     const current = $store.activeAccountId
+    // The start-up account load adopts an account; that is not a switch (the
+    // onMount load below fetches INBOX once).
+    if (!accountsLoaded) { prevAccountId = current; return }
     if (current === prevAccountId) return
     const prev = prevAccountId
     prevAccountId = current
-    if (current == null) return
+    if (current == null) {
+      // Last account removed: nothing of it may stay on screen.
+      setFolders([])
+      setMessages([])
+      selectMessage(null)
+      return
+    }
     const leavingFolder = getState().activeFolder
     activeView = 'inbox'
     searchQuery = ''
@@ -460,13 +636,27 @@
 
   onMount(() => {
     bootstrapRefreshMode()
-    loadFolders()
-    loadMessages('INBOX')
+    loadAccounts().then(({ accounts, reachable }) => {
+      // Seed the switch tracker first so the effect above does not load twice.
+      prevAccountId = getState().activeAccountId
+      // Only now: the start-up fallback to the first account must not
+      // overwrite the remembered choice before it was restored.
+      stopRememberingAccount = rememberActiveAccount()
+      accountsReachable = reachable
+      accountsLoaded = true
+      // Unreachable (offline PWA): load anyway, the list falls back to the
+      // offline cache; the accounts are asked again once back online.
+      if (accounts.length || !reachable) {
+        loadFolders()
+        loadMessages('INBOX')
+      }
+    })
     refreshQueueCount()
     window.addEventListener('online', handleOnline)
     window.addEventListener('offline', () => refreshQueueCount())
+    window.addEventListener(QUEUE_CHANGED, refreshQueueCount)
     window.addEventListener('keydown', handleKeydown)
-    return () => stopRefresh()
+    return () => { stopRefresh(); stopRememberingAccount() }
   })
 
   // Refresh controller: react only to the three values that change the
@@ -488,19 +678,19 @@
       stopRefresh()
       return
     }
-    startRefresh(mode, () => {
-      loadMessages(getState().activeFolder).catch(() => {})
-    })
+    startRefresh(mode, refreshNow)
   })
 </script>
 
 <div class="app" style:--sidebar-w={sidebarWidth}>
         <Sidebar
-        activeFolder={activeView}
         onFolderSelect={handleFolderSelect}
         onCompose={openCompose}
         onSettings={() => showSettings = true}
         onNewFolder={handleNewFolder}
+        onNewSubFolder={handleNewSubFolder}
+        onRenameFolder={handleRenameFolder}
+        onDeleteFolder={handleDeleteFolder}
         folders={$store.folders}
         activeView={activeView}
       />
@@ -513,26 +703,34 @@
       ></div>
   
   <main class="main">
-    {#if $store.isComposing}
+    {#if accountsLoaded && accountsReachable && $store.accounts.length === 0 && !$store.isComposing}
+      <div class="first-run" data-testid="first-run">
+        <h2>Welcome to Leoposta</h2>
+        <p>No mail account is set up yet. Add your IMAP/SMTP account to read and send mail; calendar and contacts use the optional CalDAV/CardDAV address of the same account.</p>
+        <button class="first-run-btn" onclick={() => showSettings = true}>Set up an account</button>
+      </div>
+    {:else if $store.isComposing}
       <Compose
         onClose={() => { setComposing(false); clearCompose() }}
-        onSent={() => { setComposing(false); clearCompose(); loadMessages(getState().activeFolder) }}
+        onDraftSaved={handleDraftSaved}
+        onSent={handleSent}
       />
     {:else if appMode === 'calendar'}
       <Calendar showToast={showToast} />
     {:else if appMode === 'contacts'}
       <Contacts showToast={showToast} />
     {:else}
-      <div class="content" style:--list-w={listWidth}>
+      <div class="content" class:has-selection={!!$store.selectedMessageId} style:--list-w={listWidth}>
         <MessageList
-          folder={activeView}
           onCompose={openCompose}
-          onSelectMessage={handleSelectMessage}
-          onDelete={handleDelete}
-          onArchive={handleArchive}
-          onStar={handleStar}
+          onSelectMessage={(id) => handleSelectMessage(id, true)}
+          onAction={act}
+          onMoveRequest={requestMove}
           onSearch={handleSearch}
           searchQuery={searchQuery}
+          hasMore={!searchQuery && $store.messages.length < listTotal}
+          {loadingMore}
+          onLoadMore={loadMore}
           isLoading={$store.isLoading}
           error={$store.error}
         />
@@ -545,15 +743,25 @@
         ></div>
         {#if $store.selectedMessageId}
           <MessageView
-            onDelete={handleDelete}
-            onArchive={handleArchive}
-            onStar={handleStar}
+            onAction={act}
+            onMoveRequest={requestMove}
+            onEditDraft={isDraftsFolder($store.activeFolder) ? (id) => openDraft(id, $store.activeFolder) : undefined}
             onReply={handleReplyKeyboard}
+            onGone={messageGone}
           />
         {/if}
       </div>
     {/if}
   </main>
+
+  {#if moveFor}
+    <MovePicker
+      folders={$store.folders}
+      current={$store.activeFolder}
+      onPick={(path) => { if (moveFor) act(moveFor, { moveTo: path }) }}
+      onClose={() => { moveFor = null }}
+    />
+  {/if}
 
   {#if showPalette}
     <CommandPalette commands={paletteCommands} onClose={() => { showPalette = false }} />
@@ -621,6 +829,35 @@
     .sidebar-handle { display: none; }
   }
 
+  .first-run {
+    margin: auto;
+    max-width: 440px;
+    padding: 32px;
+    text-align: center;
+    color: var(--color-text-secondary);
+  }
+  .first-run h2 { color: var(--color-text); font-size: 20px; margin-bottom: 12px; }
+  .first-run p { font-size: 14px; line-height: 1.5; margin-bottom: 20px; }
+  .first-run-btn {
+    padding: 10px 18px;
+    border: none;
+    border-radius: var(--radius-sm);
+    background: var(--color-accent);
+    color: var(--color-on-accent);
+    font-size: 14px;
+    cursor: pointer;
+  }
+
+  /* Phone widths: there is no room for list + preview side by side (the
+     list keeps its 280px minimum and the preview was squeezed to a sliver,
+     wrapping the body one letter per line). Show one pane at a time: the
+     list, or the open message with its back button. */
+  @media (max-width: 640px) {
+    .content > .split-handle { display: none; }
+    .content :global(.message-list-container) { width: 100%; min-width: 0; }
+    .content.has-selection :global(.message-list-container) { display: none; }
+  }
+
   .toast {
     position: fixed;
     bottom: 28px;
@@ -636,6 +873,9 @@
     animation: toast-in 200ms ease-out;
     z-index: 200;
     max-width: 90vw;
+    /* A status message, not a control: clicks go to what is underneath
+       (it sits over the compose/message action bars for seconds). */
+    pointer-events: none;
   }
 
   .queue-badge {
@@ -643,7 +883,7 @@
     bottom: 12px;
     right: 16px;
     background: var(--color-accent);
-    color: #fff;
+    color: var(--color-on-accent);
     padding: 6px 14px;
     border-radius: 999px;
     font-size: 12px;
@@ -651,5 +891,6 @@
     box-shadow: 0 4px 16px rgba(0,0,0,0.2);
     animation: toast-in 200ms ease-out;
     z-index: 200;
+    pointer-events: none;
   }
 </style>

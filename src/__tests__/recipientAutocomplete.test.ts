@@ -13,7 +13,8 @@ function pickBody(u: string): any {
   if (u.includes('/contacts?book=b1')) {
     return {
       contacts: [
-        { uid: 'c1', name: 'Jane Doe', email: 'jane@example.com', org: 'Acme' }
+        { uid: 'c1', name: 'Jane Doe', email: 'jane@example.com', org: 'Acme' },
+        { uid: 'c2', name: 'Multi Mail', email: 'm1@x.test', emails: ['m1@x.test', 'm2@x.test'] }
       ]
     }
   }
@@ -123,6 +124,46 @@ describe('RecipientAutocomplete', () => {
     const list = target.querySelector('.suggestions')
     expect(list).not.toBeNull()
     expect(list!.querySelectorAll('.suggestion').length).toBe(1)
+    unmount(c)
+  })
+
+  it('a card with two addresses gives two suggestions (keyed by address, no duplicate-key error)', async () => {
+    const target = makeTarget()
+    targets.push(target)
+    const c = mount(RecipientAutocomplete as any, { target, props: { value: 'multi' } })
+    await sleep(300)
+    const rows = Array.from(target.querySelectorAll('.suggestion .sug-email')).map((e) => e.textContent)
+    expect(rows).toEqual(['m1@x.test', 'm2@x.test'])
+    unmount(c)
+  })
+
+  it('case 6: "," after a recipient with a display name keeps the name', async () => {
+    const target = makeTarget()
+    targets.push(target)
+    const c = mount(RecipientAutocomplete as any, {
+      target,
+      props: { value: 'Bob Builder <bob@x.test>, Anna Älter <anna@x.test>', placeholder: '' }
+    })
+    await sleep(250)
+    const input = target.querySelector('input.ra-input') as HTMLInputElement
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: ',', bubbles: true, cancelable: true }))
+    await sleep(30)
+    expect(input.value).toBe('Bob Builder <bob@x.test>, Anna Älter <anna@x.test>')
+    unmount(c)
+  })
+
+  it('case 7: "," inside a quoted display name is not a separator', async () => {
+    const target = makeTarget()
+    targets.push(target)
+    const c = mount(RecipientAutocomplete as any, {
+      target,
+      props: { value: 'a@x.test, "Doe', placeholder: '' }
+    })
+    await sleep(250)
+    const input = target.querySelector('input.ra-input') as HTMLInputElement
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: ',', bubbles: true, cancelable: true }))
+    await sleep(30)
+    expect(input.value).toBe('a@x.test, "Doe')
     unmount(c)
   })
 })

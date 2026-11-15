@@ -28,7 +28,17 @@ function run(cmd, args) {
   })
 }
 
+/**
+ * LEOPOSTA_GOA=off: never touch the session D-Bus (GOA reports "not
+ * available"). The e2e and test servers set it, so a test run on a desktop
+ * cannot read, show or import the host user's real GNOME Online Accounts.
+ */
+export function isGoaDisabled() {
+  return /^(off|0|false|no)$/i.test(String(process.env.LEOPOSTA_GOA || '').trim())
+}
+
 function busctl(args) {
+  if (isGoaDisabled()) return Promise.reject(Object.assign(new Error('GNOME Online Accounts disabled (LEOPOSTA_GOA=off)'), { code: 'GOA_DISABLED' }))
   return run('busctl', ['--user', '--json=short', ...args])
 }
 
@@ -148,6 +158,10 @@ export async function getGoaPassword(objectPath, id) {
   }
 }
 
+function sameAddress(a, b) {
+  return !!a && !!b && String(a).trim().toLowerCase() === String(b).trim().toLowerCase()
+}
+
 /**
  * Resolve one GOA account to a leoposta account payload (shape expected by
  * `accountPayloadFrom` in lib/state.js).
@@ -167,10 +181,17 @@ export async function resolveGoaImport(goaId, { importMail = true, importDav = t
     payload.imapPass = imapPass
     payload.smtpPass = smtpPass
   }
-  if (importDav && acct._dav) {
-    Object.assign(payload, acct._dav)
-    payload.davUser = acct.identity
-    payload.davPass = await getGoaPassword(acct.path, '')
+  // GNOME keeps mail and Calendar/Contacts as two separate accounts
+  // (imap_smtp + webdav). Importing the mail account also takes the WebDAV
+  // account of the same address, so one "Import" gives working mail,
+  // Calendar and Contacts (importing only the mail account used to leave
+  // davUrl empty).
+  const davSource = acct._dav ? acct
+    : (importDav && acct._mail ? accounts.find(o => o._dav && !o._mail && sameAddress(o.identity, acct._mail.email)) : null)
+  if (importDav && davSource) {
+    Object.assign(payload, davSource._dav)
+    payload.davUser = davSource.identity
+    payload.davPass = await getGoaPassword(davSource.path, '')
   }
   if (!payload.email) payload.email = acct.identity
   return payload

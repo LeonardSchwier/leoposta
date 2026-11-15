@@ -1,9 +1,27 @@
 <script lang="ts">
-  import { store, getState, selectMessage, setComposeTo, setComposeSubject, setComposeReplyTo, setComposeOriginalMessage, setComposing, setComposeForward, updateMessage, setComposeCc } from '../store'
+  import { store, selectMessage, updateMessage } from '../store'
+  import { startReply } from '../lib/reply'
   import ContextMenu from './ContextMenu.svelte'
   import { computeVirtualRange } from '../lib/virtualList'
+  import { hasFlag, isSpecialFolder, type MessageAction } from '../lib/messageActions'
+  import { formatListDate } from '../lib/listDate'
 
-  let { onCompose, onSelectMessage, onDelete, onArchive, onStar, onSearch, searchQuery = '', isLoading = false, error = null } = $props()
+  // onAction(id, action) / onMoveRequest(id): every row action names its own
+  // message, so starring or right-clicking a row that is not the open one acts
+  // on that row (lib/messageActions.ts).
+  let { onCompose, onSelectMessage, onAction, onMoveRequest, onSearch, onLoadMore, hasMore = false, loadingMore = false, searchQuery = '', isLoading = false, error = null }: {
+    onCompose?: () => void
+    onSelectMessage?: (id: string) => void
+    onAction?: (id: string, action: MessageAction) => void
+    onMoveRequest?: (id: string) => void
+    onSearch?: (q: string) => void
+    onLoadMore?: () => void
+    hasMore?: boolean
+    loadingMore?: boolean
+    searchQuery?: string
+    isLoading?: boolean
+    error?: string | null
+  } = $props()
 
   // Virtualisation: pure math lives in lib/virtualList.ts (unit-tested).
   // The math assumes a constant row height — enforced in the .message-row
@@ -40,62 +58,48 @@
   }
   function closeMenu() { menuFor = null }
 
-  function isOwnEmail(addr: string) {
-    const s = getState()
-    const acc = s.accounts.find(a => a.id === s.activeAccountId)
-    if (!acc) return false
-    return addr.toLowerCase() === acc.email.toLowerCase()
-  }
-  function extractEmail(v: any): string {
-    if (!v) return ''
-    const s = Array.isArray(v) ? v.join(', ') : String(v)
-    const m = s.match(/[\w.+-]+@[\w.-]+\.\w+/)
-    return m ? m[0] : s
-  }
-  function handleReplyAll(message: any) {
-    const from = extractEmail(message.fromAddress || message.from)
-    const toList = (Array.isArray(message.to) ? message.to : [message.to]).map(extractEmail).filter(e => e && !isOwnEmail(e))
-    const ccList = (Array.isArray(message.cc) ? message.cc : [message.cc]).map(extractEmail).filter(e => e && !isOwnEmail(e))
-    const recipients = Array.from(new Set([...toList, ...ccList]))
-    if (recipients.length === 0) recipients.push(from)
-    setComposeTo(recipients)
-    setComposeCc([])
-    setComposeSubject(`Re: ${message.subject}`)
-    setComposeReplyTo(message.id)
-    setComposeOriginalMessage(message)
-    setComposing(true)
-  }
-
   function menuItems(message: any): MenuItem[] {
-    return [
-      { label: 'Reply', icon: '↩', action: () => handleReply(message) },
-      { label: 'Reply All', icon: '↩↩', action: () => handleReplyAll(message) },
-      { label: 'Forward', icon: '⪡', action: () => handleForward(message) },
-      { label: 'Archive', icon: '📦', action: () => onArchive?.() },
+    const id = message.id
+    const folders = $store.folders
+    const folder = $store.activeFolder
+    const inJunk = isSpecialFolder(folders, folder, '\\Junk', 'Junk')
+    const inArchive = isSpecialFolder(folders, folder, '\\Archive', 'Archive')
+    const inTrash = isSpecialFolder(folders, folder, '\\Trash', 'Trash')
+    const items: MenuItem[] = [
+      { label: 'Reply', icon: '↩', action: () => void startReply(message, 'reply') },
+      { label: 'Reply All', icon: '↩↩', action: () => void startReply(message, 'replyAll') },
+      { label: 'Forward', icon: '⪡', action: () => void startReply(message, 'forward') },
       { divider: true, label: '', action: undefined },
-      { label: 'Delete', icon: '✕', danger: true, action: () => onDelete?.() },
+      isRead(message)
+        ? { label: 'Mark as Unread', icon: '●', action: () => onAction?.(id, 'unread') }
+        : { label: 'Mark as Read', icon: '○', action: () => onAction?.(id, 'read') },
+      isFlagged(message)
+        ? { label: 'Unstar', icon: '☆', action: () => onAction?.(id, 'unstar') }
+        : { label: 'Star', icon: '★', action: () => onAction?.(id, 'star') },
+      { divider: true, label: '', action: undefined },
+      { label: 'Move to…', icon: '📁', action: () => onMoveRequest?.(id) },
     ]
+    if (!inArchive) items.push({ label: 'Archive', icon: '📦', action: () => onAction?.(id, 'archive') })
+    items.push(inJunk
+      ? { label: 'Not Junk', icon: '📥', action: () => onAction?.(id, 'notJunk') }
+      : { label: 'Mark as Junk', icon: '🚫', action: () => onAction?.(id, 'junk') })
+    items.push({ divider: true, label: '', action: undefined })
+    items.push({ label: inTrash ? 'Delete Permanently' : 'Delete', icon: '✕', danger: true, action: () => onAction?.(id, 'delete') })
+    return items
   }
   
-  function formatDate(dateStr: string) {
-    if (!dateStr) return ''
-    const date = new Date(dateStr)
-    const now = new Date()
-    const diff = now.getTime() - date.getTime()
-    const days = Math.floor(diff / (1000 * 60 * 60 * 24))
-    if (days === 0) return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
-    if (days === 1) return 'Yesterday'
-    if (days < 7) return date.toLocaleDateString([], { weekday: 'short' })
-    return date.toLocaleDateString([], { month: 'short', day: 'numeric' })
-  }
+  const formatDate = (dateStr: string) => formatListDate(dateStr)
   
-  function isRead(message: any) {
-    return message.flags?.includes('\\Seen') || message.flags?.includes('Seen')
-  }
-  function isFlagged(message: any) {
-    return message.flags?.includes('\\Flagged') || message.flags?.includes('Flagged')
+  function isRead(message: any) { return hasFlag(message, '\\Seen') }
+  function isFlagged(message: any) { return hasFlag(message, '\\Flagged') }
+  // IMAP keywords (labels set by rules or other clients); not system flags or
+  // the bookkeeping keywords clients set ($Forwarded, $MDNSent, Junk, ...).
+  const HIDDEN_KEYWORDS = new Set(['$forwarded', '$mdnsent', '$junk', '$notjunk', 'junk', 'nonjunk', 'notjunk', '$phishing', '$submitpending', '$submitted'])
+  function labelsOf(message: any): string[] {
+    return (message.flags || []).filter((f: string) => !f.startsWith('\\') && !HIDDEN_KEYWORDS.has(f.toLowerCase()))
   }
   function getPreview(message: any): string {
+    if (message.snippet) return message.snippet
     if (message.body) return message.body.substring(0, 100)
     if (message.bodyHtml) return message.bodyHtml.replace(/<[^>]*>/g, '').substring(0, 100)
     if (message.attachments?.length) return '📎 ' + message.attachments.length + ' attachment(s)'
@@ -104,26 +108,15 @@
   
   function handleSelect(message: any) {
     selectMessage(message.id)
+    // App marks it read (locally and in the folder's unread count).
     if (onSelectMessage) onSelectMessage(message.id)
-    const flags = message.flags || []
-    if (!flags.includes('\\Seen') && !flags.includes('Seen')) {
-      updateMessage(message.id, { flags: [...flags, '\\Seen'] })
-    }
   }
-  function handleReply(message: any) {
-    const from = extractEmail(message.fromAddress || message.from)
-    setComposeTo([from].filter(Boolean))
-    setComposeSubject(`Re: ${message.subject}`)
-    setComposeReplyTo(message.id)
-    setComposeOriginalMessage(message)
-    setComposing(true)
-  }
-  function handleForward(message: any) {
-    setComposeTo([])
-    setComposeSubject(`Fwd: ${message.subject}`)
-    setComposeForward(true)
-    setComposeOriginalMessage(message)
-    setComposing(true)
+  // Roving tabindex: Tab reaches the list once (on the selected row, or the
+  // first one), Enter/Space opens the focused row.
+  function rowTabIndex(id: string): 0 | -1 {
+    const sel = $store.selectedMessageId
+    const anchor = sel && messages.some((m: any) => m.id === sel) ? sel : messages[0]?.id
+    return id === anchor ? 0 : -1
   }
 </script>
 
@@ -170,7 +163,9 @@
           class:selected={$store.selectedMessageId === message.id}
           role="option"
           aria-selected={$store.selectedMessageId === message.id}
+          tabindex={rowTabIndex(message.id)}
           onclick={() => handleSelect(message)}
+          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); handleSelect(message) } }}
           oncontextmenu={(e) => showMenu(e, message)}
         >
           <div class="message-star">
@@ -180,22 +175,33 @@
               title={isFlagged(message) ? 'Unstar' : 'Star'}
               aria-label={isFlagged(message) ? 'Unstar' : 'Star'}
               aria-pressed={isFlagged(message) ? 'true' : 'false'}
-              onclick={(e) => { e.stopPropagation(); onStar?.() }}
+              onclick={(e) => { e.stopPropagation(); onAction?.(message.id, isFlagged(message) ? 'unstar' : 'star') }}
             >
               {#if isFlagged(message)}★{:else}☆{/if}
             </button>
           </div>
           <div class="message-info">
             <div class="message-top">
-              <span class="sender-name">{message.from}</span>
+              <span class="sender-name">{message.from || message.fromAddress || '(no sender)'}</span>
+              {#if message.hasAttachment || message.attachments?.length}
+                <span class="attachment-flag" role="img" aria-label="Has attachments" title="Has attachments">📎</span>
+              {/if}
               <span class="message-date">{formatDate(message.date)}</span>
             </div>
-            <div class="message-subject">{message.subject || '(no subject)'}</div>
+            <div class="message-subject">
+              {#each labelsOf(message) as label (label)}<span class="label-chip">{label}</span>{/each}
+              {message.subject || '(no subject)'}
+            </div>
             <div class="message-preview">{getPreview(message)}</div>
           </div>
         </div>
       {/each}
       <div class="virtual-spacer" style={`height:${virtual.paddingBottom}px`}></div>
+      {#if hasMore}
+        <button type="button" class="load-more" disabled={loadingMore} onclick={() => onLoadMore?.()}>
+          {loadingMore ? 'Loading…' : 'Load more'}
+        </button>
+      {/if}
     </div>
   {/if}
 
@@ -252,36 +258,10 @@
     outline: none;
   }
   
+  /* A 1px border tint alone is too faint to find the keyboard focus. */
   .search-input:focus {
     border-color: var(--color-accent);
-  }
-  
-  .actions {
-    display: flex;
-    gap: 6px;
-    margin-left: auto;
-  }
-  
-   .action-btn {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 44px;
-    min-height: 44px;
-    padding: 0;
-    background: transparent;
-    border: 1px solid var(--color-border);
-    border-radius: 6px;
-    font-size: 16px;
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    transition: all 0.1s;
-    box-sizing: border-box;
-  }
-  
-  .action-btn:hover {
-    background: var(--color-hover);
-    color: var(--color-text);
+    box-shadow: 0 0 0 1px var(--color-accent);
   }
   
   .loading {
@@ -336,6 +316,19 @@
     position: relative;
   }
 
+  .load-more {
+    display: block;
+    width: calc(100% - 24px);
+    margin: 8px 12px 12px;
+    padding: 8px;
+    border: 1px solid var(--color-border, #ddd);
+    border-radius: 6px;
+    background: transparent;
+    color: inherit;
+    cursor: pointer;
+  }
+  .load-more:disabled { opacity: 0.6; cursor: default; }
+
   .virtual-spacer {
     width: 100%;
     flex-shrink: 0;
@@ -355,12 +348,27 @@
      box-sizing: border-box;
   }
   
+  .label-chip {
+    display: inline-block;
+    margin-right: 6px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--color-hover);
+    color: var(--color-text-secondary);
+    font-size: 11px;
+    font-weight: 500;
+    line-height: 16px;
+  }
   .message-row:hover {
     background: var(--color-hover);
   }
   
   .message-row.selected {
     background: var(--color-selected);
+  }
+  /* Inset: the list clips overflow, so the global 2px outside ring would be cut off. */
+  .message-row:focus-visible {
+    outline-offset: -2px;
   }
   
   .message-row.unread .sender-name,
@@ -389,7 +397,9 @@
     font-size: 16px;
     cursor: pointer;
     padding: 0;
-    opacity: 0.25;
+    /* Dimmed but still a visible control: 0.6 keeps the outline glyph at
+       >= 3:1 (WCAG 1.4.11) on the row, hover and selected backgrounds. */
+    opacity: 0.6;
     transition: opacity 0.1s;
     color: var(--color-text);
   }
@@ -425,6 +435,13 @@
     max-width: 65%;
   }
   
+  .attachment-flag {
+    margin-left: auto;
+    padding: 0 4px;
+    font-size: 11px;
+    flex-shrink: 0;
+  }
+
   .message-date {
     font-size: 11px;
     color: var(--color-text-secondary);
