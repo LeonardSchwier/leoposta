@@ -1,6 +1,7 @@
 // Builds OpenPGP test mail (used by server/pgp.test.js and the real-stack
 // e2e suite): inline-armored text/plain and RFC 3156 PGP/MIME messages,
 // optionally signed and with an encrypted attachment.
+import crypto from 'node:crypto'
 import * as openpgp from 'openpgp'
 import MailComposer from 'nodemailer/lib/mail-composer/index.js'
 
@@ -45,7 +46,7 @@ export async function pgpMimeEncrypted({ from, to, subject, text, attachments = 
   const headers = inner.slice(0, sep).split(/\r\n(?![ \t])/).filter(h => /^content-/i.test(h)).join('\r\n')
   const entity = headers + '\r\n\r\n' + inner.slice(sep + 4)
   const armored = await encryptText(entity, publicKey, { signWith, signPassphrase })
-  const boundary = '----leoposta-pgp-' + Math.random().toString(36).slice(2)
+  const boundary = '----leoposta-pgp-' + crypto.randomBytes(12).toString('hex')
   const head = await build({ from, to, subject, text: 'x' })
   const h = head.toString('utf-8')
   const outerHeaders = h.slice(0, h.indexOf('\r\n\r\n')).split(/\r\n(?![ \t])/).filter(l => !/^content-/i.test(l))

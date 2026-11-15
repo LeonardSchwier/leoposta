@@ -354,12 +354,30 @@ async function verifyDetached({ data, signature }) {
   }
 }
 
-const PUBLIC_BLOCK_RE = /-----BEGIN PGP PUBLIC KEY BLOCK-----[\s\S]*?-----END PGP PUBLIC KEY BLOCK-----/g
+const PUBLIC_BEGIN = '-----BEGIN PGP PUBLIC KEY BLOCK-----'
+const PUBLIC_END = '-----END PGP PUBLIC KEY BLOCK-----'
+
+/** The armored public key blocks in a text, by index scans: a lazy regex
+ * rescans to the end from every BEGIN without an END (quadratic on a paste
+ * of many BEGIN lines). null when there is none, like String#match. */
+export function publicBlocks(text) {
+  const blocks = []
+  let from = 0
+  for (;;) {
+    const start = text.indexOf(PUBLIC_BEGIN, from)
+    if (start < 0) break
+    const end = text.indexOf(PUBLIC_END, start + PUBLIC_BEGIN.length)
+    if (end < 0) break // no END after this BEGIN: none after any later one either
+    blocks.push(text.slice(start, end + PUBLIC_END.length))
+    from = end + PUBLIC_END.length
+  }
+  return blocks.length ? blocks : null
+}
 
 /** Every key in a text with one or more armored public key blocks (one
  * armor block may hold several keys; openpgp reads one block per call). */
 async function readArmoredKeys(text, { lenient = false } = {}) {
-  const blocks = String(text).match(PUBLIC_BLOCK_RE)
+  const blocks = publicBlocks(String(text))
   if (!blocks) {
     if (lenient) return []
     throw new Error('no -----BEGIN PGP PUBLIC KEY BLOCK----- found')
