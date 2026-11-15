@@ -14,6 +14,7 @@ const PASS = 'correct horse battery staple'
 
 async function resetPgp(request: APIRequestContext, baseURL: string) {
   await request.delete(`${baseURL}/api/pgp`, { headers: H })
+  await request.delete(`${baseURL}/api/pgp/publics`, { headers: H })
 }
 
 async function appendRaw(mailbox: { with: <T>(fn: (c: import('imapflow').ImapFlow) => Promise<T>) => Promise<T> }, raw: Buffer) {
@@ -28,7 +29,7 @@ async function openPgpSettings(app: Page) {
 test.describe('pgp', () => {
   test.describe('key setup', () => {
     test.use({ allowApiErrors: [['PUT /api/pgp -> 400', /status of 400/], { scope: 'test' }] })
-    test('wrong passphrase is a clear error and stores nothing; the right one stores the key in LEOPOSTA_DATA_DIR', async ({ app, request, baseURL }, info) => {
+    test('wrong passphrase is a clear error and stores nothing; the right one stores the key in LEOPOSTA_DATA_DIR', async ({ app, request, baseURL, user }, info) => {
       await resetPgp(request, baseURL!)
       const key = await makeKey({ email: 'me@example.test', passphrase: PASS })
       await openPgpSettings(app)
@@ -45,10 +46,13 @@ test.describe('pgp', () => {
       await expect(app.getByTestId('pgp-state')).toContainText('unlocked')
       // Not passphrase in any file; files in the data dir, mode 0600.
       const dataDir = path.resolve(info.project.name === 'desktop' ? '.e2e-real/data-desktop' : '.e2e-real/data-pwa')
-      const priv = path.join(dataDir, 'pgp_private.asc')
+      // The key belongs to the account: pgp-keys/<account id>.asc
+      const id = (await (await request.get(`${baseURL}/api/accounts`, { headers: H })).json()).find((a: { email: string }) => a.email === user).id
+      const priv = path.join(dataDir, 'pgp-keys', `${id}.asc`)
+      expect(fs.existsSync(path.join(dataDir, 'pgp_private.asc'))).toBe(false)
       expect(fs.existsSync(priv)).toBe(true)
       expect(fs.statSync(priv).mode & 0o777).toBe(0o600)
-      for (const f of fs.readdirSync(dataDir)) {
+      for (const f of fs.readdirSync(dataDir, { recursive: true }) as string[]) {
         const p = path.join(dataDir, f)
         if (fs.statSync(p).isFile()) expect(fs.readFileSync(p, 'utf8')).not.toContain(PASS)
       }

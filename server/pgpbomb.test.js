@@ -10,9 +10,14 @@ import * as openpgp from 'openpgp'
 const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'leoposta-pgpbomb-'))
 process.env.LEOPOSTA_DATA_DIR = DATA_DIR
 process.env.LEOPOSTA_TOKEN = 'pgpbomb-test-token'
-const { processPgp, MAX_DECRYPTED_BYTES } = await import('./lib/pgp.js')
+const { processPgp: processFor, MAX_DECRYPTED_BYTES } = await import('./lib/pgp.js')
+const { state } = await import('./lib/state.js')
+const acct = { id: 'acct-bomb', email: 'v@example.test' }
+state.accounts.push(acct)
+const processPgp = (input) => processFor(input, acct)
 
 const { privateKey, publicKey } = await openpgp.generateKey({ type: 'ecc', curve: 'curve25519', userIDs: [{ email: 'v@example.test' }], format: 'armored' })
+// The pre-per-account file: migrated to the account on first use.
 fs.writeFileSync(path.join(DATA_DIR, 'pgp_private.asc'), privateKey)
 const encryptionKeys = await openpgp.readKey({ armoredKey: publicKey })
 const encrypt = async (text) => openpgp.encrypt({

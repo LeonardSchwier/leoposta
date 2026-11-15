@@ -97,9 +97,12 @@ What is stored where (all files live in `server/`, are git-ignored and written w
 |------|----------|
 | `account.json` | Account settings including the IMAP and SMTP passwords in plain text (unless supplied by environment, see below) |
 | `scheduled.json` | Queued scheduled mails: recipients, bodies, attachments |
-| `pgp_private.asc` | Your PGP private key (stays passphrase protected if it was imported that way) |
+| `pgp-keys/<account id>.asc` | The PGP private key of each account (stays passphrase protected if it was imported that way); removed with its account |
+| `pgp_publics.asc` | Public keys of other people (one keyring for all accounts) |
 
-The PGP passphrase is never stored; unlock the key at runtime with `POST /api/pgp/unlock` (kept in memory for 15 minutes). Five wrong passphrases lock the route for the rest of a minute (`429 too_many_attempts` with `Retry-After`). An old `pgp_passphrase.txt` is ignored; delete it.
+Older versions kept one `pgp_private.asc` for all accounts. On first use it is copied to every account that has no key of its own (it used to decrypt the mail of all of them, so nothing becomes unreadable) and then deleted. Remove it in Settings → PGP from accounts it does not belong to.
+
+The PGP passphrase is never stored; unlock the key at runtime with `POST /api/pgp/unlock` (per account via `x-account`; kept in memory for 15 minutes; accounts holding the same key unlock together). Five wrong passphrases lock the route for the rest of a minute (`429 too_many_attempts` with `Retry-After`). An old `pgp_passphrase.txt` is ignored; delete it.
 
 To keep passwords out of `account.json`, set `LEOPOSTA_IMAP_PASS` and/or `LEOPOSTA_SMTP_PASS` in the server environment. They override the file value and are never written back.
 
