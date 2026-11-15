@@ -293,13 +293,24 @@ export function toDavTime(s, endOfDay = false) {
 // minBatch, split the slice in half and retry each half — recursively. Any
 // non-timeout error propagates to the route's 500 handler.
 // `acct` is passed for call-site clarity; `fetchBatch` typically closes over it.
-export async function multigetWithRetry(urlPath, allHrefs, fetchBatch, acct, { maxBatch = 500, minBatch = 50 } = {}) {
+// `concurrency`: how many batches are in flight at once. Some servers (OX)
+// take a fixed time per card whatever the batch size, so a book of a few
+// thousand cards took minutes one batch after another; the batches run in
+// parallel and the result keeps the hrefs' order.
+export async function multigetWithRetry(urlPath, allHrefs, fetchBatch, acct, { maxBatch = 500, minBatch = 50, concurrency = 1 } = {}) {
   if (allHrefs.length > maxBatch) {
-    const out = []
-    for (let i = 0; i < allHrefs.length; i += maxBatch) {
-      out.push(...await multigetWithRetry(urlPath, allHrefs.slice(i, i + maxBatch), fetchBatch, acct, { maxBatch, minBatch }))
+    const chunks = []
+    for (let i = 0; i < allHrefs.length; i += maxBatch) chunks.push(allHrefs.slice(i, i + maxBatch))
+    const results = new Array(chunks.length)
+    let next = 0
+    const worker = async () => {
+      while (next < chunks.length) {
+        const i = next++
+        results[i] = await multigetWithRetry(urlPath, chunks[i], fetchBatch, acct, { maxBatch, minBatch })
+      }
     }
-    return out
+    await Promise.all(Array.from({ length: Math.max(1, Math.min(concurrency, chunks.length)) }, worker))
+    return results.flat()
   }
   try {
     return await fetchBatch(allHrefs)
