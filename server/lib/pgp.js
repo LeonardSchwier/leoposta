@@ -482,7 +482,7 @@ export async function processPgp(input, acct) {
     } else {
       // Inline: put the plaintext where the armored block was.
       const around = payload.text || armored
-      text = around.replace(armored, plain.replace(/\s+$/, ''))
+      text = around.replace(armored, plain.trimEnd())
     }
     const { verified, signer } = await signatureStatus(signatures)
     return { encrypted: true, decrypted: true, text, html, attachments, parts, signed: !!(signatures && signatures.length), verified, signer }

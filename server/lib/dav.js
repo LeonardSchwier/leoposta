@@ -1,5 +1,6 @@
 import https from 'node:https'
 import http from 'node:http'
+import { trimEndChar, trimStartChar } from './trim.js'
 
 // Read vs write timeouts. Reads (PROPFIND/REPORT) against a large book can take
 // well over the old hard 30s under load, so they get a longer ceiling; writes
@@ -216,7 +217,7 @@ export function sameHref(a, b) {
   const norm = (h) => {
     let p = hrefPath(h)
     try { p = decodeURIComponent(p) } catch {}
-    return p.replace(/\/+$/, '')
+    return trimEndChar(p, '/')
   }
   return norm(a) === norm(b)
 }
@@ -226,26 +227,13 @@ export function sameHref(a, b) {
 // (REPORT / PROPFIND on the collection itself) must append '/' themselves,
 // since OX 400s on a bare (non-collection) href there; file-PUT/DELETE sites
 // rely on this no-slash form so `+ '/uid.ics'` does not double-slash.
-// Trim leading/trailing '/' with index scans, not /\/+$/: a regex anchored
-// at the end is quadratic on a user-supplied path made of many '/'.
-function trimSlashesEnd(str) {
-  let end = str.length
-  while (end > 0 && str[end - 1] === '/') end--
-  return str.slice(0, end)
-}
-function trimSlashes(str) {
-  let start = 0
-  while (start < str.length && str[start] === '/') start++
-  return trimSlashesEnd(str.slice(start))
-}
-
 export function joinDavPath(basePath, sub) {
   // Coerce first: a tampered query/body value may be an array, not a string.
   basePath = typeof basePath === 'string' ? basePath : ''
   sub = typeof sub === 'string' ? sub : ''
-  if (sub.startsWith('/')) return trimSlashesEnd(sub)
-  const base = trimSlashesEnd(basePath)
-  const s = trimSlashes(sub)
+  if (sub.startsWith('/')) return trimEndChar(sub, '/')
+  const base = trimEndChar(basePath, '/')
+  const s = trimEndChar(trimStartChar(sub, '/'), '/')
   return s ? base + '/' + s : base
 }
 

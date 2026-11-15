@@ -8,6 +8,7 @@
 // as when the message is opened.
 
 import { simpleParser } from 'mailparser'
+import { trimEndChar } from './trim.js'
 
 /** Bytes fetched per message: enough for a line of preview text. */
 export const SNIPPET_BYTES = 2048
@@ -72,7 +73,7 @@ export function cleanSnippet(text) {
   const lines = String(text)
     .split(/\r?\n/)
     .filter((l) => !/^\s*>/.test(l))
-  return Array.from(lines.join(' ').replace(/�+$/u, '').replace(/\s+/g, ' ').trim())
+  return Array.from(trimEndChar(lines.join(' '), '\uFFFD').replace(/\s+/g, ' ').trim())
     .slice(0, SNIPPET_CHARS)
     .join('')
 }
