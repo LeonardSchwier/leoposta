@@ -32,6 +32,9 @@ jobs:
       - name: Server tests
         run: npm run test:server
 
+      - name: ReDoS check (every regex literal vs. adversarial input)
+        run: npm run check:redos
+
       - name: Build frontend
         run: npx vite build
 
