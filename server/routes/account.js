@@ -7,6 +7,7 @@ import {
 } from '../lib/state.js'
 import { dropPool, verifyAccount } from '../lib/imap.js'
 import { clearDavBaseCache } from '../lib/dav.js'
+import { removeAccountKey } from '../lib/pgp.js'
 
 const router = Router()
 
@@ -109,11 +110,14 @@ router.put('/accounts/:email', accountWriteLimit, async (req, res) => {
   }
 })
 
-router.delete('/accounts/:email', (req, res) => {
+router.delete('/accounts/:email', async (req, res) => {
+  const acct = getAccount(req.params.email)
   const removed = removeAccount(req.params.email)
   dropPool(req.params.email)
   clearDavBaseCache()
   if (!removed) return res.status(404).json({ error: 'account not found' })
+  // The account's PGP private key goes with it.
+  await removeAccountKey(acct).catch(() => {})
   res.json({ success: true })
 })
 
@@ -143,11 +147,12 @@ router.post('/account', (req, res) => {
   }
 })
 
-router.delete('/account', (req, res) => {
+router.delete('/account', async (req, res) => {
   const first = getActiveAccount()
   if (!first) return res.status(404).json({ error: 'no account' })
   removeAccount(first.email)
   dropPool(first.email)
+  await removeAccountKey(first).catch(() => {})
   res.json({ success: true })
 })
 

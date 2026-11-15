@@ -344,9 +344,17 @@ How to work these: take ONE item, do its prerequisite first, write the failing t
   - Verified against a real `erika@example.test` account (example.test, both GOA provider types) added through GNOME Settings: `GET /api/messages` and `GET /api/calendar/calendars` both succeed against the real servers using the imported passwords, importing both accounts in the order that previously broke it.
   - Tests: `server/lib/goa.test.js`, `server/goaroutes.test.js`, `server/lib/state.test.js` (the regression for the merge bug) — 24 new, all against mocked `busctl` output built from the real introspection, not live D-Bus (CI has no session bus/GOA daemon).
 
+- [x] **PGP key per account + sign/encrypt on send** — 2026-11-14 (branch `feat/pgp-send`).
+  - Keys: `server/lib/pgp.js` keeps each account's private key in `DATA_DIR/pgp-keys/<id>.asc`; public keys of others are one keyring (`pgp_publics.asc`, `GET/DELETE /api/pgp/publics[/:fingerprint]`). Decryption uses only the key of the message's account. Unlocked keys are held per fingerprint. Removing an account removes its key.
+  - Migration: the old global `pgp_private.asc` is copied to every account without a key (it decrypted all of them before), then deleted after the copies are read back; with no account yet it waits for the first one.
+  - Send: `server/lib/pgpSend.js` builds RFC 3156 `multipart/signed` / `multipart/encrypted` (signed inside), encrypted to every recipient key (keyring or an account's own key) plus the sender's own key, so the Sent copy is readable; a missing key is `400 pgp_missing_keys` and nothing is sent; locked key `423 pgp_locked`; each Bcc gets its own ciphertext. `POST /api/pgp/lookup` for Compose. Reading verifies `multipart/signed` too.
+  - UI: Compose Sign / Encrypt toggles, live "No PGP key for" hint, passphrase prompt; Settings PGP section per account with the keyring list.
+  - Open: scheduled and offline-queued PGP mail are refused (key must be unlocked at send time); public keys from contacts (vCard KEY) are not read yet; drafts are stored unencrypted; the Subject is not protected (no RFC "protected headers").
+  - Tests: `server/pgpaccounts.test.js`, `server/pgpsend.test.js`, `src/__tests__/composePgp.test.ts`, `tests/e2e-real/pgp-send.spec.ts`.
+
 ## Standing rules
 
-- security-audit guidance, B5: `POST /api/pgp/unlock` is throttled since 2026-11-11 (5 attempts per 60 s). Frontend still needs an unlock prompt; `pgp_locked` is returned as `error` inside the message's pgp status, there is no sign route yet.
+- security-audit guidance, B5: `POST /api/pgp/unlock` is throttled since 2026-11-11 (5 attempts per 60 s). `pgp_locked` is returned as `error` inside the message's pgp status; signing on send answers `423 pgp_locked` and Compose asks for the passphrase.
 
 - needs_validation (security-audit guidance, B1): how the Tauri sidecar and frontend share `LEOPOSTA_TOKEN` (the Vite build bakes `VITE_LEOPOSTA_TOKEN` into the bundle; `src-tauri` not reviewed). `?token=` on idle/attachment GETs may reach logs.
 
