@@ -71,7 +71,7 @@ export function htmlToText(html: string): string {
 
 function originalText(msg: Original): string {
   const text = msg.body || (msg.bodyHtml ? htmlToText(msg.bodyHtml) : '')
-  return text.replace(/\r\n/g, '\n').replace(/\s+$/, '')
+  return text.replace(/\r\n/g, '\n').trimEnd()
 }
 
 function when(date: string): string {
