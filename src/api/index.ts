@@ -14,6 +14,9 @@ let activeAccountEmail: string | null = null
 export function setActiveAccountEmail(email: string | null) {
   activeAccountEmail = email
 }
+export function getActiveAccountEmail(): string | null {
+  return activeAccountEmail
+}
 
 function authHeaders(extra: HeadersInit = {}): Record<string, string> {
   // Merge through Headers.set: header names are case-insensitive, and a plain

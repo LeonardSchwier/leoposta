@@ -270,6 +270,37 @@ test('scheduled send with attachments persists the attachments on disk', async (
   assert.equal(last.attachments[0].contentType, 'text/plain')
 })
 
+// The offline outbox (src/lib/offlineQueue.ts) sends each queued mail with the
+// x-account of the account it was written under. That only protects the user if
+// the server sends from exactly that account, and refuses an account that no
+// longer exists instead of falling back to another one.
+test('/api/send uses the account named by x-account and refuses an unknown one', async () => {
+  const other = { id: 'acct-outbox-b', email: 'outbox-b@example.com', name: 'Outbox B', smtpHost: 'localhost', smtpUser: 'b', smtpPass: 'p' }
+  appState.accounts.push(other)
+  try {
+    const send = (account) => fetch(`${base}/api/send`, {
+      method: 'POST',
+      headers: { ...authed, 'x-account': account, 'content-type': 'application/json' },
+      body: JSON.stringify({ to: ['r@example.com'], subject: 'outbox', body: 'b', scheduled: new Date(Date.now() + 3600 * 1000).toISOString() })
+    })
+    const before = appState.scheduledMessages.length
+    const ok = await send(other.email)
+    assert.equal((await ok.json()).success, true)
+    const last = appState.scheduledMessages[appState.scheduledMessages.length - 1]
+    assert.match(JSON.stringify(last.from), /outbox-b@example\.com/)
+    assert.equal(last.accountId, other.email, 'the scheduler will send it from that account')
+    assert.equal(appState.scheduledMessages.length, before + 1)
+
+    const gone = await send('removed@example.com')
+    assert.equal(gone.status, 400)
+    assert.equal((await gone.json()).error, 'No account configured')
+    assert.equal(appState.scheduledMessages.length, before + 1, 'nothing was queued for the unknown account')
+  } finally {
+    appState.accounts = appState.accounts.filter(a => a !== other)
+    appState.scheduledMessages = appState.scheduledMessages.filter(m => m.subject !== 'outbox')
+  }
+})
+
 test('credentials: env passwords override and are never written to account.json', async () => {
   process.env.LEOPOSTA_IMAP_PASS = 'envsecret-imap'
   try {

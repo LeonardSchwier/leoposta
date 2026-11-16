@@ -1,4 +1,4 @@
-import { apiFetch } from '../api'
+import { apiFetch, getActiveAccountEmail } from '../api'
 const DB_NAME = 'leoposta-queue'
 const OUTBOX = 'outbox'
 const MSGS = 'messages'
@@ -33,6 +33,12 @@ export interface QueuedMessage {
   inReplyTo?: string
   references?: string
   attachments?: Array<{ filename: string; content: string; contentType: string }>
+  /** Email of the account the message was written under. The outbox is flushed
+   * later, possibly after the user switched accounts, and every request is
+   * scoped to the active account, so the flush must send this one explicitly
+   * (x-account) or the mail leaves from the wrong address. Absent on messages
+   * queued before this field existed: those go out under the active account. */
+  account?: string
   createdAt: string
 }
 
@@ -43,6 +49,9 @@ function notifyChanged() {
 }
 
 export async function addQueuedMessage(msg: Omit<QueuedMessage, 'id'>): Promise<void> {
+  // Pin the account now: it is the one the user was sending from.
+  const account = msg.account ?? getActiveAccountEmail() ?? undefined
+  if (account) msg = { ...msg, account }
   const db = await openDB()
   await new Promise<void>((resolve, reject) => {
     const tx = db.transaction(OUTBOX, 'readwrite')
@@ -113,7 +122,13 @@ async function doFlush(): Promise<{ sent: number; failed: number }> {
       }
       const res = await apiFetch('/api/send', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          // Never let the active account decide: a message queued under an
+          // account that has since been removed is refused by the server and
+          // stays queued, instead of leaving from another address.
+          ...(msg.account ? { 'x-account': msg.account } : {})
+        },
         body: JSON.stringify(payload)
       })
       const data = await res.json()
