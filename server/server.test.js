@@ -301,6 +301,38 @@ test('/api/send uses the account named by x-account and refuses an unknown one',
   }
 })
 
+// An address with a character above U+00FF cannot travel in a header as written (the browser
+// throws before sending), so the client sends `u8:` + encodeURIComponent(email). Over real
+// HTTP, the server must send as that account, and still refuse an unknown or damaged one.
+test('/api/send accepts the encoded x-account of an internationalised address', async () => {
+  const idn = { id: 'acct-idn', email: 'erika@пример.test', name: 'Erika IDN', smtpHost: 'localhost', smtpUser: 'e', smtpPass: 'p' }
+  appState.accounts.push(idn)
+  try {
+    const send = (account) => fetch(`${base}/api/send`, {
+      method: 'POST',
+      headers: { ...authed, 'x-account': account, 'content-type': 'application/json' },
+      body: JSON.stringify({ to: ['r@example.com'], subject: 'idn-outbox', body: 'b', scheduled: new Date(Date.now() + 3600 * 1000).toISOString() })
+    })
+    const before = appState.scheduledMessages.length
+    const ok = await send('u8:' + encodeURIComponent(idn.email))
+    assert.equal(ok.status, 200)
+    assert.equal((await ok.json()).success, true)
+    const last = appState.scheduledMessages[appState.scheduledMessages.length - 1]
+    assert.equal(last.accountId, idn.email, 'queued for the scheduler under the real address, not the first account')
+    assert.equal(appState.scheduledMessages.length, before + 1)
+
+    for (const bad of ['u8:' + encodeURIComponent('gone@пример.test'), 'u8:%E0%A4%A']) {
+      const res = await send(bad)
+      assert.equal(res.status, 400, bad)
+      assert.equal((await res.json()).error, 'No account configured')
+    }
+    assert.equal(appState.scheduledMessages.length, before + 1, 'nothing was queued for an unknown or damaged account')
+  } finally {
+    appState.accounts = appState.accounts.filter(a => a !== idn)
+    appState.scheduledMessages = appState.scheduledMessages.filter(m => m.subject !== 'idn-outbox')
+  }
+})
+
 test('credentials: env passwords override and are never written to account.json', async () => {
   process.env.LEOPOSTA_IMAP_PASS = 'envsecret-imap'
   try {

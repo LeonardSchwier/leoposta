@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 
 process.env.LEOPOSTA_DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'leoposta-state-'))
-const { state, addAccount, updateAccount } = await import('./state.js')
+const { state, addAccount, updateAccount, decodeAccountHeader, resolveAccount } = await import('./state.js')
 
 beforeEach(() => { state.accounts = [] })
 
@@ -98,4 +98,35 @@ test('resolveDataDir: env wins; legacy server/ state is kept; otherwise the per-
   assert.equal(resolveDataDir({ env: {}, serverDir: '/opt/app/server', home: '/home/u', exists: none }), '/home/u/.local/share/leoposta')
   assert.equal(resolveDataDir({ env: { XDG_DATA_HOME: '/xdg' }, serverDir: '/opt/app/server', home: '/home/u', exists: none }), '/xdg/leoposta')
   assert.equal(resolveDataDir({ env: {}, serverDir: '/opt/app/server', home: '/home/u', exists: (p) => p === '/opt/app/server/pgp_private.asc' }), '/opt/app/server')
+})
+
+// The client names the account in `x-account`. A header value cannot carry a character
+// above U+00FF, so the client sends such an address as `u8:` + encodeURIComponent(email)
+// (src/lib/accountHeader.ts). Without the decode the account was "not found" (400).
+const u8 = (email) => 'u8:' + encodeURIComponent(email)
+const reqWith = (header) => ({ headers: header === undefined ? {} : { 'x-account': header }, query: {} })
+
+test('decodeAccountHeader: only a "u8:" value is decoded, every other value is taken as written', () => {
+  assert.equal(decodeAccountHeader('erika@example.test'), 'erika@example.test')
+  assert.equal(decodeAccountHeader('a%41@example.test'), 'a%41@example.test', 'a percent sign in a plain address is not an escape')
+  assert.equal(decodeAccountHeader('jörg@example.test'), 'jörg@example.test', 'Latin-1 headers sent by older clients still work')
+  assert.equal(decodeAccountHeader(u8('erika@пример.test')), 'erika@пример.test')
+  assert.equal(decodeAccountHeader(u8('łukasz@example.test')), 'łukasz@example.test')
+  assert.equal(decodeAccountHeader('u8:%E0%A4%A'), null, 'a malformed escape is refused, not thrown')
+})
+
+test('resolveAccount: finds an account whose address needs the encoded header', () => {
+  addAccount({ email: 'first@example.test', imapHost: 'imap.example.test' })
+  addAccount({ email: 'erika@пример.test', imapHost: 'imap.example.test' })
+  assert.equal(resolveAccount(reqWith(u8('erika@пример.test'))).email, 'erika@пример.test')
+  assert.equal(resolveAccount(reqWith(u8('ERIKA@пример.test'))).email, 'erika@пример.test', 'case-insensitive like a plain address')
+  assert.equal(resolveAccount(reqWith('first@example.test')).email, 'first@example.test')
+})
+
+test('resolveAccount: an unknown or malformed encoded header never falls back to the first account', () => {
+  addAccount({ email: 'first@example.test', imapHost: 'imap.example.test' })
+  assert.equal(resolveAccount(reqWith(u8('gone@пример.test'))), null)
+  assert.equal(resolveAccount(reqWith('u8:%E0%A4%A')), null)
+  assert.equal(resolveAccount(reqWith('u8:')), null)
+  assert.equal(resolveAccount(reqWith(undefined)).email, 'first@example.test', 'no header still means the first account')
 })

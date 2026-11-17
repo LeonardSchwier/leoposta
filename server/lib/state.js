@@ -135,15 +135,35 @@ export function getActiveAccount() {
 }
 
 /**
+ * The address named by an `x-account` header value. A header cannot carry a
+ * character above U+00FF, so the client sends such an address as
+ * `u8:` + encodeURIComponent(address) (src/lib/accountHeader.ts). Any other value
+ * is the address as written (older clients, curl, the test suites): a `%` is legal
+ * in a local part, so only the prefix triggers decoding. A malformed escape is
+ * `null` (no account), never an exception.
+ */
+export function decodeAccountHeader(value) {
+  const text = String(value)
+  if (!text.startsWith('u8:')) return text
+  try {
+    return decodeURIComponent(text.slice(3))
+  } catch {
+    return null
+  }
+}
+
+/**
  * Resolve the account for an HTTP request.
- * x-account header (an email address) wins; then the ?account= query param
+ * x-account header (an email address, see decodeAccountHeader) wins; then the ?account= query param
  * (used by SSE, which can't set custom headers); otherwise the first account.
  * Returns null if no account is configured.
  */
 export function resolveAccount(req) {
   const header = req && req.headers && req.headers['x-account']
   if (header) {
-    return getAccount(header)
+    // Present but unknown or damaged: no account, never accounts[0] (that would
+    // send as another address).
+    return getAccount(decodeAccountHeader(header))
   }
   const query = req && req.query && req.query.account
   if (query) {

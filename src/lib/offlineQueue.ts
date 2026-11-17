@@ -1,4 +1,5 @@
 import { apiFetch, getActiveAccountEmail } from '../api'
+import { accountHeaders } from './accountHeader'
 const DB_NAME = 'leoposta-queue'
 const OUTBOX = 'outbox'
 const MSGS = 'messages'
@@ -36,7 +37,7 @@ export interface QueuedMessage {
   /** Email of the account the message was written under. The outbox is flushed
    * later, possibly after the user switched accounts, and every request is
    * scoped to the active account, so the flush must send this one explicitly
-   * (x-account) or the mail leaves from the wrong address. Absent on messages
+   * (through lib/accountHeader.ts) or the mail leaves from the wrong address. Absent on messages
    * queued before this field existed: those go out under the active account. */
   account?: string
   createdAt: string
@@ -127,7 +128,7 @@ async function doFlush(): Promise<{ sent: number; failed: number }> {
           // Never let the active account decide: a message queued under an
           // account that has since been removed is refused by the server and
           // stays queued, instead of leaving from another address.
-          ...(msg.account ? { 'x-account': msg.account } : {})
+          ...accountHeaders(msg.account)
         },
         body: JSON.stringify(payload)
       })

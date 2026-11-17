@@ -9,6 +9,7 @@
   import { accountSavePayload } from '../lib/accountForm'
   import { RULE_FIELDS, RULE_OPERATORS, RULE_ACTIONS, ruleProblem } from '../lib/rules'
   import { moveTargets } from '../lib/moveTargets'
+  import { accountHeaders } from '../lib/accountHeader'
   import type { Rule } from '../lib/rules'
 
   let { onClose } = $props()
@@ -208,7 +209,7 @@
     try {
       const r = await apiFetch('/api/pgp', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', ...(pgpAccount ? { 'x-account': pgpAccount } : {}) },
+        headers: { 'Content-Type': 'application/json', ...accountHeaders(pgpAccount) },
         body: JSON.stringify({ privateAsc: pgpPrivate, publicAsc: pgpPublic, passphrase: pgpPassphrase })
       })
       const d = await r.json().catch(() => ({}))
@@ -227,7 +228,7 @@
     if (!confirm(`Remove the PGP private key of ${pgpAccount}?`)) return
     pgpErr = ''; pgpMsg = ''
     try {
-      const r = await apiFetch('/api/pgp', { method: 'DELETE', headers: pgpAccount ? { 'x-account': pgpAccount } : {} })
+      const r = await apiFetch('/api/pgp', { method: 'DELETE', headers: accountHeaders(pgpAccount) })
       if (!r.ok) throw new Error(`Removing the key failed (${r.status})`)
       pgpPrivate = ''; pgpPublic = ''; pgpPassphrase = ''; pgpMsg = 'PGP private key removed'
     } catch (e) { pgpErr = e instanceof Error ? e.message : String(e) }

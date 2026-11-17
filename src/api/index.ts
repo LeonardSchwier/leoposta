@@ -1,4 +1,5 @@
 import { attachmentPath } from '../lib/attachmentDownload'
+import { accountHeaders } from '../lib/accountHeader'
 
 const API_BASE = import.meta.env.VITE_API_URL || ''
 // The desktop shell generates a fresh token per launch and injects it before
@@ -9,7 +10,7 @@ const API_TOKEN: string =
   ''
 const withToken = (url: string) => (API_TOKEN ? `${url}?token=${encodeURIComponent(API_TOKEN)}` : url)
 
-/** Active account email; when set, every request is scoped to it via x-account. */
+/** Active account email; when set, every request is scoped to it via the account header (lib/accountHeader.ts). */
 let activeAccountEmail: string | null = null
 export function setActiveAccountEmail(email: string | null) {
   activeAccountEmail = email
@@ -24,7 +25,7 @@ function authHeaders(extra: HeadersInit = {}): Record<string, string> {
   // fetch sent "application/json, application/json" and express.json() left
   // req.body undefined.
   const h = new Headers({ 'Content-Type': 'application/json', 'x-leoposta-token': API_TOKEN })
-  if (activeAccountEmail) h.set('x-account', activeAccountEmail)
+  for (const [key, value] of Object.entries(accountHeaders(activeAccountEmail))) h.set(key, value)
   new Headers(extra).forEach((value, key) => h.set(key, value))
   return Object.fromEntries(h)
 }

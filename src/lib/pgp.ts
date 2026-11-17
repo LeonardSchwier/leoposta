@@ -1,4 +1,5 @@
 import { apiFetch, ApiError, MailAPI } from '../api'
+import { accountHeaders } from './accountHeader'
 import { getState, updateMessage } from '../store'
 
 /** The PGP state of one account (its own private key; the keyring is shared). */
@@ -21,7 +22,7 @@ const API_BASE = import.meta.env.VITE_API_URL || ''
 
 /** Headers that point a PGP call at `account` (else the active account). */
 function forAccount(account?: string | null): Record<string, string> {
-  return account ? { 'x-account': account } : {}
+  return accountHeaders(account)
 }
 
 export async function pgpStatus(account?: string | null): Promise<PgpStatus> {

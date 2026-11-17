@@ -2,7 +2,7 @@
 
 | Term | Meaning |
 |------|---------|
-| Account | One IMAP/SMTP mailbox configuration. Several can exist; the `x-account` header picks one per request. |
+| Account | One IMAP/SMTP mailbox configuration. Several can exist; the `x-account` header picks one per request (an address that is not printable ASCII travels as `u8:` plus its percent-encoding, see `src/lib/accountHeader.ts`). |
 | API token | Shared secret in the `x-leoposta-token` header that every `/api` call except `GET /api/health` must carry. See [ADR 0003](adr/0003-api-token.md). |
 | Backend | The Node.js/Express server in `server/`. Speaks IMAP/SMTP, serves the built app. |
 | Data directory | Where the backend keeps JSON state and PGP keys (`LEOPOSTA_DATA_DIR`; default `~/.local/share/leoposta`, or `server/` for an older checkout that already keeps its state there; `/data` in the container). |
