@@ -1,5 +1,6 @@
 import { apiFetch, getActiveAccountEmail } from '../api'
 import { accountHeaders } from './accountHeader'
+import { readLocal } from './activeAccountMemory'
 const DB_NAME = 'leoposta-queue'
 const OUTBOX = 'outbox'
 const MSGS = 'messages'
@@ -158,9 +159,18 @@ export async function queueCount(): Promise<number> {
 }
 
 // ---- Message cache ----
+//
+// The offline reading cache. It is shared storage for every configured account, so
+// each entry belongs to one account (its address, trimmed and lower-cased) and
+// every read, write and clear is scoped to it: the same folder and UID of two
+// accounts are two entries, and listing a folder for one account never touches
+// another's rows. An entry without an `account` (written before this existed)
+// has an unknown owner: it is never served, and the next `cacheFolderList`
+// deletes it.
 
 export interface CachedMessage {
-  key: string     // `${folder}:${id}`
+  key: string     // `${account}\0${folder}:${id}`, see cacheKey
+  account: string
   folder: string
   id: string
   message: any
@@ -168,99 +178,156 @@ export interface CachedMessage {
   fetchedAt: number      // Date.now()
 }
 
-export function cacheKey(folder: string, id: string): string {
-  return `${folder}:${id}`
+function normalizeAccount(account: string | null | undefined): string {
+  return typeof account === 'string' ? account.trim().toLowerCase() : ''
 }
 
-export async function putMessageCache(entry: Omit<CachedMessage, 'fetchedAt'>): Promise<void> {
+/**
+ * The account a cache WRITE (or a clear) belongs to: the active account, which is
+ * the one every request is scoped to. An explicit `account` wins; callers that wait
+ * for a response pass the one they asked under, so an answer that arrives after an
+ * account switch is cached for the account it was asked for. `''` means no account
+ * is active: nothing is written then. The account the browser remembered is not
+ * enough here: with no active account a request carries no account header and the
+ * server answers for its first account, which need not be the remembered one.
+ */
+export function cacheScope(account?: string | null): string {
+  return account !== undefined ? normalizeAccount(account) : normalizeAccount(getActiveAccountEmail())
+}
+
+/**
+ * The account a cache READ is for: an explicit `account`, else the active one, else
+ * the account the browser remembered (a PWA that starts offline has no account list
+ * yet, but must still read its own cache). `''` means no account is known: nothing
+ * is shown then, because mail of an unknown owner must not be.
+ */
+export function cacheReadScope(account?: string | null): string {
+  return normalizeAccount(account) || normalizeAccount(getActiveAccountEmail()) || normalizeAccount(readLocal()?.email)
+}
+
+export function cacheKey(folder: string, id: string, account: string): string {
+  return `${normalizeAccount(account)}\u0000${folder}:${id}`
+}
+
+function readAll(db: IDBDatabase): Promise<CachedMessage[]> {
+  return new Promise((resolve, reject) => {
+    const req = db.transaction(MSGS, 'readonly').objectStore(MSGS).getAll()
+    req.onsuccess = () => resolve(req.result as CachedMessage[])
+    req.onerror = () => reject(req.error)
+  })
+}
+
+export async function putMessageCache(
+  entry: Pick<CachedMessage, 'folder' | 'id' | 'message' | 'full'>,
+  account?: string | null
+): Promise<void> {
+  const scope = cacheScope(account)
+  if (!scope) return
   const db = await openDB()
   return new Promise((resolve, reject) => {
     const tx = db.transaction(MSGS, 'readwrite')
-    tx.objectStore(MSGS).put({ ...entry, fetchedAt: Date.now() })
+    tx.objectStore(MSGS).put({
+      ...entry, account: scope, key: cacheKey(entry.folder, entry.id, scope), fetchedAt: Date.now()
+    })
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
   })
 }
 
-export async function getMessageCache(folder: string, id: string): Promise<CachedMessage | undefined> {
+export async function getMessageCache(folder: string, id: string, account?: string | null): Promise<CachedMessage | undefined> {
+  const scope = cacheReadScope(account)
+  if (!scope) return undefined
   const db = await openDB()
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(MSGS, 'readonly')
-    const req = tx.objectStore(MSGS).get(cacheKey(folder, id))
-    req.onsuccess = () => resolve(req.result as CachedMessage | undefined)
+    const req = db.transaction(MSGS, 'readonly').objectStore(MSGS).get(cacheKey(folder, id, scope))
+    req.onsuccess = () => {
+      const hit = req.result as CachedMessage | undefined
+      resolve(hit && hit.account === scope ? hit : undefined)
+    }
     req.onerror = () => reject(req.error)
   })
 }
 
-export async function clearMessageCache(folder?: string): Promise<void> {
-  const db = await openDB()
+/** Delete, in one transaction, every entry `doomed` selects. */
+function deleteEntries(db: IDBDatabase, doomed: (e: CachedMessage) => boolean): Promise<void> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction(MSGS, 'readwrite')
     const store = tx.objectStore(MSGS)
-    if (!folder) {
-      store.clear()
-      tx.oncomplete = () => resolve()
-      tx.onerror = () => reject(tx.error)
-      return
+    const req = store.getAll()
+    req.onsuccess = () => {
+      for (const e of req.result as CachedMessage[]) if (doomed(e)) store.delete(e.key)
     }
-    const allReq = store.getAll()
-    allReq.onsuccess = () => {
-      const keep = (allReq.result as CachedMessage[]).filter(e => e.folder !== folder)
-      const delTx = db.transaction(MSGS, 'readwrite')
-      const delStore = delTx.objectStore(MSGS)
-      delStore.clear()
-      for (const e of keep) delStore.put(e)
-      delTx.oncomplete = () => resolve()
-      delTx.onerror = () => reject(delTx.error)
-    }
-    allReq.onerror = () => reject(allReq.error)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(tx.error)
   })
 }
 
-export async function cacheFolderList(folder: string, messages: any[]): Promise<void> {
+/** With a folder: that folder of one account. Without: everything, every account. */
+export async function clearMessageCache(folder?: string, account?: string | null): Promise<void> {
+  const db = await openDB()
+  if (folder === undefined) {
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(MSGS, 'readwrite')
+      tx.objectStore(MSGS).clear()
+      tx.oncomplete = () => resolve()
+      tx.onerror = () => reject(tx.error)
+    })
+  }
+  const scope = cacheScope(account)
+  if (!scope) return
+  return deleteEntries(db, e => e.account === scope && e.folder === folder)
+}
+
+/** Everything cached for one account (it was removed). */
+export async function clearAccountCache(account: string): Promise<void> {
+  const scope = normalizeAccount(account)
+  if (!scope) return
+  return deleteEntries(await openDB(), e => e.account === scope)
+}
+
+export async function cacheFolderList(folder: string, messages: any[], account?: string | null): Promise<void> {
+  const scope = cacheScope(account)
+  if (!scope) return
   const db = await openDB()
   const now = Date.now()
-  const newEntries: CachedMessage[] = messages.map(m => ({
-    key: cacheKey(folder, m.id),
+  const rows: CachedMessage[] = messages.map(m => ({
+    key: cacheKey(folder, m.id, scope),
+    account: scope,
     folder,
     id: m.id,
     message: m,
     full: false,
     fetchedAt: now
   }))
-  const keySet = new Set(newEntries.map(e => e.key))
-
-  // Keep only non-folder entries + this folder's fresh entries, then rewrite.
-  const all = await new Promise<CachedMessage[]>((resolve, reject) => {
-    const tx = db.transaction(MSGS, 'readonly')
-    const req = tx.objectStore(MSGS).getAll()
-    req.onsuccess = () => resolve(req.result as CachedMessage[])
-    req.onerror = () => reject(req.error)
-  })
-  const kept = all.filter(e => e.folder !== folder || keySet.has(e.key))
-
-  const tx = db.transaction(MSGS, 'readwrite')
-  const store = tx.objectStore(MSGS)
-  store.clear()
-  for (const e of kept) store.put(e)
-  for (const e of newEntries) store.put(e)
+  const fresh = new Set(rows.map(r => r.key))
+  // One transaction for the read and the writes, and deletes by key instead of
+  // clear-and-rewrite: two overlapping calls (a refresh and a folder switch) used
+  // to rewrite from a stale snapshot and drop each other's rows.
   return new Promise((resolve, reject) => {
+    const tx = db.transaction(MSGS, 'readwrite')
+    const store = tx.objectStore(MSGS)
+    const req = store.getAll()
+    req.onsuccess = () => {
+      for (const e of req.result as Partial<CachedMessage>[]) {
+        const legacy = typeof e.account !== 'string'
+        const stale = e.account === scope && e.folder === folder && !fresh.has(e.key as string)
+        if (legacy || stale) store.delete(e.key as string)
+      }
+      for (const r of rows) store.put(r)
+    }
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(tx.error)
   })
 }
 
-export async function cachedMessagesForFolder(folder: string): Promise<any[]> {
-  const db = await openDB()
-  return new Promise((resolve, reject) => {
-    const tx = db.transaction(MSGS, 'readonly')
-    const req = tx.objectStore(MSGS).getAll()
-    req.onsuccess = () => {
-      const out = (req.result as CachedMessage[])
-        .filter(e => e.folder === folder)
-        .sort((a, b) => b.fetchedAt - a.fetchedAt)
-      resolve(out.map(c => c.message))
-    }
-    req.onerror = () => reject(req.error)
-  })
+export async function cachedMessagesForFolder(folder: string, account?: string | null): Promise<any[]> {
+  const scope = cacheReadScope(account)
+  if (!scope) return []
+  const all = await readAll(await openDB())
+  return all
+    .filter(e => e.account === scope && e.folder === folder)
+    .sort((a, b) => b.fetchedAt - a.fetchedAt)
+    .map(c => c.message)
 }

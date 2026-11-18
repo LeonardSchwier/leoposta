@@ -20,7 +20,7 @@
   import MovePicker from './components/MovePicker.svelte'
   import { runMessageAction, hasFlag, type MessageAction } from './lib/messageActions'
   import { encodeBase64, type OutboundAttachment } from './lib/attachments'
-  import { flushQueue, queueCount, QUEUE_CHANGED, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, clearMessageCache } from './lib/offlineQueue'
+  import { flushQueue, queueCount, QUEUE_CHANGED, cacheFolderList, cachedMessagesForFolder, putMessageCache, getMessageCache, cacheScope } from './lib/offlineQueue'
   import { beginSplitDrag } from './lib/splitHandle'
   import { specialFolderPath } from './lib/specialFolders'
   import { isSameOrBelow, movedPath } from './lib/folderTree'
@@ -204,6 +204,10 @@
   async function loadMessages(folder: string, { background = false } = {}) {
     const current = listLoads.begin()
     const epoch = actionEpoch
+    // The cache is per account: the one this list is asked for, whatever account
+    // is active when the answer arrives. '' (none active, the account list could
+    // not be fetched) writes nothing, and reads fall back to the remembered account.
+    const cacheAccount = cacheScope()
     if (!background) setIsLoading(true)
     try {
       const data = await MailAPI.messages(folder, PAGE)
@@ -220,14 +224,14 @@
         setUnreadCount(data.messages.filter((m: any) =>
           !m.flags?.includes('\\Seen') && !m.flags?.includes('Seen')
         ).length)
-        cacheFolderList(folder, data.messages).catch(() => {})
+        cacheFolderList(folder, data.messages, cacheAccount).catch(() => {})
       }
       offlineServing = false
       setError(null)
     } catch (e: any) {
       if (!current()) return
       // Offline / server down: fall back to the local cache for this folder.
-      const cached = await cachedMessagesForFolder(folder).catch(() => [] as any[])
+      const cached = await cachedMessagesForFolder(folder, cacheAccount || undefined).catch(() => [] as any[])
       if (!current()) return
       listTotal = 0
       if (cached.length) {
@@ -445,6 +449,9 @@
       updateMessage(id, { flags: [...(opened.flags || []), '\\Seen'] })
       adjustUnseen(folder, -1)
     }
+    // Cached under the account the message is fetched for, not the one that is
+    // active when a slow answer arrives.
+    const cacheAccount = cacheScope()
     loadMessageBody(id, {
       fetchMessage: (mid, f) => MailAPI.message(mid, f),
       context: () => getState(),
@@ -453,8 +460,8 @@
       // written to the offline cache.
       cachePut: (f, mid, message) => message?.pgp?.decrypted
         ? Promise.resolve()
-        : putMessageCache({ key: `${f}:${mid}`, folder: f, id: mid, message, full: true }),
-      cacheGet: (f, mid) => getMessageCache(f, mid),
+        : putMessageCache({ folder: f, id: mid, message, full: true }, cacheAccount),
+      cacheGet: (f, mid) => getMessageCache(f, mid, cacheAccount || undefined),
       // Deleted on the server (another client): drop the row and say so.
       onGone: messageGone
     }).then(() => {
@@ -616,7 +623,6 @@
     // onMount load below fetches INBOX once).
     if (!accountsLoaded) { prevAccountId = current; return }
     if (current === prevAccountId) return
-    const prev = prevAccountId
     prevAccountId = current
     if (current == null) {
       // Last account removed: nothing of it may stay on screen.
@@ -625,11 +631,9 @@
       selectMessage(null)
       return
     }
-    const leavingFolder = getState().activeFolder
     activeView = 'inbox'
     searchQuery = ''
     setActiveFolder('INBOX')
-    if (prev && leavingFolder) clearMessageCache(leavingFolder).catch(() => {})
     loadFolders()
     loadMessages('INBOX')
   })

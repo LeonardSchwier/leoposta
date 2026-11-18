@@ -9,6 +9,7 @@
   import { accountSavePayload } from '../lib/accountForm'
   import { RULE_FIELDS, RULE_OPERATORS, RULE_ACTIONS, ruleProblem } from '../lib/rules'
   import { moveTargets } from '../lib/moveTargets'
+  import { clearAccountCache } from '../lib/offlineQueue'
   import { accountHeaders } from '../lib/accountHeader'
   import type { Rule } from '../lib/rules'
 
@@ -285,6 +286,8 @@
     if (!acc || !confirm(`Remove ${acc.email}?`)) return
     AccountAPI.remove(acc.email)
       .then(async () => {
+        // Its cached mail must not outlive the account on this device.
+        clearAccountCache(acc.email).catch(() => {})
         const saved = await AccountAPI.list()
         setAccounts(Array.isArray(saved) ? saved : [])
         if (getState().activeAccountId === id) {
