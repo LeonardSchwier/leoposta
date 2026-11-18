@@ -118,7 +118,9 @@ export const MailAPI = {
   cancelScheduled: (id: string) => api(`/scheduled/${id}`, { method: 'DELETE' }),
   idle: () => {
     const base = withToken(`${API_BASE}/api/idle`)
-    return activeAccountEmail ? `${base}&account=${encodeURIComponent(activeAccountEmail)}` : base
+    if (!activeAccountEmail) return base
+    // Without a token the URL has no query string yet.
+    return `${base}${base.includes('?') ? '&' : '?'}account=${encodeURIComponent(activeAccountEmail)}`
   },
 }
 

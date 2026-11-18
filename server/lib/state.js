@@ -155,7 +155,8 @@ export function decodeAccountHeader(value) {
 /**
  * Resolve the account for an HTTP request.
  * x-account header (an email address, see decodeAccountHeader) wins; then the ?account= query param
- * (used by SSE, which can't set custom headers); otherwise the first account.
+ * (used by SSE, which can't set custom headers); otherwise the first account. A header or
+ * query value that names no account gives null, not the first account.
  * Returns null if no account is configured.
  */
 export function resolveAccount(req) {
@@ -166,10 +167,9 @@ export function resolveAccount(req) {
     return getAccount(decodeAccountHeader(header))
   }
   const query = req && req.query && req.query.account
-  if (query) {
-    const acct = getAccount(query)
-    if (acct) return acct
-  }
+  // Like the header: an address that is named but unknown (an account removed while
+  // the page was open) is no account, never the first one.
+  if (query) return typeof query === 'string' ? getAccount(query) : null
   return getActiveAccount()
 }
 

@@ -130,3 +130,46 @@ test('resolveAccount: an unknown or malformed encoded header never falls back to
   assert.equal(resolveAccount(reqWith('u8:')), null)
   assert.equal(resolveAccount(reqWith(undefined)).email, 'first@example.test', 'no header still means the first account')
 })
+
+// The IDLE stream (SSE) cannot set headers, so it names the account in `?account=`.
+// An address that is not an account (one that was removed while the page was open)
+// used to fall back to the first account: the stream then watched another account's
+// inbox. The header already answers "no account" for an unknown address.
+const reqWithQuery = (account, headers = {}) => ({ headers, query: account === undefined ? {} : { account } })
+
+test('resolveAccount: an unknown ?account= is no account, never the first one', () => {
+  addAccount({ email: 'first@example.test', imapHost: 'imap.example.test' })
+  addAccount({ email: 'second@example.test', imapHost: 'imap.example.test' })
+  assert.equal(resolveAccount(reqWithQuery('gone@example.test')), null)
+  assert.equal(resolveAccount(reqWithQuery(['first@example.test', 'second@example.test'])), null, 'a repeated parameter is not an address')
+  assert.equal(resolveAccount(reqWithQuery({ email: 'first@example.test' })), null, 'a nested parameter is not an address')
+})
+
+test('resolveAccount: a known ?account= still resolves, and no hint still means the first account', () => {
+  addAccount({ email: 'first@example.test', imapHost: 'imap.example.test' })
+  addAccount({ email: 'second@example.test', imapHost: 'imap.example.test' })
+  assert.equal(resolveAccount(reqWithQuery('SECOND@example.test')).email, 'second@example.test')
+  assert.equal(resolveAccount(reqWithQuery(undefined)).email, 'first@example.test')
+  assert.equal(resolveAccount(reqWithQuery('', {})).email, 'first@example.test', 'an empty hint is no hint')
+  assert.equal(resolveAccount(reqWithQuery('second@example.test', { 'x-account': 'first@example.test' })).email, 'first@example.test', 'the header wins over the query')
+})
+
+test('GET /api/idle?account=<unknown> ends with "No account configured" and opens no IMAP session', async () => {
+  const { default: express } = await import('express')
+  const { createIdleRouter } = await import('../routes/idle.js')
+  addAccount({ email: 'first@example.test', imapHost: 'imap.example.test' })
+  let clients = 0
+  const app = express()
+  app.use('/api', createIdleRouter({ resolve: resolveAccount, createClient: () => { clients++; throw new Error('must not connect') } }))
+  const server = await new Promise((resolve) => { const s = app.listen(0, '127.0.0.1', () => resolve(s)) })
+  try {
+    const { port } = server.address()
+    const gone = await (await fetch(`http://127.0.0.1:${port}/api/idle?account=gone%40example.test`)).text()
+    assert.match(gone, /No account configured/)
+    assert.doesNotMatch(gone, /ready/)
+    assert.equal(clients, 0)
+  } finally {
+    server.closeAllConnections?.()
+    await new Promise((resolve) => server.close(resolve))
+  }
+})
