@@ -286,6 +286,41 @@ export async function clearAccountCache(account: string): Promise<void> {
   return deleteEntries(await openDB(), e => e.account === scope)
 }
 
+// What a body load fills in (the same set as `LoadedFields` in openMessage.ts, plus
+// the headers). The list row has an empty placeholder for each of these, or a
+// different shape: its `attachments` come from the IMAP body structure and have no
+// `id` to download by, and its `bcc` misses the envelope fallback. So for a stored
+// full message the stored value always wins.
+const FULL_ONLY_FIELDS = ['body', 'bodyHtml', 'pgp', 'attachments', 'cc', 'bcc', 'headers']
+
+function isPlainObject(v: unknown): v is Record<string, any> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v)
+}
+
+/**
+ * The entry to write for a list row. A list row has no body, so writing it over a
+ * message the user opened (stored `full`) would take the body away and the message
+ * could no longer be read offline. The stored full message is kept instead: the row
+ * supplies what the server can change since (flags, subject, date, thread, snippet,
+ * ...), the stored message supplies what the row does not have properly (the fields
+ * above, and every key the row lacks: message id, references, reply-to, ...). The
+ * flags are the row's even when it has none: a flag removed on the server must not
+ * come back from the cache.
+ *
+ * The cache does not know the folder's UIDVALIDITY. If the server renumbered the
+ * folder, the same UID is another message, and the stored body must not be put under
+ * its envelope: the merge only happens when sender and date are the same.
+ */
+function mergeStoredFull(prev: Partial<CachedMessage> | undefined, row: CachedMessage, scope: string): CachedMessage {
+  if (!prev || prev.account !== scope || prev.full !== true || !isPlainObject(prev.message) || !isPlainObject(row.message)) return row
+  if (prev.message.fromAddress !== row.message.fromAddress || prev.message.date !== row.message.date) return row
+  const message: Record<string, any> = { ...row.message }
+  for (const [k, v] of Object.entries(prev.message)) {
+    if (FULL_ONLY_FIELDS.includes(k) || !(k in message)) message[k] = v
+  }
+  return { ...row, message, full: true }
+}
+
 export async function cacheFolderList(folder: string, messages: any[], account?: string | null): Promise<void> {
   const scope = cacheScope(account)
   if (!scope) return
@@ -309,12 +344,14 @@ export async function cacheFolderList(folder: string, messages: any[], account?:
     const store = tx.objectStore(MSGS)
     const req = store.getAll()
     req.onsuccess = () => {
+      const stored = new Map<string, Partial<CachedMessage>>()
       for (const e of req.result as Partial<CachedMessage>[]) {
         const legacy = typeof e.account !== 'string'
         const stale = e.account === scope && e.folder === folder && !fresh.has(e.key as string)
         if (legacy || stale) store.delete(e.key as string)
+        else if (typeof e.key === 'string') stored.set(e.key, e)
       }
-      for (const r of rows) store.put(r)
+      for (const r of rows) store.put(mergeStoredFull(stored.get(r.key), r, scope))
     }
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
@@ -327,7 +364,31 @@ export async function cachedMessagesForFolder(folder: string, account?: string |
   if (!scope) return []
   const all = await readAll(await openDB())
   return all
-    .filter(e => e.account === scope && e.folder === folder)
-    .sort((a, b) => b.fetchedAt - a.fetchedAt)
+    .filter(e => e.account === scope && e.folder === folder && isPlainObject(e.message))
+    .sort(newestFirst)
     .map(c => c.message)
+}
+
+function messageTime(e: CachedMessage): number {
+  const t = typeof e.message.date === 'string' ? Date.parse(e.message.date) : NaN
+  return Number.isFinite(t) ? t : -Infinity
+}
+
+function uidOf(e: CachedMessage): number {
+  const n = Number.parseInt(String(e.id), 10)
+  return Number.isFinite(n) ? n : 0
+}
+
+/**
+ * The order the server answers a folder in: newest message first. Every row of one
+ * `cacheFolderList` call has the same `fetchedAt`, and opening a message gives it a
+ * later one, so that time says nothing about the position in the folder; the message
+ * date does. A message without a usable date comes last. The UID breaks a tie
+ * numerically (it is a string, "99" is before "100" as text), `fetchedAt` the rest.
+ */
+function newestFirst(a: CachedMessage, b: CachedMessage): number {
+  const ta = messageTime(a)
+  const tb = messageTime(b)
+  if (ta !== tb) return ta < tb ? 1 : -1
+  return uidOf(b) - uidOf(a) || b.fetchedAt - a.fetchedAt
 }

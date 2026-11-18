@@ -248,3 +248,168 @@ describe('offline message cache is scoped by account', () => {
     expect((await cachedMessagesForFolder('Drafts')).map((m: any) => m.id)).toEqual(['d1'])
   })
 })
+
+// An opened message is cached in full (body included) so it can be read offline. The
+// folder list that is cached after every refresh has no bodies; it must not replace it.
+describe('an opened message keeps its offline body across a list refresh', () => {
+  beforeEach(() => {
+    const factory = new (fakeIndexedDB.constructor as any)()
+    ;(globalThis as any).indexedDB = factory
+    setActiveAccountEmail('erika@example.test')
+  })
+
+  const full = (id: string, extra: Record<string, unknown> = {}) => ({
+    id, folder: 'INBOX', from: 'Max Muster', fromAddress: 'max@example.test', to: ['erika@example.test'],
+    cc: ['team@example.test'], bcc: ['hidden@example.test'], subject: 'Plans', date: '2026-11-10T10:00:00.000Z', flags: ['\\Seen'],
+    body: 'See you at noon.', bodyHtml: '<p>See you at noon.</p>',
+    // What GET /api/messages/:id answers: parsed attachments, each with the id to download it by.
+    attachments: [{ id: '0', filename: 'map.pdf', contentType: 'application/pdf', size: 1180 }],
+    messageId: '<m1@example.test>', references: '<m0@example.test>', replyTo: 'max@example.test',
+    headers: { 'x-spam': 'no' }, ...extra
+  })
+  // What GET /api/messages answers for the same message: no body, list-only fields.
+  const row = (id: string, extra: Record<string, unknown> = {}) => ({
+    id, threadId: '<m0@example.test>', folder: 'INBOX', from: 'Max Muster', fromAddress: 'max@example.test',
+    to: ['erika@example.test'], cc: ['team@example.test'], bcc: [], subject: 'Plans', body: '', bodyHtml: '', snippet: 'See you',
+    date: '2026-11-10T10:00:00.000Z', flags: ['\\Seen'], hasAttachment: true, attachmentCount: 1,
+    attachments: [{ filename: 'map.pdf', size: 1200, part: '2' }], headers: {}, ...extra
+  })
+
+  it('keeps the body, html, attachments and headers of an opened message', async () => {
+    await putMessageCache({ folder: 'INBOX', id: '7', message: full('7'), full: true })
+    await cacheFolderList('INBOX', [row('7')])
+    const hit = await getMessageCache('INBOX', '7')
+    expect(hit?.full).toBe(true)
+    expect(hit?.message.body).toBe('See you at noon.')
+    expect(hit?.message.bodyHtml).toBe('<p>See you at noon.</p>')
+    expect(hit?.message.attachments).toEqual([{ id: '0', filename: 'map.pdf', contentType: 'application/pdf', size: 1180 }])
+    expect(hit?.message.bcc).toEqual(['hidden@example.test'])
+    expect(hit?.message.cc).toEqual(['team@example.test'])
+    expect(hit?.message.headers).toEqual({ 'x-spam': 'no' })
+    expect(hit?.message.messageId).toBe('<m1@example.test>')
+    expect(hit?.message.references).toBe('<m0@example.test>')
+    expect(hit?.message.replyTo).toBe('max@example.test')
+  })
+
+  it('takes the fresh flags and list fields from the row', async () => {
+    await putMessageCache({ folder: 'INBOX', id: '7', message: full('7'), full: true })
+    await cacheFolderList('INBOX', [row('7', { flags: ['\\Flagged'], snippet: 'Newer snippet', subject: 'Plans (moved)' })])
+    const hit = await getMessageCache('INBOX', '7')
+    expect(hit?.message.flags).toEqual(['\\Flagged'])
+    expect(hit?.message.snippet).toBe('Newer snippet')
+    expect(hit?.message.subject).toBe('Plans (moved)')
+    expect(hit?.message.threadId).toBe('<m0@example.test>')
+    expect(hit?.message.hasAttachment).toBe(true)
+  })
+
+  it('a flag removed on the server is removed in the cache, not restored from the old entry', async () => {
+    await putMessageCache({ folder: 'INBOX', id: '7', message: full('7', { flags: ['\\Seen', '\\Flagged'] }), full: true })
+    await cacheFolderList('INBOX', [row('7', { flags: [] })])
+    expect((await getMessageCache('INBOX', '7'))?.message.flags).toEqual([])
+  })
+
+  it('the offline list still shows the opened message, with its fresh flags', async () => {
+    await putMessageCache({ folder: 'INBOX', id: '7', message: full('7'), full: true })
+    await cacheFolderList('INBOX', [row('7', { flags: [] })])
+    const list = await cachedMessagesForFolder('INBOX')
+    expect(list.map((m: any) => m.id)).toEqual(['7'])
+    expect(list[0].flags).toEqual([])
+    expect(list[0].snippet).toBe('See you')
+  })
+
+  it('still prunes an opened message that is no longer in the list', async () => {
+    await putMessageCache({ folder: 'INBOX', id: '7', message: full('7'), full: true })
+    await cacheFolderList('INBOX', [row('8')])
+    expect(await getMessageCache('INBOX', '7')).toBeUndefined()
+  })
+
+  it('leaves the opened messages of another folder and of another account alone', async () => {
+    await putMessageCache({ folder: 'Sent', id: '7', message: full('7', { folder: 'Sent' }), full: true })
+    await putMessageCache({ folder: 'INBOX', id: '7', message: full('7', { body: 'Other account' }), full: true }, 'max@example.test')
+    await cacheFolderList('INBOX', [row('9')])
+    expect((await getMessageCache('Sent', '7'))?.message.body).toBe('See you at noon.')
+    expect((await getMessageCache('INBOX', '7', 'max@example.test'))?.message.body).toBe('Other account')
+  })
+
+  it('does not put a stored body under another message after the server renumbered the folder', async () => {
+    await putMessageCache({ folder: 'INBOX', id: '7', message: full('7'), full: true })
+    await cacheFolderList('INBOX', [row('7', { fromAddress: 'other@example.test', from: 'Other', subject: 'Invoice' })])
+    const hit = await getMessageCache('INBOX', '7')
+    expect(hit?.full).toBe(false)
+    expect(hit?.message.body).toBe('')
+    expect(hit?.message.subject).toBe('Invoice')
+    await putMessageCache({ folder: 'INBOX', id: '8', message: full('8'), full: true })
+    await cacheFolderList('INBOX', [row('8', { date: '2026-11-12T10:00:00.000Z' })])
+    expect((await getMessageCache('INBOX', '8'))?.full).toBe(false)
+  })
+
+  it('a list row still replaces a list row (nothing is promoted to full)', async () => {
+    await cacheFolderList('INBOX', [row('7', { snippet: 'old' })])
+    await cacheFolderList('INBOX', [row('7', { snippet: 'new' })])
+    const hit = await getMessageCache('INBOX', '7')
+    expect(hit?.full).toBe(false)
+    expect(hit?.message.snippet).toBe('new')
+    expect(hit?.message.body).toBe('')
+  })
+
+  it('survives a refresh of the same list more than once', async () => {
+    await putMessageCache({ folder: 'INBOX', id: '7', message: full('7'), full: true })
+    await cacheFolderList('INBOX', [row('7')])
+    await cacheFolderList('INBOX', [row('7', { flags: [] })])
+    await cacheFolderList('INBOX', [row('7', { flags: ['\\Seen'] })])
+    const hit = await getMessageCache('INBOX', '7')
+    expect(hit?.full).toBe(true)
+    expect(hit?.message.body).toBe('See you at noon.')
+    expect(hit?.message.flags).toEqual(['\\Seen'])
+  })
+
+  it('a stored full entry without a usable message is replaced by the row instead of throwing', async () => {
+    await putMessageCache({ folder: 'INBOX', id: '7', message: null as any, full: true })
+    await cacheFolderList('INBOX', [row('7')])
+    const hit = await getMessageCache('INBOX', '7')
+    expect(hit?.full).toBe(false)
+    expect(hit?.message.snippet).toBe('See you')
+  })
+})
+
+// The server answers a folder newest first. Offline the list must come back in that order.
+describe('the offline list is newest first, as the server answers', () => {
+  beforeEach(() => {
+    const factory = new (fakeIndexedDB.constructor as any)()
+    ;(globalThis as any).indexedDB = factory
+    setActiveAccountEmail('erika@example.test')
+  })
+
+  const at = (id: string, date: string | undefined, extra: Record<string, unknown> = {}) => ({ id, date, subject: `m${id}`, flags: [], ...extra })
+
+  it('orders UIDs across a digit boundary by date, not as text', async () => {
+    await cacheFolderList('INBOX', [
+      at('102', '2026-11-05T10:00:00.000Z'), at('101', '2026-11-04T10:00:00.000Z'), at('100', '2026-11-03T10:00:00.000Z'),
+      at('99', '2026-11-02T10:00:00.000Z'), at('98', '2026-11-01T10:00:00.000Z')
+    ])
+    expect((await cachedMessagesForFolder('INBOX')).map((m: any) => m.id)).toEqual(['102', '101', '100', '99', '98'])
+  })
+
+  it('is not changed by opening a message later', async () => {
+    await cacheFolderList('INBOX', [at('9', '2026-11-03T10:00:00.000Z'), at('8', '2026-11-02T10:00:00.000Z'), at('7', '2026-11-01T10:00:00.000Z')])
+    await putMessageCache({ folder: 'INBOX', id: '7', message: at('7', '2026-11-01T10:00:00.000Z', { body: 'x' }), full: true })
+    expect((await cachedMessagesForFolder('INBOX')).map((m: any) => m.id)).toEqual(['9', '8', '7'])
+  })
+
+  it('orders messages with the same date by UID, higher first', async () => {
+    const same = '2026-11-03T10:00:00.000Z'
+    await cacheFolderList('INBOX', [at('9', same), at('10', same), at('2', same)])
+    expect((await cachedMessagesForFolder('INBOX')).map((m: any) => m.id)).toEqual(['10', '9', '2'])
+  })
+
+  it('puts a message with a missing or unparsable date last', async () => {
+    await cacheFolderList('INBOX', [at('3', undefined), at('2', 'not a date'), at('1', '2026-11-01T10:00:00.000Z')])
+    expect((await cachedMessagesForFolder('INBOX')).map((m: any) => m.id)).toEqual(['1', '3', '2'])
+  })
+
+  it('does not throw for a cached message that is not an object', async () => {
+    await cacheFolderList('INBOX', [at('1', '2026-11-01T10:00:00.000Z')])
+    await putMessageCache({ folder: 'INBOX', id: '5', message: null as any, full: true })
+    expect((await cachedMessagesForFolder('INBOX')).map((m: any) => m.id)).toEqual(['1'])
+  })
+})
