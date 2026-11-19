@@ -34,7 +34,11 @@ export function computeVirtualRange(input: VirtualRangeInput): VirtualRange {
   if (totalItems <= 0 || viewportHeight <= 0) {
     return { startIndex: 0, endIndex: 0, paddingTop: 0, paddingBottom: 0 }
   }
-  const firstVisible = Math.floor(scrollTop / H)
+  // A scroll position past the end (left over from a longer list) or below
+  // zero (rubber-band overscroll) is what the browser will clamp it to.
+  const maxScrollTop = Math.max(0, totalItems * H - viewportHeight)
+  const top = Number.isFinite(scrollTop) ? Math.min(Math.max(0, scrollTop), maxScrollTop) : 0
+  const firstVisible = Math.floor(top / H)
   const visibleCount = Math.ceil(viewportHeight / H)
   const startIndex = Math.max(0, firstVisible - O)
   const endIndex = Math.min(totalItems, firstVisible + visibleCount + O)

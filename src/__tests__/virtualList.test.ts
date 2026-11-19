@@ -24,6 +24,26 @@ describe('computeVirtualRange', () => {
     expect(r.startIndex).toBeGreaterThanOrEqual(0)
   })
 
+  // A scroll position left over from a longer list (a folder switch or a
+  // search that replaced it) is past the end of this one: the window used to be
+  // empty, a blank list under a tall spacer until the browser clamped the scroll.
+  it('still renders the last rows when scrollTop is past the end of the list', () => {
+    const r = computeVirtualRange({ totalItems: 10, viewportHeight: 400, scrollTop: 1000 })
+    expect(r.endIndex).toBe(10)
+    expect(r.startIndex).toBeLessThan(r.endIndex)
+    const long = computeVirtualRange({ totalItems: 1000, viewportHeight: 400, scrollTop: 10_000_000 })
+    expect(long.endIndex).toBe(1000)
+    expect(long.endIndex - long.startIndex).toBeGreaterThanOrEqual(Math.ceil(400 / DEFAULT_ITEM_HEIGHT))
+    expect(long.paddingBottom).toBe(0)
+    expect(long.paddingTop).toBe(long.startIndex * DEFAULT_ITEM_HEIGHT)
+  })
+
+  it('treats a negative (rubber-band) or non-finite scrollTop as the top', () => {
+    const top = computeVirtualRange({ totalItems: 100, viewportHeight: 400, scrollTop: 0 })
+    expect(computeVirtualRange({ totalItems: 100, viewportHeight: 400, scrollTop: -80 })).toEqual(top)
+    expect(computeVirtualRange({ totalItems: 100, viewportHeight: 400, scrollTop: NaN })).toEqual(top)
+  })
+
   it('handles zero totalItems without producing negative indices', () => {
     const r = computeVirtualRange({ totalItems: 0, viewportHeight: 400, scrollTop: 0 })
     expect(r.startIndex).toBe(0)
