@@ -42,7 +42,17 @@ export interface QueuedMessage {
    * queued before this field existed: those go out under the active account. */
   account?: string
   createdAt: string
+  /** Why the last send attempt failed (shown in the outbox panel), and when it
+   * was made. Set by the flush; absent on a message that was never tried. */
+  lastError?: string
+  lastAttemptAt?: string
+  /** Set when the server accepted the message but it could not be removed from
+   * the outbox afterwards. The flush never sends such a record again: it only
+   * tries to delete it. */
+  sentAt?: string
 }
+
+const MAX_ERROR_LENGTH = 300
 
 /** Fired on window whenever the outbox gains or loses messages. */
 export const QUEUE_CHANGED = 'leoposta:queue-changed'
@@ -72,6 +82,43 @@ export async function getQueuedMessages(): Promise<QueuedMessage[]> {
     req.onsuccess = () => resolve(req.result as QueuedMessage[])
     req.onerror = () => reject(req.error)
   })
+}
+
+export async function getQueuedMessage(id: number): Promise<QueuedMessage | undefined> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OUTBOX, 'readonly')
+    const req = tx.objectStore(OUTBOX).get(id)
+    req.onsuccess = () => resolve(req.result as QueuedMessage | undefined)
+    req.onerror = () => reject(req.error)
+  })
+}
+
+/** Records a failed attempt on a message that is still queued. One readwrite
+ * transaction that only updates an existing record, so a message the user
+ * discarded while its attempt was in flight is not put back. */
+async function recordFailure(id: number, error: string, extra: Partial<QueuedMessage> = {}): Promise<void> {
+  const db = await openDB()
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction(OUTBOX, 'readwrite')
+    const store = tx.objectStore(OUTBOX)
+    const req = store.get(id)
+    req.onsuccess = () => {
+      const current = req.result as QueuedMessage | undefined
+      if (current) {
+        store.put({ ...current, lastError: error.slice(0, MAX_ERROR_LENGTH), lastAttemptAt: new Date().toISOString(), ...extra })
+      }
+    }
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error)
+    tx.onabort = () => reject(tx.error)
+  })
+}
+
+/** Deletes a queued message the user chose to give up on, and tells the badge. */
+export async function discardQueuedMessage(id: number): Promise<void> {
+  await removeQueuedMessage(id)
+  notifyChanged()
 }
 
 export async function removeQueuedMessage(id: number): Promise<void> {
@@ -108,7 +155,22 @@ async function doFlush(): Promise<{ sent: number; failed: number }> {
   let sent = 0
   let failed = 0
 
-  for (const msg of messages) {
+  for (const listed of messages) {
+    // The list was read before the first send. A message the user discarded
+    // since then (the outbox panel) must not go out.
+    const msg = await getQueuedMessage(listed.id!).catch(() => listed)
+    if (!msg) continue
+    if (msg.sentAt) {
+      // The server has this one already; only the cleanup failed last time.
+      try {
+        await removeQueuedMessage(msg.id!)
+      } catch {
+        failed++
+      }
+      continue
+    }
+    let reason = 'Could not reach the server'
+    let extra: Partial<QueuedMessage> = {}
     try {
       const payload = {
         to: msg.to,
@@ -133,16 +195,22 @@ async function doFlush(): Promise<{ sent: number; failed: number }> {
         },
         body: JSON.stringify(payload)
       })
+      reason = `HTTP ${res.status}`
       const data = await res.json()
       if (data.success) {
+        reason = 'Sent, but it could not be removed from the outbox'
+        extra = { sentAt: new Date().toISOString() }
         await removeQueuedMessage(msg.id!)
         sent++
-      } else {
-        failed++
+        continue
       }
+      if (typeof data.error === 'string' && data.error.trim()) reason = data.error.trim()
     } catch {
-      failed++
+      // `reason` already says what was known: the status of an answer that was
+      // not JSON, else that the server could not be reached.
     }
+    failed++
+    await recordFailure(msg.id!, reason, extra).catch(() => {})
   }
 
   return { sent, failed }

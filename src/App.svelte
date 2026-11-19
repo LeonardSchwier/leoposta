@@ -8,6 +8,7 @@
   import CommandPalette from './components/CommandPalette.svelte'
   import { type PaletteCommand } from './components/CommandPalette.svelte'
   import Settings from './components/Settings.svelte'
+  import Outbox from './components/Outbox.svelte'
   import Calendar from './components/Calendar.svelte'
   import Contacts from './components/Contacts.svelte'
   import { type Folder, store, getState, setFolders, setActiveFolder, selectMessage, setMessages, setUnreadCount, adjustUnseen, setError, setIsLoading, updateMessage, deleteMessage, clearCompose, setComposing, setComposeTo, setComposeCc, setComposeBcc, setComposeSubject, setComposeBody, setComposeDraft, bootstrapRefreshMode } from './store'
@@ -32,6 +33,11 @@
   let searchQuery = $state('')
   let toast = $state('')
   let queuedCount = $state(0)
+  let showOutbox = $state(false)
+  // `navigator.onLine` is not reactive: track it so the badge follows it.
+  let online = $state(typeof navigator === 'undefined' ? true : navigator.onLine)
+  // True while the outbox is being sent: the badge then says "sending", not "unsent".
+  let draining = $state(false)
   let showPalette = $state(false)
 
   const SPLIT_MIN = 280
@@ -126,22 +132,37 @@
     queueCount().then(c => queuedCount = c).catch(() => {})
   }
 
+  /** Sends what was queued while offline. Run when the connection returns and
+   * once when the app opens online (no `online` event fires then, so mail
+   * written offline and left unsent stayed in the outbox until the next
+   * reconnect). Single-flight: the two triggers can overlap. */
+  async function drainOutbox() {
+    if (draining) return
+    draining = true
+    try {
+      // Ask the outbox itself: the cached count may predate a message queued
+      // while offline.
+      queuedCount = await queueCount().catch(() => queuedCount)
+      if (queuedCount > 0) {
+        const { sent, failed } = await flushQueue()
+        refreshQueueCount()
+        if (sent > 0) showToast(`${sent} queued message${sent > 1 ? 's' : ''} sent`)
+        if (failed > 0) showToast(`${failed} queued message${failed > 1 ? 's' : ''} failed · open the unsent badge to review`, 5000)
+      }
+    } finally {
+      draining = false
+    }
+  }
+
   async function handleOnline() {
+    online = true
     // Started offline: learn the accounts now (the refresh controller and
     // x-account need them; adopting one reloads the folder like a switch).
     if (!accountsReachable) {
       const { reachable } = await loadAccounts()
       accountsReachable = reachable
     }
-    // Ask the outbox itself: the cached count may predate a message queued
-    // while offline.
-    queuedCount = await queueCount().catch(() => queuedCount)
-    if (queuedCount > 0) {
-      const { sent, failed } = await flushQueue()
-      refreshQueueCount()
-      if (sent > 0) showToast(`${sent} queued message${sent > 1 ? 's' : ''} sent`)
-      if (failed > 0) showToast(`${failed} queued message${failed > 1 ? 's' : ''} failed`)
-    }
+    await drainOutbox()
     // Re-sync the current folder from the server now that we're back.
     if (offlineServing) {
       offlineServing = false
@@ -502,7 +523,7 @@
   function isTyping(e: KeyboardEvent): boolean {
     const t = e.target as HTMLElement
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return true
-    if (getState().isComposing || showSettings) return true
+    if (getState().isComposing || showSettings || showOutbox) return true
     return false
   }
 
@@ -648,6 +669,10 @@
       stopRememberingAccount = rememberActiveAccount()
       accountsReachable = reachable
       accountsLoaded = true
+      // Opened online with mail still queued from an offline session: send it
+      // now. The accounts are loaded, so a message queued without an account
+      // goes out under the active one.
+      if (reachable && navigator.onLine) drainOutbox()
       // Unreachable (offline PWA): load anyway, the list falls back to the
       // offline cache; the accounts are asked again once back online.
       if (accounts.length || !reachable) {
@@ -657,7 +682,7 @@
     })
     refreshQueueCount()
     window.addEventListener('online', handleOnline)
-    window.addEventListener('offline', () => refreshQueueCount())
+    window.addEventListener('offline', () => { online = false; refreshQueueCount() })
     window.addEventListener(QUEUE_CHANGED, refreshQueueCount)
     window.addEventListener('keydown', handleKeydown)
     return () => { stopRefresh(); stopRememberingAccount() }
@@ -779,8 +804,14 @@
     <div class="toast" data-testid="toast" role="status">{toast}</div>
   {/if}
 
-  {#if queuedCount > 0 && !navigator.onLine}
-    <div class="queue-badge">{queuedCount} queued · will send when online</div>
+  {#if showOutbox}
+    <Outbox {online} onClose={() => showOutbox = false} />
+  {/if}
+
+  {#if queuedCount > 0}
+    <button type="button" class="queue-badge" onclick={() => showOutbox = true}>
+      {#if !online}{queuedCount} queued · will send when online{:else if draining}{queuedCount} sending…{:else}{queuedCount} unsent · Review{/if}
+    </button>
   {/if}
 </div>
 
@@ -895,6 +926,8 @@
     box-shadow: 0 4px 16px rgba(0,0,0,0.2);
     animation: toast-in 200ms ease-out;
     z-index: 200;
-    pointer-events: none;
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
   }
 </style>
