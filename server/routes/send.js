@@ -5,6 +5,7 @@ import { buildDraftSource, ensureDraftsPath, appendDraft, discardDraft } from '.
 import { MailActionError, parseUid } from '../lib/removal.js'
 import { scrubOutboundHtml } from '../lib/sanitize.js'
 import { pgpOptions, buildPgpMail, PgpSendError } from '../lib/pgpSend.js'
+import { afterFailedAttempt, newMessageId } from '../lib/sendRetry.js'
 
 const router = Router()
 
@@ -242,6 +243,8 @@ export async function sendScheduledMessage(msg) {
     bcc: msg.bcc,
     subject: msg.subject,
     text: msg.text,
+    // One Message-ID for every attempt (see lib/sendRetry.js); undefined lets nodemailer make one.
+    messageId: msg.messageId || undefined,
     inReplyTo: msg.inReplyTo,
     references: msg.references,
     html: scrubOutboundHtml(msg.html) || undefined
@@ -268,21 +271,68 @@ export async function sendScheduledMessage(msg) {
 // server or a large attachment would otherwise send the same mail every tick.
 const inFlight = new Set()
 
-export function processScheduledMessages(send = sendScheduledMessage) {
-  const now = new Date()
+/** When a pending message is next due: its retry time after a failed attempt, else its scheduled time. */
+function dueAtMs(msg) {
+  const retry = Date.parse(msg.nextAttemptAt)
+  return Number.isFinite(retry) ? retry : Date.parse(msg.scheduled)
+}
+
+/**
+ * Writes scheduled.json and never throws. The outcome of a send decides a message's status,
+ * in memory, first; failing to save it (disk full, no permission) is logged and must not turn
+ * a delivered mail into a failed one, nor escape as an unhandled rejection, which ends the
+ * server process on Node 22. After a restart a mail that could not be saved is pending on
+ * disk again; there is nothing better to do without a durable store.
+ */
+function persistScheduled() {
+  try {
+    saveScheduled()
+  } catch (err) {
+    console.error('[send] could not save scheduled.json (keeping the state in memory):', err && err.message)
+  }
+}
+
+/**
+ * One scheduler tick. `send` and `clock` (milliseconds) are injectable for tests.
+ * A transient failure (no network, a 4xx reply) keeps the message pending and retries after
+ * a delay; a permanent one marks it failed. See lib/sendRetry.js and
+ * docs/design/review-2026-11-20-scheduled-retry.md.
+ */
+export function processScheduledMessages(send = sendScheduledMessage, clock = Date.now) {
+  const tickMs = clock()
   const dueMessages = state.scheduledMessages.filter(
-    m => m.status === 'pending' && !inFlight.has(m) && new Date(m.scheduled) <= now
+    m => m.status === 'pending' && !inFlight.has(m) && dueAtMs(m) <= tickMs
   )
+  if (dueMessages.length === 0) return
+
+  // The Message-ID is fixed before the first attempt and saved, so every retry, also one
+  // after a restart, carries the same one.
+  let created = false
+  for (const msg of dueMessages) {
+    if (!msg.messageId) {
+      msg.messageId = newMessageId(msg.from && msg.from.address)
+      created = true
+    }
+  }
+  if (created) persistScheduled()
 
   for (const msg of dueMessages) {
     inFlight.add(msg)
     Promise.resolve().then(() => send(msg)).then(() => {
       msg.status = 'sent'
-      saveScheduled()
+      delete msg.nextAttemptAt
+      persistScheduled()
+    }, err => {
+      const outcome = afterFailedAttempt(msg, err, clock())
+      Object.assign(msg, outcome)
+      if (outcome.status === 'failed') delete msg.nextAttemptAt
+      console.error(
+        `Error sending scheduled message ${msg.id}: ${outcome.lastError} ` +
+        (outcome.status === 'pending' ? `(attempt ${outcome.attempts}, trying again at ${outcome.nextAttemptAt})` : `(attempt ${outcome.attempts}, giving up)`)
+      )
+      persistScheduled()
     }).catch(err => {
-      console.error('Error sending scheduled message:', err)
-      msg.status = 'failed'
-      saveScheduled()
+      console.error('[send] scheduled message bookkeeping failed:', err && err.message)
     }).finally(() => inFlight.delete(msg))
   }
 }
