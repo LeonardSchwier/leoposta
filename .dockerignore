@@ -8,4 +8,6 @@ src-tauri
 server/account*.json
 server/accounts.json
 server/scheduled.json
+server/*.corrupt-*
+server/*.tmp
 server/*.asc

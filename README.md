@@ -100,6 +100,8 @@ What is stored where (all files live in `server/`, are git-ignored and written w
 | `pgp-keys/<account id>.asc` | The PGP private key of each account (stays passphrase protected if it was imported that way); removed with its account |
 | `pgp_publics.asc` | Public keys of other people (one keyring for all accounts) |
 
+A state file the server cannot read (cut short by a crash, not valid JSON) is not deleted and does not stop the server from starting: it is renamed to `<name>.corrupt-<time>` and the server starts without it. That copy still holds the old settings and passwords in plain text: recover what you need from it, then delete it. Saves go through a temp file and a rename, so a crash leaves the previous file whole; a file that was cut short before this change is handled the same way.
+
 Older versions kept one `pgp_private.asc` for all accounts. On first use it is copied to every account that has no key of its own (it used to decrypt the mail of all of them, so nothing becomes unreadable) and then deleted. Remove it in Settings → PGP from accounts it does not belong to.
 
 The PGP passphrase is never stored; unlock the key at runtime with `POST /api/pgp/unlock` (per account via `x-account`; kept in memory for 15 minutes; accounts holding the same key unlock together). Five wrong passphrases lock the route for the rest of a minute (`429 too_many_attempts` with `Retry-After`). An old `pgp_passphrase.txt` is ignored; delete it.

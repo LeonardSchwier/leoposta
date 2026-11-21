@@ -3,6 +3,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { readJsonFile, removeStaleTempFiles, writeFileAtomic } from './jsonFile.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const SERVER_DIR = path.dirname(path.dirname(__filename))
@@ -94,23 +95,39 @@ export function invalidateAccountDavCache(acctId) {
   state.davCache.invalidatePrefix(`events|${acctId}|`)
 }
 
-// Load accounts: prefer accounts.json; fall back to legacy account.json
-if (fs.existsSync(ACCOUNTS_FILE)) {
-  state.accounts = JSON.parse(fs.readFileSync(ACCOUNTS_FILE, 'utf-8'))
-} else if (fs.existsSync(LEGACY_ACCOUNT_FILE)) {
-  const legacy = JSON.parse(fs.readFileSync(LEGACY_ACCOUNT_FILE, 'utf-8'))
-  state.accounts = [{ ...legacy, id: legacy.id || 'acct-legacy' }]
-  saveAccounts()
-  try { fs.unlinkSync(LEGACY_ACCOUNT_FILE) } catch {}
+// A state file the server cannot use (cut short by a crash, not JSON, the wrong
+// shape) is moved aside as <name>.corrupt-<time> and the server starts without
+// it, instead of failing to start until someone deletes the file by hand.
+const isListOfObjects = (v) => Array.isArray(v) && v.every(x => x && typeof x === 'object' && !Array.isArray(x))
+const isObject = (v) => !!v && typeof v === 'object' && !Array.isArray(v)
+
+// Temp files of a save that a killed process never finished.
+removeStaleTempFiles(DATA_DIR, ['accounts.json', 'scheduled.json', 'rules.json', 'rule-cursors.json', 'ui-state.json'])
+
+// Load accounts: prefer accounts.json; fall back to legacy account.json, but only when there is
+// no accounts.json at all (one that was set aside as damaged must not bring an old account back).
+const hadAccountsFile = fs.existsSync(ACCOUNTS_FILE)
+const savedAccounts = readJsonFile(ACCOUNTS_FILE, { isValid: isListOfObjects, label: 'accounts.json' })
+if (savedAccounts !== undefined) {
+  state.accounts = savedAccounts
+} else if (!hadAccountsFile) {
+  const legacy = readJsonFile(LEGACY_ACCOUNT_FILE, { isValid: isObject, label: 'account.json' })
+  if (legacy !== undefined) {
+    state.accounts = [{ ...legacy, id: legacy.id || 'acct-legacy' }]
+    saveAccounts()
+    try { fs.unlinkSync(LEGACY_ACCOUNT_FILE) } catch {}
+  }
 }
-if (fs.existsSync(SCHEDULED_FILE)) {
-  state.scheduledMessages = JSON.parse(fs.readFileSync(SCHEDULED_FILE, 'utf-8'))
-}
-if (fs.existsSync(RULES_FILE)) {
-  state.rules = JSON.parse(fs.readFileSync(RULES_FILE, 'utf-8'))
-}
+state.scheduledMessages = readJsonFile(SCHEDULED_FILE, { fallback: [], isValid: isListOfObjects, label: 'scheduled.json' })
+// Rules: any list. The engine skips an entry that is not a rule (lib/rules.js: a hand-edited
+// file must not take the message list down), so one stray entry must not set the file aside.
+state.rules = readJsonFile(RULES_FILE, { fallback: [], isValid: Array.isArray, label: 'rules.json' })
 if (fs.existsSync(RULE_CURSORS_FILE)) {
-  try { state.ruleCursors = JSON.parse(fs.readFileSync(RULE_CURSORS_FILE, 'utf-8')) || {} } catch { state.ruleCursors = {} }
+  // Re-derivable and tiny: a bad file is dropped, not set aside. Only an object will do.
+  try {
+    const cursors = JSON.parse(fs.readFileSync(RULE_CURSORS_FILE, 'utf-8'))
+    state.ruleCursors = isObject(cursors) ? cursors : {}
+  } catch { state.ruleCursors = {} }
 }
 
 /** The remembered active account's email, or null (none / unreadable file). */
@@ -121,7 +138,7 @@ export function getRememberedAccount() {
   } catch { return null }
 }
 export function setRememberedAccount(email) {
-  fs.writeFileSync(UI_STATE_FILE, JSON.stringify({ activeAccount: email }, null, 2), { mode: 0o600 })
+  writeFileAtomic(UI_STATE_FILE, JSON.stringify({ activeAccount: email }, null, 2), { mode: 0o600 })
 }
 
 // ── Accessors ────────────────────────────────────────────────────────────────
@@ -196,22 +213,22 @@ function restoreEnvPasswordsForRuntime(accounts) {
 }
 
 export function saveAccounts() {
-  fs.writeFileSync(ACCOUNTS_FILE,
+  writeFileAtomic(ACCOUNTS_FILE,
     JSON.stringify(stripEnvPasswordsBeforePersist(state.accounts), null, 2),
     { mode: 0o600 }
   )
 }
 
 export function saveRules() {
-  fs.writeFileSync(RULES_FILE, JSON.stringify(state.rules, null, 2), { mode: 0o600 })
+  writeFileAtomic(RULES_FILE, JSON.stringify(state.rules, null, 2), { mode: 0o600 })
 }
 
 export function saveRuleCursors() {
-  fs.writeFileSync(RULE_CURSORS_FILE, JSON.stringify(state.ruleCursors, null, 2), { mode: 0o600 })
+  writeFileAtomic(RULE_CURSORS_FILE, JSON.stringify(state.ruleCursors, null, 2), { mode: 0o600 })
 }
 
 export function saveScheduled() {
-  fs.writeFileSync(SCHEDULED_FILE, JSON.stringify(state.scheduledMessages, null, 2), { mode: 0o600 })
+  writeFileAtomic(SCHEDULED_FILE, JSON.stringify(state.scheduledMessages, null, 2), { mode: 0o600 })
 }
 
 // ── Payload builder ──────────────────────────────────────────────────────────
